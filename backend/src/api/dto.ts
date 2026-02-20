@@ -115,7 +115,7 @@ export interface SymbolRow {
     qty: number;
   } | null;
   position: {
-    side: string;
+    side: 'LONG' | 'SHORT';
     entryTs: number;
     entryPrice: number;
     qty: number;

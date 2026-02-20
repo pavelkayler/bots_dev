@@ -17,9 +17,12 @@ import type {
   TickMessage,
 } from '../api/dto';
 import { CandleTracker } from './CandleTracker';
+import { FundingCooldownGate } from './FundingCooldownGate';
 import { MarketStateStore } from './MarketStateStore';
+import { StrategyEngine } from './StrategyEngine';
 import { UniverseBuilder } from './UniverseBuilder';
 import type { InstrumentSpecMap } from './types';
+import { PaperBroker, type BrokerEvent } from '../paper/PaperBroker';
 
 const TICK_MS = 1_000;
 
@@ -51,6 +54,9 @@ export class SessionManager {
   });
 
   private readonly universeBuilder = new UniverseBuilder(this.bybitWsClient, this.marketStateStore);
+  private readonly fundingCooldownGate = new FundingCooldownGate();
+  private readonly strategyEngine = new StrategyEngine();
+  private readonly paperBroker = new PaperBroker();
 
   private stateListeners: Array<(message: SessionStateMessage) => void> = [];
   private tickListeners: Array<(message: TickMessage) => void> = [];
@@ -116,6 +122,7 @@ export class SessionManager {
 
     this.universe = universeResult.symbols;
     this.candleTracker.reset(this.universe);
+    this.paperBroker.initialize(this.universe);
     this.rebuildSymbolRows();
 
     this.counts = { symbolsTotal: this.universe.length, ordersActive: 0, positionsOpen: 0 };
@@ -143,6 +150,13 @@ export class SessionManager {
     if (this.state !== 'STOPPED') {
       this.state = 'STOPPING';
       this.emitState();
+
+      if (this.config) {
+        const markBySymbol = this.getMarkBySymbol();
+        const stopEvents = this.paperBroker.closeAllOnStop(Date.now(), markBySymbol, this.instrumentSpecs);
+        this.addAndEmitEvents(stopEvents.map((event) => this.addEvent(event.type, event.symbol, event.data)));
+      }
+
       this.stopTicker();
       this.bybitWsClient.stop();
       this.state = 'STOPPED';
@@ -193,6 +207,13 @@ export class SessionManager {
         return;
       }
 
+      if (!this.config) {
+        return;
+      }
+
+      const nowTs = Date.now();
+      this.runTradingLoop(nowTs, this.config);
+
       this.rebuildSymbolRows();
 
       const tickMessage: TickMessage = {
@@ -219,6 +240,8 @@ export class SessionManager {
 
   private rebuildSymbolRows(): void {
     this.symbols.clear();
+    const nowTs = Date.now();
+    const isCooldownActive = this.cooldown.isActive;
 
     for (const symbol of this.universe) {
       const market = this.marketStateStore.get(symbol);
@@ -249,10 +272,11 @@ export class SessionManager {
       const nextFundingTimeTs = market?.nextFundingTime ?? 0;
       const fundingRate = market?.fundingRate ?? 0;
       const dataReady = market?.fundingRate !== undefined && market?.nextFundingTime !== undefined;
+      const symbolStatus = this.paperBroker.getSymbolStatus(symbol, hasCandleRef && hasTickerBase, nowTs);
 
       this.symbols.set(symbol, {
         symbol,
-        status: hasCandleRef && hasTickerBase ? 'ARMED' : 'IDLE',
+        status: symbolStatus,
         market: {
           markPrice,
           turnover24hUSDT: turnover,
@@ -271,11 +295,136 @@ export class SessionManager {
           priceMovePct,
           oivMovePct,
         },
-        order: null,
-        position: null,
-        gates: { cooldownBlocked: false, dataReady },
+        order: this.paperBroker.getOrder(symbol),
+        position: this.paperBroker.getPosition(symbol),
+        gates: { cooldownBlocked: isCooldownActive, dataReady },
       });
     }
+
+    const brokerCounts = this.paperBroker.getCounts();
+    this.counts = {
+      symbolsTotal: this.universe.length,
+      ordersActive: brokerCounts.ordersActive,
+      positionsOpen: brokerCounts.positionsOpen,
+    };
+  }
+
+  private runTradingLoop(nowTs: number, config: SessionStartRequest): void {
+    const marketSnapshot = this.marketStateStore.snapshot(this.universe);
+    const evaluatedCooldown = this.fundingCooldownGate.evaluate(
+      this.universe,
+      marketSnapshot,
+      config.fundingCooldown,
+      nowTs,
+    );
+    this.applyCooldownState(evaluatedCooldown);
+
+    const markBySymbol = this.getMarkBySymbol(marketSnapshot);
+    const brokerEvents = this.paperBroker.processTick(nowTs, markBySymbol, config);
+    this.addAndEmitBrokerEvents(brokerEvents);
+
+    if (this.cooldown.isActive) {
+      return;
+    }
+
+    for (const symbol of this.universe) {
+      const market = marketSnapshot.get(symbol);
+      const candleRef = this.candleTracker.get(symbol);
+      const hasCandleRef =
+        candleRef?.prevCandleClose !== undefined && candleRef.prevCandleOivUSDT !== undefined;
+
+      const decision = this.strategyEngine.evaluate(
+        {
+          symbol,
+          markPrice: market?.markPrice,
+          oivUSDT: market?.openInterestValue,
+          fundingRate: market?.fundingRate,
+          prevCandleClose: candleRef?.prevCandleClose,
+          prevCandleOivUSDT: candleRef?.prevCandleOivUSDT,
+          isArmed: this.paperBroker.canArm(symbol, nowTs) && hasCandleRef,
+          dataReady: market?.fundingRate !== undefined && market?.nextFundingTime !== undefined,
+          cooldownBlocked: this.cooldown.isActive,
+        },
+        config,
+      );
+
+      if (!decision || market?.markPrice === undefined) {
+        continue;
+      }
+
+      const instrument = this.instrumentSpecs[symbol];
+      if (!instrument) {
+        continue;
+      }
+
+      const side = decision.side;
+      const orderEvents = this.paperBroker.placeEntryOrder({
+        symbol,
+        side,
+        markPrice: market.markPrice,
+        nowTs,
+        config,
+        instrument,
+      });
+
+      if (orderEvents.length > 0) {
+        this.addAndEmitEvents([
+          this.addEvent('signal_fired', symbol, {
+            side,
+            priceMovePct: decision.priceMovePct,
+            oivMovePct: decision.oivMovePct,
+          }),
+          ...orderEvents.map((event) => this.addEvent(event.type, event.symbol, event.data)),
+        ]);
+      }
+    }
+  }
+
+  private applyCooldownState(nextCooldown: Cooldown): void {
+    const wasActive = this.cooldown.isActive;
+    const isActive = nextCooldown.isActive;
+    this.cooldown = nextCooldown;
+
+    if (!wasActive && isActive) {
+      this.state = 'COOLDOWN';
+      this.emitState();
+      this.addAndEmitEvents([
+        this.addEvent('cooldown_entered', 'SYSTEM', {
+          fromTs: nextCooldown.fromTs,
+          untilTs: nextCooldown.untilTs,
+        }),
+      ]);
+      return;
+    }
+
+    if (wasActive && !isActive) {
+      this.state = 'RUNNING';
+      this.emitState();
+      this.addAndEmitEvents([
+        this.addEvent('cooldown_exited', 'SYSTEM', {
+          fromTs: nextCooldown.fromTs,
+          untilTs: nextCooldown.untilTs,
+        }),
+      ]);
+    }
+  }
+
+  private addAndEmitBrokerEvents(events: BrokerEvent[]): void {
+    if (events.length === 0) {
+      return;
+    }
+    this.addAndEmitEvents(events.map((event) => this.addEvent(event.type, event.symbol, event.data)));
+  }
+
+  private getMarkBySymbol(snapshot?: Map<string, { markPrice?: number }>): Map<string, number> {
+    const output = new Map<string, number>();
+    for (const symbol of this.universe) {
+      const mark = snapshot?.get(symbol)?.markPrice ?? this.marketStateStore.get(symbol)?.markPrice;
+      if (mark !== undefined) {
+        output.set(symbol, mark);
+      }
+    }
+    return output;
   }
 
   private emitState(): void {
