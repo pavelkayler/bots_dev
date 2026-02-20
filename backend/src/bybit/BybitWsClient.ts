@@ -1,6 +1,5 @@
-import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
-import { buildTopics, partitionTopicsByArgsLength } from './topicBuilder';
+import { buildTopicsWithOptions, partitionTopicsByArgsLength } from './topicBuilder';
 import {
   BYBIT_PUBLIC_LINEAR_WS_URL,
   BYBIT_WS_ARGS_MAX_CHARS,
@@ -20,15 +19,32 @@ type Shard = {
   id: number;
   topics: string[];
   ws?: WebSocket;
-  reconnectTimeout?: NodeJS.Timeout;
-  pingInterval?: NodeJS.Timeout;
+  reconnectTimeout?: ReturnType<typeof setTimeout>;
+  pingInterval?: ReturnType<typeof setInterval>;
   reconnectAttempts: number;
 };
 
+type Listener = (...args: any[]) => void;
+
+class SimpleEmitter {
+  private listeners = new Map<string, Listener[]>();
+
+  on(event: string, listener: Listener): void {
+    const list = this.listeners.get(event) ?? [];
+    list.push(listener);
+    this.listeners.set(event, list);
+  }
+
+  emit(event: string, ...args: unknown[]): void {
+    const list = this.listeners.get(event) ?? [];
+    for (const listener of list) {
+      listener(...args);
+    }
+  }
+}
+
 type BybitPublicControlMessage = {
   op?: string;
-  success?: boolean;
-  ret_msg?: string;
   type?: string;
 };
 
@@ -60,17 +76,18 @@ function parseTickerMessage(input: unknown): { symbol: string; patch: TickerPatc
     return undefined;
   }
 
-  const patch: TickerPatch = {
-    markPrice: toNumber(msg.data?.markPrice),
-    openInterestValue: toNumber(msg.data?.openInterestValue),
-    turnover24h: toNumber(msg.data?.turnover24h),
-    highPrice24h: toNumber(msg.data?.highPrice24h),
-    lowPrice24h: toNumber(msg.data?.lowPrice24h),
-    fundingRate: toNumber(msg.data?.fundingRate),
-    nextFundingTime: toNumber(msg.data?.nextFundingTime),
+  return {
+    symbol,
+    patch: {
+      markPrice: toNumber(msg.data?.markPrice),
+      openInterestValue: toNumber(msg.data?.openInterestValue),
+      turnover24h: toNumber(msg.data?.turnover24h),
+      highPrice24h: toNumber(msg.data?.highPrice24h),
+      lowPrice24h: toNumber(msg.data?.lowPrice24h),
+      fundingRate: toNumber(msg.data?.fundingRate),
+      nextFundingTime: toNumber(msg.data?.nextFundingTime),
+    },
   };
-
-  return { symbol, patch };
 }
 
 function parseKlineMessage(
@@ -81,62 +98,58 @@ function parseKlineMessage(
     return undefined;
   }
 
-  const [_, tfStr, symbol] = msg.topic.split('.');
-  if (!tfStr || !symbol) {
-    return undefined;
-  }
-
+  const [, tfStr, symbol] = msg.topic.split('.');
   const tfMin = Number(tfStr);
-  if (!Number.isFinite(tfMin)) {
+  if (!symbol || !Number.isFinite(tfMin)) {
     return undefined;
   }
 
   const rows = Array.isArray(msg.data) ? msg.data : [];
-  const parsed = rows
-    .map((row) => {
-      const start = toNumber(row.start);
-      const end = toNumber(row.end);
-      const open = toNumber(row.open);
-      const high = toNumber(row.high);
-      const low = toNumber(row.low);
-      const close = toNumber(row.close);
-      const timestamp = toNumber(row.timestamp);
+  const out: Array<{ symbol: string; tfMin: number; candle: KlineCandle }> = [];
 
-      if (
-        start === undefined ||
-        end === undefined ||
-        open === undefined ||
-        high === undefined ||
-        low === undefined ||
-        close === undefined ||
-        timestamp === undefined
-      ) {
-        return undefined;
-      }
+  for (const row of rows) {
+    const start = toNumber(row.start);
+    const end = toNumber(row.end);
+    const open = toNumber(row.open);
+    const high = toNumber(row.high);
+    const low = toNumber(row.low);
+    const close = toNumber(row.close);
+    const timestamp = toNumber(row.timestamp);
 
-      return {
-        symbol,
-        tfMin,
-        candle: {
-          start,
-          end,
-          open,
-          high,
-          low,
-          close,
-          volume: toNumber(row.volume),
-          turnover: toNumber(row.turnover),
-          confirm: Boolean(row.confirm),
-          timestamp,
-        },
-      };
-    })
-    .filter((v): v is { symbol: string; tfMin: number; candle: KlineCandle } => v !== undefined);
+    if (
+      start === undefined ||
+      end === undefined ||
+      open === undefined ||
+      high === undefined ||
+      low === undefined ||
+      close === undefined ||
+      timestamp === undefined
+    ) {
+      continue;
+    }
 
-  return parsed;
+    out.push({
+      symbol,
+      tfMin,
+      candle: {
+        start,
+        end,
+        open,
+        high,
+        low,
+        close,
+        volume: toNumber(row.volume),
+        turnover: toNumber(row.turnover),
+        confirm: Boolean(row.confirm),
+        timestamp,
+      },
+    });
+  }
+
+  return out;
 }
 
-export class BybitWsClient extends EventEmitter {
+export class BybitWsClient extends SimpleEmitter {
   private readonly options: Required<
     Pick<
       BybitWsClientOptions,
@@ -149,7 +162,7 @@ export class BybitWsClient extends EventEmitter {
   private readonly onErrorCb?: BybitWsClientOptions['onError'];
 
   private running = false;
-  private subscriptions: BybitSubscriptions = { symbols: [], tfMin: 1 };
+  private subscriptions: BybitSubscriptions = { symbols: [], tfMin: 1, includeKline: true };
   private topicGroups: string[][] = [];
   private shards: Shard[] = [];
 
@@ -164,7 +177,6 @@ export class BybitWsClient extends EventEmitter {
       reconnectBaseMs: opts.reconnectBaseMs ?? BYBIT_WS_RECONNECT_BASE_MS,
       reconnectMaxMs: opts.reconnectMaxMs ?? BYBIT_WS_RECONNECT_MAX_MS,
     };
-
     this.onTickerCb = opts.onTicker;
     this.onKlineCb = opts.onKline;
     this.onErrorCb = opts.onError;
@@ -174,16 +186,15 @@ export class BybitWsClient extends EventEmitter {
     this.subscriptions = {
       symbols: [...new Set(subscriptions.symbols)],
       tfMin: subscriptions.tfMin,
+      includeKline: subscriptions.includeKline ?? true,
     };
-
-    const topics = buildTopics(this.subscriptions.symbols, this.subscriptions.tfMin);
+    const topics = buildTopicsWithOptions(this.subscriptions.symbols, this.subscriptions.tfMin, {
+      includeKline: this.subscriptions.includeKline ?? true,
+    });
     this.topicGroups = partitionTopicsByArgsLength(topics, this.options.argsMaxChars);
-
-    if (!this.running) {
-      return;
+    if (this.running) {
+      this.recreateShards();
     }
-
-    this.recreateShards();
   }
 
   start(): void {
@@ -237,8 +248,9 @@ export class BybitWsClient extends EventEmitter {
       this.emit('connected', shard.id);
     });
 
-    ws.on('message', (raw) => {
-      this.handleMessage(raw.toString('utf8'));
+    ws.on('message', (raw: unknown) => {
+      const payload = typeof raw === 'string' ? raw : (raw as { toString: (encoding?: string) => string }).toString('utf8');
+      this.handleMessage(payload);
     });
 
     ws.on('close', () => {
@@ -250,7 +262,7 @@ export class BybitWsClient extends EventEmitter {
       this.emit('reconnecting', shard.id);
     });
 
-    ws.on('error', (error) => {
+    ws.on('error', (error: unknown) => {
       this.handleError(error instanceof Error ? error : new Error(String(error)));
     });
   }
@@ -260,12 +272,7 @@ export class BybitWsClient extends EventEmitter {
       return;
     }
 
-    shard.ws.send(
-      JSON.stringify({
-        op: 'subscribe',
-        args: shard.topics,
-      }),
-    );
+    shard.ws.send(JSON.stringify({ op: 'subscribe', args: shard.topics }));
   }
 
   private setupHeartbeat(shard: Shard): void {
@@ -296,7 +303,6 @@ export class BybitWsClient extends EventEmitter {
     if (shard.reconnectTimeout) {
       clearTimeout(shard.reconnectTimeout);
     }
-
     shard.reconnectTimeout = setTimeout(() => this.connectShard(shard), delay);
   }
 
@@ -308,11 +314,8 @@ export class BybitWsClient extends EventEmitter {
     this.clearHeartbeat(shard);
 
     if (shard.ws) {
-      shard.ws.removeAllListeners();
-      if (
-        shard.ws.readyState === WebSocket.OPEN ||
-        shard.ws.readyState === WebSocket.CONNECTING
-      ) {
+      (shard.ws as any).removeAllListeners();
+      if (shard.ws.readyState === WebSocket.OPEN || shard.ws.readyState === WebSocket.CONNECTING) {
         shard.ws.close();
       }
       shard.ws = undefined;
@@ -343,11 +346,13 @@ export class BybitWsClient extends EventEmitter {
     }
 
     const klines = parseKlineMessage(message);
-    if (klines) {
-      for (const event of klines) {
-        this.onKlineCb?.(event.symbol, event.tfMin, event.candle);
-        this.emit('kline', event.symbol, event.tfMin, event.candle);
-      }
+    if (!klines) {
+      return;
+    }
+
+    for (const event of klines) {
+      this.onKlineCb?.(event.symbol, event.tfMin, event.candle);
+      this.emit('kline', event.symbol, event.tfMin, event.candle);
     }
   }
 

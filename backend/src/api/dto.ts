@@ -6,6 +6,7 @@ export type OrderSide = 'BUY' | 'SELL';
 export type EventType =
   | 'session_started'
   | 'universe_built'
+  | 'error'
   | 'cooldown_entered'
   | 'cooldown_exited'
   | 'signal_fired'
