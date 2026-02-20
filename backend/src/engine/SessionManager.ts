@@ -23,6 +23,8 @@ import { StrategyEngine } from './StrategyEngine';
 import { UniverseBuilder } from './UniverseBuilder';
 import type { InstrumentSpecMap } from './types';
 import { PaperBroker, type BrokerEvent } from '../paper/PaperBroker';
+import { EventLogger } from '../logging/EventLogger';
+import type { MarketTick } from '../paper/models';
 
 const TICK_MS = 1_000;
 
@@ -36,6 +38,7 @@ export class SessionManager {
   private symbols = new Map<string, SymbolRow>();
   private universe: string[] = [];
   private events: EventRow[] = [];
+  private eventSeq = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   private instrumentSpecs: InstrumentSpecMap = {};
@@ -57,6 +60,7 @@ export class SessionManager {
   private readonly fundingCooldownGate = new FundingCooldownGate();
   private readonly strategyEngine = new StrategyEngine();
   private readonly paperBroker = new PaperBroker();
+  private readonly eventLogger = new EventLogger();
 
   private stateListeners: Array<(message: SessionStateMessage) => void> = [];
   private tickListeners: Array<(message: TickMessage) => void> = [];
@@ -106,6 +110,7 @@ export class SessionManager {
     this.config = config;
     this.cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
     this.events = [];
+    this.eventSeq = 0;
 
     this.instrumentSpecs = await fetchInstrumentsInfoLinear();
     const candidateSymbols = this.buildCandidateSymbols(this.instrumentSpecs);
@@ -126,14 +131,18 @@ export class SessionManager {
     this.rebuildSymbolRows();
 
     this.counts = { symbolsTotal: this.universe.length, ordersActive: 0, positionsOpen: 0 };
+    this.eventLogger.start(this.sessionId);
     this.addAndEmitEvents([
       this.addEvent('session_started', 'SYSTEM', {
-        tfMin: this.tfMin,
         config,
       }),
       this.addEvent('universe_built', 'SYSTEM', {
         count: this.universe.length,
-        warmedSymbols: universeResult.warmedSymbols,
+        filters: {
+          minVolatility24hPct: config.universe.minVolatility24hPct,
+          minTurnover24hUSDT: config.universe.minTurnover24hUSDT,
+          maxSymbols: config.universe.maxSymbols,
+        },
         symbols: this.universe,
       }),
     ]);
@@ -152,9 +161,22 @@ export class SessionManager {
       this.emitState();
 
       if (this.config) {
+        const nowTs = Date.now();
         const markBySymbol = this.getMarkBySymbol();
-        const stopEvents = this.paperBroker.closeAllOnStop(Date.now(), markBySymbol, this.instrumentSpecs);
+        const stopEvents = this.paperBroker.closeAllOnStop(
+          nowTs,
+          markBySymbol,
+          this.instrumentSpecs,
+          this.config,
+        );
         this.addAndEmitEvents(stopEvents.map((event) => this.addEvent(event.type, event.symbol, event.data)));
+        this.addAndEmitEvents([
+          this.addEvent('session_stopped', 'SYSTEM', {
+            canceledOrders: stopEvents.filter((event) => event.type === 'order_canceled').length,
+            closedPositions: stopEvents.filter((event) => event.type === 'position_closed').length,
+            stopTs: nowTs,
+          }),
+        ]);
       }
 
       this.stopTicker();
@@ -162,6 +184,7 @@ export class SessionManager {
       this.state = 'STOPPED';
       this.cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
       this.emitState();
+      await this.eventLogger.stop();
       this.symbols.clear();
       this.universe = [];
       this.instrumentSpecs = {};
@@ -320,7 +343,8 @@ export class SessionManager {
     this.applyCooldownState(evaluatedCooldown);
 
     const markBySymbol = this.getMarkBySymbol(marketSnapshot);
-    const brokerEvents = this.paperBroker.processTick(nowTs, markBySymbol, config);
+    const marketBySymbol = this.getMarketBySymbol(marketSnapshot);
+    const brokerEvents = this.paperBroker.processTick(nowTs, marketBySymbol, config);
     this.addAndEmitBrokerEvents(brokerEvents);
 
     if (this.cooldown.isActive) {
@@ -370,9 +394,16 @@ export class SessionManager {
       if (orderEvents.length > 0) {
         this.addAndEmitEvents([
           this.addEvent('signal_fired', symbol, {
-            side,
+            tfMin: config.tfMin,
+            decision: side,
+            markPrice: market.markPrice,
+            prevCandleClose: candleRef?.prevCandleClose,
             priceMovePct: decision.priceMovePct,
+            oivUSDT: market.openInterestValue,
+            prevCandleOivUSDT: candleRef?.prevCandleOivUSDT,
             oivMovePct: decision.oivMovePct,
+            fundingRate: market.fundingRate,
+            nextFundingTimeTs: market.nextFundingTime,
           }),
           ...orderEvents.map((event) => this.addEvent(event.type, event.symbol, event.data)),
         ]);
@@ -392,6 +423,7 @@ export class SessionManager {
         this.addEvent('cooldown_entered', 'SYSTEM', {
           fromTs: nextCooldown.fromTs,
           untilTs: nextCooldown.untilTs,
+          nextFundingTimeTs: nextCooldown.untilTs,
         }),
       ]);
       return;
@@ -427,6 +459,22 @@ export class SessionManager {
     return output;
   }
 
+  private getMarketBySymbol(snapshot?: Map<string, { markPrice?: number; fundingRate?: number; nextFundingTime?: number }>): Map<string, MarketTick> {
+    const output = new Map<string, MarketTick>();
+    for (const symbol of this.universe) {
+      const market = snapshot?.get(symbol) ?? this.marketStateStore.get(symbol);
+      if (!market) {
+        continue;
+      }
+      output.set(symbol, {
+        markPrice: market.markPrice,
+        fundingRate: market.fundingRate,
+        nextFundingTimeTs: market.nextFundingTime,
+      });
+    }
+    return output;
+  }
+
   private emitState(): void {
     const payload: SessionStateMessage = {
       type: 'session_state',
@@ -458,12 +506,13 @@ export class SessionManager {
     if (events.length === 0) {
       return;
     }
+    this.eventLogger.append(events);
     this.emitEvents(events);
   }
 
   private addEvent(type: EventRow['type'], symbol: string, data: Record<string, unknown>): EventRow {
     const event: EventRow = {
-      id: `evt_${String(Date.now())}_${nanoid(4)}`,
+      id: `evt_${String(++this.eventSeq).padStart(6, '0')}`,
       ts: Date.now(),
       type,
       symbol,
