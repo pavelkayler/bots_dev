@@ -1,6 +1,8 @@
 import type { InstrumentSpec } from '../bybit';
 import type { OrderSide, SessionStartRequest, SymbolStatus } from '../api/dto';
-import { estimateFeeUSDT } from './fees';
+import { estimateExitMakerFeeUSDT, estimateFeeUSDT } from './fees';
+import { calculateFundingPaymentUSDT, shouldApplyFunding } from './funding';
+import type { InternalPosition, MarketTick, PositionSide, SymbolTradeState } from './models';
 import { floorToStep, roundDownToTick, roundUpToTick } from './rounding';
 
 export interface BrokerEvent {
@@ -10,40 +12,10 @@ export interface BrokerEvent {
     | 'order_expired'
     | 'order_canceled'
     | 'position_opened'
-    | 'position_closed';
+    | 'position_closed'
+    | 'funding_applied';
   symbol: string;
   data: Record<string, unknown>;
-}
-
-type PositionSide = 'LONG' | 'SHORT';
-
-interface InternalOrder {
-  side: OrderSide;
-  type: 'LIMIT';
-  status: 'OPEN';
-  placedTs: number;
-  expiresTs: number;
-  price: number;
-  qty: number;
-}
-
-interface InternalPosition {
-  side: PositionSide;
-  entryTs: number;
-  entryPrice: number;
-  qty: number;
-  tpPrice: number;
-  slPrice: number;
-  fundingAccruedUSDT: number;
-  feesPaidUSDT: number;
-  unrealizedPnlUSDT: number;
-  unrealizedRoiPct: number;
-}
-
-interface SymbolTradeState {
-  order: InternalOrder | null;
-  position: InternalPosition | null;
-  rearmAtTs: number | null;
 }
 
 export class PaperBroker {
@@ -56,11 +28,11 @@ export class PaperBroker {
     }
   }
 
-  getOrder(symbol: string): InternalOrder | null {
+  getOrder(symbol: string) {
     return this.bySymbol.get(symbol)?.order ?? null;
   }
 
-  getPosition(symbol: string): InternalPosition | null {
+  getPosition(symbol: string) {
     return this.bySymbol.get(symbol)?.position ?? null;
   }
 
@@ -127,16 +99,18 @@ export class PaperBroker {
           qty,
           placedTs: state.order.placedTs,
           expiresTs: state.order.expiresTs,
+          reason: 'signal_fired',
         },
       },
     ];
   }
 
-  processTick(nowTs: number, markBySymbol: Map<string, number>, config: SessionStartRequest): BrokerEvent[] {
+  processTick(nowTs: number, marketBySymbol: Map<string, MarketTick>, config: SessionStartRequest): BrokerEvent[] {
     const events: BrokerEvent[] = [];
 
     for (const [symbol, state] of this.bySymbol.entries()) {
-      const markPrice = markBySymbol.get(symbol);
+      const market = marketBySymbol.get(symbol);
+      const markPrice = market?.markPrice;
 
       if (state.order && markPrice !== undefined) {
         const isFilled =
@@ -156,7 +130,8 @@ export class PaperBroker {
               side: state.order.side,
               price: state.order.price,
               qty: state.order.qty,
-              filledTs: nowTs,
+              fillTs: nowTs,
+              feeUSDT: entryFee,
             },
           });
           events.push({
@@ -164,12 +139,11 @@ export class PaperBroker {
             symbol,
             data: {
               side: position.side,
-              entryTs: position.entryTs,
               entryPrice: position.entryPrice,
               qty: position.qty,
               tpPrice: position.tpPrice,
               slPrice: position.slPrice,
-              feesPaidUSDT: position.feesPaidUSDT,
+              entryFeeUSDT: entryFee,
             },
           });
 
@@ -184,7 +158,9 @@ export class PaperBroker {
               side: state.order.side,
               price: state.order.price,
               qty: state.order.qty,
-              expiredTs: nowTs,
+              placedTs: state.order.placedTs,
+              expiresTs: state.order.expiresTs,
+              finalTs: nowTs,
             },
           });
           state.order = null;
@@ -193,19 +169,60 @@ export class PaperBroker {
       }
 
       if (state.position && markPrice !== undefined) {
+        const positionNotionalUSDT = state.position.entryPrice * state.position.qty;
+
+        if (
+          market?.fundingRate !== undefined &&
+          shouldApplyFunding(nowTs, market.nextFundingTimeTs) &&
+          state.position.lastFundingTsApplied !== market.nextFundingTimeTs
+        ) {
+          const paymentUSDT = calculateFundingPaymentUSDT({
+            side: state.position.side,
+            notionalUSDT: positionNotionalUSDT,
+            fundingRate: market.fundingRate,
+          });
+          state.position.fundingAccruedUSDT += paymentUSDT;
+          state.position.lastFundingTsApplied = market.nextFundingTimeTs ?? null;
+          events.push({
+            type: 'funding_applied',
+            symbol,
+            data: {
+              side: state.position.side,
+              fundingRate: market.fundingRate,
+              notionalUSDT: positionNotionalUSDT,
+              paymentUSDT,
+              fundingTs: market.nextFundingTimeTs,
+              fundingAccruedUSDT: state.position.fundingAccruedUSDT,
+            },
+          });
+        }
+
         const rawPnl =
           state.position.side === 'LONG'
             ? (markPrice - state.position.entryPrice) * state.position.qty
             : (state.position.entryPrice - markPrice) * state.position.qty;
         state.position.unrealizedPnlUSDT = rawPnl;
         state.position.unrealizedRoiPct = (rawPnl / config.trade.marginUSDT) * 100;
+
+        const exitReason = this.getTouchExitReason(state.position, markPrice);
+        if (exitReason) {
+          const exitPrice = exitReason === 'TP' ? state.position.tpPrice : state.position.slPrice;
+          events.push(this.closePosition(symbol, state, nowTs, exitPrice, exitReason, config));
+          state.position = null;
+          state.rearmAtTs = nowTs + 1_000;
+        }
       }
     }
 
     return events;
   }
 
-  closeAllOnStop(nowTs: number, markBySymbol: Map<string, number>, instrumentBySymbol: Record<string, InstrumentSpec>): BrokerEvent[] {
+  closeAllOnStop(
+    nowTs: number,
+    markBySymbol: Map<string, number>,
+    instrumentBySymbol: Record<string, InstrumentSpec>,
+    config: SessionStartRequest,
+  ): BrokerEvent[] {
     const events: BrokerEvent[] = [];
 
     for (const [symbol, state] of this.bySymbol.entries()) {
@@ -217,8 +234,9 @@ export class PaperBroker {
             side: state.order.side,
             price: state.order.price,
             qty: state.order.qty,
-            canceledTs: nowTs,
-            reason: 'STOP',
+            placedTs: state.order.placedTs,
+            expiresTs: state.order.expiresTs,
+            finalTs: nowTs,
           },
         });
         state.order = null;
@@ -227,25 +245,14 @@ export class PaperBroker {
       if (state.position) {
         const markPrice = markBySymbol.get(symbol);
         const spec = instrumentBySymbol[symbol];
-        const closePrice =
+        const exitPrice =
           markPrice !== undefined && spec
             ? state.position.side === 'LONG'
               ? roundDownToTick(markPrice, spec.tickSize)
               : roundUpToTick(markPrice, spec.tickSize)
             : state.position.entryPrice;
 
-        events.push({
-          type: 'position_closed',
-          symbol,
-          data: {
-            side: state.position.side,
-            entryPrice: state.position.entryPrice,
-            closePrice,
-            qty: state.position.qty,
-            closedTs: nowTs,
-            reason: 'STOP',
-          },
-        });
+        events.push(this.closePosition(symbol, state, nowTs, exitPrice, 'STOP', config));
         state.position = null;
       }
 
@@ -269,6 +276,68 @@ export class PaperBroker {
     }
 
     return { ordersActive, positionsOpen };
+  }
+
+  getSymbolStatus(symbol: string, hasMarketRefs: boolean, nowTs: number): SymbolStatus {
+    const state = this.bySymbol.get(symbol);
+    if (!state || !hasMarketRefs) {
+      return 'IDLE';
+    }
+    if (state.position) {
+      return 'POSITION_OPEN';
+    }
+    if (state.order) {
+      return 'ORDER_PLACED';
+    }
+    if (state.rearmAtTs !== null && nowTs < state.rearmAtTs) {
+      return 'IDLE';
+    }
+    return 'ARMED';
+  }
+
+  private closePosition(
+    symbol: string,
+    state: SymbolTradeState,
+    nowTs: number,
+    exitPrice: number,
+    reason: 'TP' | 'SL' | 'STOP',
+    config: SessionStartRequest,
+  ): BrokerEvent {
+    const position = state.position;
+    if (!position) {
+      throw new Error(`Position is missing for ${symbol}`);
+    }
+
+    const grossPnlUSDT =
+      position.side === 'LONG'
+        ? (exitPrice - position.entryPrice) * position.qty
+        : (position.entryPrice - exitPrice) * position.qty;
+    const realizedRoiPct = (grossPnlUSDT / config.trade.marginUSDT) * 100;
+
+    const exitFeeUSDT = estimateExitMakerFeeUSDT(exitPrice, position.qty, config.fees.makerRate);
+    const feesTotalUSDT = position.feesPaidUSDT + exitFeeUSDT;
+    const realizedPnlNet = grossPnlUSDT - feesTotalUSDT + position.fundingAccruedUSDT;
+    const realizedRoiNetPct = (realizedPnlNet / config.trade.marginUSDT) * 100;
+
+    return {
+      type: 'position_closed',
+      symbol,
+      data: {
+        side: position.side,
+        entryPrice: position.entryPrice,
+        exitPrice,
+        qty: position.qty,
+        exitTs: nowTs,
+        reason,
+        pnlUSDT: realizedPnlNet,
+        roiPct: realizedRoiNetPct,
+        pnlGrossUSDT: grossPnlUSDT,
+        roiGrossPct: realizedRoiPct,
+        feesTotalUSDT,
+        fundingAccruedUSDT: position.fundingAccruedUSDT,
+        exitFeeUSDT,
+      },
+    };
   }
 
   private makePosition(
@@ -299,23 +368,27 @@ export class PaperBroker {
       feesPaidUSDT: entryFee,
       unrealizedPnlUSDT: 0,
       unrealizedRoiPct: 0,
+      lastFundingTsApplied: null,
     };
   }
 
-  getSymbolStatus(symbol: string, hasMarketRefs: boolean, nowTs: number): SymbolStatus {
-    const state = this.bySymbol.get(symbol);
-    if (!state || !hasMarketRefs) {
-      return 'IDLE';
+  private getTouchExitReason(position: InternalPosition, markPrice: number): 'TP' | 'SL' | null {
+    if (position.side === 'LONG') {
+      if (markPrice >= position.tpPrice) {
+        return 'TP';
+      }
+      if (markPrice <= position.slPrice) {
+        return 'SL';
+      }
+      return null;
     }
-    if (state.position) {
-      return 'POSITION_OPEN';
+
+    if (markPrice <= position.tpPrice) {
+      return 'TP';
     }
-    if (state.order) {
-      return 'ORDER_PLACED';
+    if (markPrice >= position.slPrice) {
+      return 'SL';
     }
-    if (state.rearmAtTs !== null && nowTs < state.rearmAtTs) {
-      return 'IDLE';
-    }
-    return 'ARMED';
+    return null;
   }
 }
