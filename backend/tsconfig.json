@@ -11,10 +11,6 @@
     "skipLibCheck": true,
     "noEmitOnError": false
   },
-  "include": [
-    "src/api/**/*.ts",
-    "src/engine/SessionManager.ts",
-    "src/index.ts"
-  ],
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules"]
 }

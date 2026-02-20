@@ -1,4 +1,6 @@
+import { DateTime } from 'luxon';
 import { nanoid } from 'nanoid';
+import { BybitWsClient, fetchInstrumentsInfoLinear, type InstrumentSpec } from '../bybit';
 import type {
   Cooldown,
   Counts,
@@ -14,8 +16,12 @@ import type {
   SymbolRow,
   TickMessage,
 } from '../api/dto';
+import { CandleTracker } from './CandleTracker';
+import { MarketStateStore } from './MarketStateStore';
+import { UniverseBuilder } from './UniverseBuilder';
+import type { InstrumentSpecMap } from './types';
 
-const DUMMY_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'ADAUSDT'];
+const TICK_MS = 1_000;
 
 export class SessionManager {
   private sessionId: string | null = null;
@@ -25,13 +31,51 @@ export class SessionManager {
   private counts: Counts = { symbolsTotal: 0, ordersActive: 0, positionsOpen: 0 };
   private cooldown: Cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
   private symbols = new Map<string, SymbolRow>();
+  private universe: string[] = [];
   private events: EventRow[] = [];
-  private tickNo = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
+
+  private instrumentSpecs: InstrumentSpecMap = {};
+
+  private readonly marketStateStore = new MarketStateStore();
+  private readonly candleTracker = new CandleTracker(this.marketStateStore);
+  private readonly bybitWsClient = new BybitWsClient({
+    onTicker: (symbol, patch) => {
+      this.marketStateStore.applyTickerPatch(symbol, patch);
+    },
+    onKline: (symbol, tfMin, candle) => {
+      if (tfMin === this.tfMin) {
+        this.candleTracker.onKline(symbol, candle);
+      }
+    },
+  });
+
+  private readonly universeBuilder = new UniverseBuilder(this.bybitWsClient, this.marketStateStore);
 
   private stateListeners: Array<(message: SessionStateMessage) => void> = [];
   private tickListeners: Array<(message: TickMessage) => void> = [];
   private eventsListeners: Array<(message: EventsAppendMessage) => void> = [];
+
+  constructor() {
+    this.bybitWsClient.on('reconnecting', (shardId: number) => {
+      this.addAndEmitEvents([
+        this.addEvent('error', 'SYSTEM', {
+          code: 'BYBIT_WS_RECONNECTING',
+          shardId,
+          message: 'Disconnected from Bybit public WS; reconnect scheduled.',
+        }),
+      ]);
+    });
+
+    this.bybitWsClient.on('ws_error', (error: Error) => {
+      this.addAndEmitEvents([
+        this.addEvent('error', 'SYSTEM', {
+          code: 'BYBIT_WS_ERROR',
+          message: error.message,
+        }),
+      ]);
+    });
+  }
 
   onSessionState(listener: (message: SessionStateMessage) => void): void {
     this.stateListeners.push(listener);
@@ -45,9 +89,9 @@ export class SessionManager {
     this.eventsListeners.push(listener);
   }
 
-  start(config: SessionStartRequest): SessionStartResponse {
+  async start(config: SessionStartRequest): Promise<SessionStartResponse> {
     if (this.state !== 'STOPPED') {
-      this.stop();
+      await this.stop();
     }
 
     this.sessionId = `${new Date().toISOString().replace(/[:.]/g, '-')}_${nanoid(6)}`;
@@ -56,30 +100,57 @@ export class SessionManager {
     this.config = config;
     this.cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
     this.events = [];
-    this.tickNo = 0;
-    this.bootstrapSymbols();
-    this.addEvent('session_started', 'SYSTEM', { tfMin: this.tfMin });
-    this.addEvent('universe_built', 'SYSTEM', { symbols: Array.from(this.symbols.keys()) });
+
+    this.instrumentSpecs = await fetchInstrumentsInfoLinear();
+    const candidateSymbols = this.buildCandidateSymbols(this.instrumentSpecs);
+
+    const universeResult = await this.universeBuilder.build(
+      {
+        candidateSymbols,
+        minVolatility24hPct: config.universe.minVolatility24hPct,
+        minTurnover24hUSDT: config.universe.minTurnover24hUSDT,
+        maxSymbols: config.universe.maxSymbols,
+      },
+      this.tfMin,
+    );
+
+    this.universe = universeResult.symbols;
+    this.candleTracker.reset(this.universe);
+    this.rebuildSymbolRows();
+
+    this.counts = { symbolsTotal: this.universe.length, ordersActive: 0, positionsOpen: 0 };
+    this.addAndEmitEvents([
+      this.addEvent('session_started', 'SYSTEM', {
+        tfMin: this.tfMin,
+        config,
+      }),
+      this.addEvent('universe_built', 'SYSTEM', {
+        count: this.universe.length,
+        warmedSymbols: universeResult.warmedSymbols,
+        symbols: this.universe,
+      }),
+    ]);
+
     this.emitState();
     this.startTicker();
 
     return { ok: true, sessionId: this.sessionId, state: 'RUNNING' };
   }
 
-  stop(): SessionStopResponse {
+  async stop(): Promise<SessionStopResponse> {
     const activeSessionId = this.sessionId;
 
     if (this.state !== 'STOPPED') {
       this.state = 'STOPPING';
       this.emitState();
       this.stopTicker();
+      this.bybitWsClient.stop();
       this.state = 'STOPPED';
       this.cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
       this.emitState();
-      if (activeSessionId) {
-        this.addEvent('session_stopped', 'SYSTEM', { sessionId: activeSessionId });
-      }
       this.symbols.clear();
+      this.universe = [];
+      this.instrumentSpecs = {};
       this.counts = { symbolsTotal: 0, ordersActive: 0, positionsOpen: 0 };
       this.config = null;
       this.tfMin = 5;
@@ -101,6 +172,7 @@ export class SessionManager {
   }
 
   getSnapshot(): SnapshotMessage {
+    this.rebuildSymbolRows();
     return {
       type: 'snapshot',
       ts: Date.now(),
@@ -108,48 +180,10 @@ export class SessionManager {
       config: this.config,
       counts: this.counts,
       cooldown: this.cooldown,
-      universe: Array.from(this.symbols.keys()),
+      universe: [...this.universe],
       symbols: Array.from(this.symbols.values()),
       eventsTail: [...this.events],
     };
-  }
-
-  private bootstrapSymbols(): void {
-    this.symbols.clear();
-    const nextFundingTimeTs = Date.now() + 60 * 60 * 1000;
-
-    for (const symbol of DUMMY_SYMBOLS) {
-      const markPrice = this.randomBetween(100, 75000);
-      const oivUSDT = this.randomBetween(2_000_000, 300_000_000);
-
-      this.symbols.set(symbol, {
-        symbol,
-        status: 'ARMED',
-        market: {
-          markPrice,
-          turnover24hUSDT: this.randomBetween(5_000_000, 2_500_000_000),
-          volatility24hPct: this.randomBetween(3, 12),
-          oivUSDT,
-        },
-        funding: {
-          rate: this.randomBetween(-0.0005, 0.0005),
-          nextFundingTimeTs,
-          nextFundingTimeMsk: this.toMskString(nextFundingTimeTs),
-          countdownSec: Math.max(0, Math.floor((nextFundingTimeTs - Date.now()) / 1000)),
-        },
-        signalMetrics: {
-          prevCandleClose: markPrice,
-          prevCandleOivUSDT: oivUSDT,
-          priceMovePct: 0,
-          oivMovePct: 0,
-        },
-        order: null,
-        position: null,
-        gates: { cooldownBlocked: false, dataReady: true },
-      });
-    }
-
-    this.counts = { symbolsTotal: this.symbols.size, ordersActive: 0, positionsOpen: 0 };
   }
 
   private startTicker(): void {
@@ -159,30 +193,7 @@ export class SessionManager {
         return;
       }
 
-      this.tickNo += 1;
-      this.advanceCooldownPhases();
-
-      const symbolsDelta: SymbolRow[] = [];
-      for (const symbolRow of this.symbols.values()) {
-        const markDelta = symbolRow.market.markPrice * this.randomBetween(-0.001, 0.001);
-        const oivDelta = symbolRow.market.oivUSDT * this.randomBetween(-0.01, 0.01);
-
-        symbolRow.market.markPrice = Number((symbolRow.market.markPrice + markDelta).toFixed(4));
-        symbolRow.market.oivUSDT = Number((symbolRow.market.oivUSDT + oivDelta).toFixed(4));
-        symbolRow.signalMetrics.priceMovePct = Number(
-          (((symbolRow.market.markPrice - symbolRow.signalMetrics.prevCandleClose) / symbolRow.signalMetrics.prevCandleClose) *
-            100).toFixed(3),
-        );
-        symbolRow.signalMetrics.oivMovePct = Number(
-          (((symbolRow.market.oivUSDT - symbolRow.signalMetrics.prevCandleOivUSDT) /
-            symbolRow.signalMetrics.prevCandleOivUSDT) *
-            100).toFixed(3),
-        );
-        symbolRow.funding.countdownSec = Math.max(0, Math.floor((symbolRow.funding.nextFundingTimeTs - Date.now()) / 1000));
-        symbolRow.gates.cooldownBlocked = this.state === 'COOLDOWN';
-
-        symbolsDelta.push({ ...symbolRow });
-      }
+      this.rebuildSymbolRows();
 
       const tickMessage: TickMessage = {
         type: 'tick',
@@ -190,47 +201,80 @@ export class SessionManager {
         session: { sessionId: this.sessionId, state: this.state },
         counts: this.counts,
         cooldown: this.cooldown,
-        symbolsDelta,
+        symbolsDelta: Array.from(this.symbols.values()),
       };
 
       for (const listener of this.tickListeners) {
         listener(tickMessage);
       }
-
-      if (this.tickNo % 5 === 0) {
-        const symbol = DUMMY_SYMBOLS[this.tickNo % DUMMY_SYMBOLS.length] ?? 'BTCUSDT';
-        const event = this.addEvent('signal_fired', symbol, {
-          tickNo: this.tickNo,
-          note: 'dummy_event',
-        });
-        this.emitEvents([event]);
-      }
-    }, 1000);
-  }
-
-  private advanceCooldownPhases(): void {
-    if (this.state === 'RUNNING' && this.tickNo % 20 === 0) {
-      const fromTs = Date.now();
-      const untilTs = fromTs + 15_000;
-      this.state = 'COOLDOWN';
-      this.cooldown = { isActive: true, reason: 'FUNDING_WINDOW', fromTs, untilTs };
-      this.addEvent('cooldown_entered', 'SYSTEM', { fromTs, untilTs });
-      this.emitState();
-      return;
-    }
-
-    if (this.state === 'COOLDOWN' && this.cooldown.untilTs && Date.now() >= this.cooldown.untilTs) {
-      this.state = 'RUNNING';
-      this.cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
-      this.addEvent('cooldown_exited', 'SYSTEM', {});
-      this.emitState();
-    }
+    }, TICK_MS);
   }
 
   private stopTicker(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+  }
+
+  private rebuildSymbolRows(): void {
+    this.symbols.clear();
+
+    for (const symbol of this.universe) {
+      const market = this.marketStateStore.get(symbol);
+      const candleRef = this.candleTracker.get(symbol);
+
+      const markPrice = market?.markPrice ?? 0;
+      const oiv = market?.openInterestValue ?? 0;
+      const turnover = market?.turnover24h ?? 0;
+      const high = market?.highPrice24h;
+      const low = market?.lowPrice24h;
+      const vol24hPct = low !== undefined && high !== undefined && low > 0 ? ((high - low) / low) * 100 : 0;
+
+      const hasCandleRef =
+        candleRef?.prevCandleClose !== undefined && candleRef.prevCandleOivUSDT !== undefined;
+      const hasTickerBase = market?.markPrice !== undefined && market?.openInterestValue !== undefined;
+      const prevCandleClose = candleRef?.prevCandleClose;
+      const prevCandleOiv = candleRef?.prevCandleOivUSDT;
+
+      const priceMovePct =
+        prevCandleClose !== undefined && prevCandleClose !== 0
+          ? ((markPrice - prevCandleClose) / prevCandleClose) * 100
+          : 0;
+      const oivMovePct =
+        prevCandleOiv !== undefined && prevCandleOiv !== 0
+          ? ((oiv - prevCandleOiv) / prevCandleOiv) * 100
+          : 0;
+
+      const nextFundingTimeTs = market?.nextFundingTime ?? 0;
+      const fundingRate = market?.fundingRate ?? 0;
+      const dataReady = market?.fundingRate !== undefined && market?.nextFundingTime !== undefined;
+
+      this.symbols.set(symbol, {
+        symbol,
+        status: hasCandleRef && hasTickerBase ? 'ARMED' : 'IDLE',
+        market: {
+          markPrice,
+          turnover24hUSDT: turnover,
+          volatility24hPct: vol24hPct,
+          oivUSDT: oiv,
+        },
+        funding: {
+          rate: fundingRate,
+          nextFundingTimeTs,
+          nextFundingTimeMsk: this.toMskString(nextFundingTimeTs),
+          countdownSec: Math.max(0, Math.floor((nextFundingTimeTs - Date.now()) / 1000)),
+        },
+        signalMetrics: {
+          prevCandleClose: candleRef?.prevCandleClose ?? 0,
+          prevCandleOivUSDT: prevCandleOiv ?? 0,
+          priceMovePct,
+          oivMovePct,
+        },
+        order: null,
+        position: null,
+        gates: { cooldownBlocked: false, dataReady },
+      });
     }
   }
 
@@ -261,6 +305,13 @@ export class SessionManager {
     }
   }
 
+  private addAndEmitEvents(events: EventRow[]): void {
+    if (events.length === 0) {
+      return;
+    }
+    this.emitEvents(events);
+  }
+
   private addEvent(type: EventRow['type'], symbol: string, data: Record<string, unknown>): EventRow {
     const event: EventRow = {
       id: `evt_${String(Date.now())}_${nanoid(4)}`,
@@ -277,11 +328,18 @@ export class SessionManager {
     return event;
   }
 
+  private buildCandidateSymbols(specs: Record<string, InstrumentSpec>): string[] {
+    return Object.keys(specs)
+      .filter((symbol) => symbol.endsWith('USDT'))
+      .sort();
+  }
 
   private toMskString(ts: number): string {
-    return new Date(ts + 3 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ') + ' MSK';
-  }
-  private randomBetween(min: number, max: number): number {
-    return min + Math.random() * (max - min);
+    if (!ts) {
+      return '-';
+    }
+    return DateTime.fromMillis(ts, { zone: 'utc' })
+      .setZone('Europe/Moscow')
+      .toFormat("yyyy-LL-dd HH:mm:ss 'MSK'");
   }
 }

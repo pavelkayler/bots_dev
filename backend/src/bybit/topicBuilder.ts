@@ -9,6 +9,18 @@ export function klineTopic(tfMin: number, symbol: string): string {
 }
 
 export function buildTopics(symbols: string[], tfMin: number): string[] {
+  return buildTopicsWithOptions(symbols, tfMin, { includeKline: true });
+}
+
+export function buildTopicsWithOptions(
+  symbols: string[],
+  tfMin: number,
+  options: { includeKline: boolean },
+): string[] {
+  if (!options.includeKline) {
+    return symbols.map((symbol) => tickerTopic(symbol));
+  }
+
   return symbols.flatMap((symbol) => [tickerTopic(symbol), klineTopic(tfMin, symbol)]);
 }
 

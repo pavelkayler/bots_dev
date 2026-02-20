@@ -99,4 +99,5 @@ export interface BybitWsClientOptions {
 export interface BybitSubscriptions {
   symbols: string[];
   tfMin: number;
+  includeKline?: boolean;
 }
