@@ -15,6 +15,7 @@ This folder is the single source of truth for:
 ## Tech stack (fixed)
 - Frontend: **Vite + TypeScript + React + react-bootstrap + react-router-dom**
 - Backend: **Node.js** (recommended TS)
+- Runtime baseline for v1-stable: **Node.js 20.x LTS** with npm 10+
 - Frontend connects to backend via local WebSocket.
 - Backend connects to Bybit via **official Public WebSocket V5**.
 
