@@ -18,7 +18,7 @@ const MAX_EVENTS = 2000;
 const MAX_OPERATOR_ALERTS = 6;
 const DEFAULT_COUNTS: Counts = { symbolsTotal: 0, ordersActive: 0, positionsOpen: 0 };
 const DEFAULT_COOLDOWN: Cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV && window.location.port === '5173' ? 'http://localhost:3000' : '');
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 export type WsConnectionState = 'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED';
 
