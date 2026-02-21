@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   registerHttpRoutes(app, sessionManager, wsHub);
   wsHub.attachRoutes(app);
 
-  const port = Number((globalThis as any).process?.env?.PORT ?? 3000);
+  const port = Number(process.env.PORT ?? 3000);
   await app.listen({ host: '0.0.0.0', port });
 
   console.log('=============================================');
@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   console.log('=============================================');
 
   let shuttingDown = false;
-  const shutdown = async (signal: string) => {
+  const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) {
       return;
     }
@@ -47,13 +47,13 @@ async function main(): Promise<void> {
       console.error('[backend] app close failed:', error);
     }
 
-    (globalThis as any).process?.exit(0);
+    process.exit(0);
   };
 
-  (globalThis as any).process?.on('SIGINT', () => {
+  process.on('SIGINT', () => {
     void shutdown('SIGINT');
   });
-  (globalThis as any).process?.on('SIGTERM', () => {
+  process.on('SIGTERM', () => {
     void shutdown('SIGTERM');
   });
 }
@@ -61,5 +61,5 @@ async function main(): Promise<void> {
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(message);
-  (globalThis as any).process?.exit(1);
+  process.exit(1);
 });

@@ -1,6 +1,7 @@
 import { createWriteStream, mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
-import type { EventRow } from '../api/dto';
+import type { EventRow } from '../types/dto';
+import { WS_ERROR_CODES } from '../types/dto';
 
 const MAX_QUEUE_LINES = 10_000;
 
@@ -40,7 +41,7 @@ export class EventLogger {
             symbol: 'SYSTEM',
             data: {
               scope: 'EVENT_LOGGER',
-              code: 'QUEUE_OVERFLOW',
+              code: WS_ERROR_CODES.QUEUE_OVERFLOW,
               message: `Event logger queue overflowed (${MAX_QUEUE_LINES} lines). Dropping new events.`,
             },
           };

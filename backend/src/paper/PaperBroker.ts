@@ -1,5 +1,5 @@
 import type { InstrumentSpec } from '../bybit';
-import type { OrderSide, SessionStartRequest, SymbolStatus } from '../api/dto';
+import type { OrderSide, SessionStartRequest, SymbolStatus } from '../types/dto';
 import { estimateExitMakerFeeUSDT, estimateFeeUSDT } from './fees';
 import { calculateFundingPaymentUSDT, shouldApplyFunding } from './funding';
 import type { InternalPosition, MarketTick, PositionSide, SymbolTradeState } from './models';

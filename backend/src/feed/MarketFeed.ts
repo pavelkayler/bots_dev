@@ -11,7 +11,7 @@ export interface MarketFeed {
   start(): void;
   stop(): void;
   getSubscriptionReport(): FeedSubscriptionReport;
-  on(event: string, listener: (...args: any[]) => void): void;
+  on(event: string, listener: (payload: unknown) => void): void;
 }
 
 export interface MarketFeedCallbacks {
