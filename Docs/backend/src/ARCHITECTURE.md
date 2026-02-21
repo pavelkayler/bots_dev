@@ -41,8 +41,8 @@ feed/* adapters ─────────────┐
 ```
 
 ## Lifecycle/state-machine references
-- Session lifecycle: `docs/05_state_machines.md` (STOPPED/RUNNING/COOLDOWN/STOPPING).
-- Symbol lifecycle: `docs/05_state_machines.md` (IDLE/ARMED/ORDER_PLACED/POSITION_OPEN).
+- Session lifecycle: `Docs/05_state_machines.md` (STOPPED/RUNNING/COOLDOWN/STOPPING).
+- Symbol lifecycle: `Docs/05_state_machines.md` (IDLE/ARMED/ORDER_PLACED/POSITION_OPEN).
 
 ## Migration note
 - DTO payload shapes are unchanged (`api/dto.ts` remains source schema).

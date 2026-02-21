@@ -3,6 +3,12 @@ import type { WsIncomingMessage } from './types';
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL;
 
+function resolveDefaultWsUrl(): string {
+  const wsUrl = new URL('/ws', window.location.href);
+  wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  return wsUrl.toString();
+}
+
 function isWsIncomingMessage(value: unknown): value is WsIncomingMessage {
   if (!value || typeof value !== 'object') {
     return false;
@@ -13,9 +19,7 @@ function isWsIncomingMessage(value: unknown): value is WsIncomingMessage {
 }
 
 export function createWsClient(): () => void {
-  const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const defaultUrl = `${scheme}://${window.location.host}/ws`;
-  const wsUrl = WS_BASE_URL ?? defaultUrl;
+  const wsUrl = WS_BASE_URL ?? resolveDefaultWsUrl();
 
   let socket: WebSocket | null = null;
   let reconnectAttempt = 0;
