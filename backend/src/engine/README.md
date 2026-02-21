@@ -15,22 +15,41 @@
 ## Symbol status computation
 - `IDLE`: missing confirmed candle references (`prevCandleClose`, `prevCandleOivUSDT`) or missing ticker base values.
 - `ARMED`: confirmed candle refs exist AND ticker mark/OIV are present.
-- `gates.dataReady=false` when funding fields are missing (`fundingRate` or `nextFundingTime`).
-- `order` and `position` are always `null` in this task.
+- `gates.dataReady=false` when funding fields are missing (`fundingRate` or `nextFundingTime`) or ticker data is stale.
 
 ## 1Hz aggregation
 - Bybit WS ingests continuously into in-memory stores (`MarketStateStore`, `CandleTracker`).
-- Backend emits frontend `tick` exactly once per second.
-- For this stage, each 1Hz `tick` includes all universe rows in `symbolsDelta`.
-- Price/OIV movement fields are recomputed on each 1Hz emission from the latest ticker values and last confirmed candle references.
+- Backend emits frontend `tick` once per second.
+- If a full tick payload exceeds **1MB**, engine logs one non-fatal `error` (`scope=ENGINE_TICK`, `code=PAYLOAD_TOO_LARGE_DELTA_MODE`) and switches to true symbol deltas for subsequent ticks.
 
-## Stability hardening notes (Task #7)
-- Session runtime now has a single deterministic 1Hz scheduler (`tickOnce`) that drives:
+## Stability hardening notes
+- Session runtime has a deterministic 1Hz scheduler (`tickOnce`) that drives:
   - strategy evaluation,
   - paper broker processing,
   - outbound `tick` aggregation.
-- Market data freshness is now gated:
-  - each symbol tracks last ticker update time,
-  - if data is stale for more than 5 seconds, `gates.dataReady=false`,
-  - stale symbols remain visible in table output but are not armed for trading.
 - Bybit WS reconnect path emits frontend `error` messages (`scope=BYBIT_WS`, `code=RECONNECTING`) and persists matching `error` events.
+
+## Invariant checks (non-fatal diagnostics)
+
+Engine validates each `SymbolRow` every 1Hz tick via `assertInvariants(symbolState)`.
+Violations do **not** crash the process; instead they emit:
+- WS `error` message with `scope=ENGINE_INVARIANT`,
+- eventlog entry with `type=error` and same code.
+
+Invariant codes:
+- `STATUS_ORDER_WITH_POSITION`
+  - `status === ORDER_PLACED` while `position != null`.
+- `STATUS_POSITION_MISSING`
+  - `status === POSITION_OPEN` while `position == null`.
+- `ORDER_EXPIRY_BEFORE_PLACED`
+  - `order.expiresTs < order.placedTs`.
+- `ORDER_QTY_INVALID`
+  - `order.qty <= 0` or not finite.
+- `POSITION_QTY_INVALID`
+  - `position.qty <= 0` or not finite.
+- `POSITION_LONG_TP_SL_INVALID`
+  - LONG with invalid TP/SL relative to entry (`tp <= entry` or `sl >= entry`).
+- `POSITION_SHORT_TP_SL_INVALID`
+  - SHORT with invalid TP/SL relative to entry (`tp >= entry` or `sl <= entry`).
+
+Repeated violations are de-duplicated per symbol/code while they remain active.

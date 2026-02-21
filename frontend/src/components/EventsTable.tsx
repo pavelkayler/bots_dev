@@ -1,27 +1,42 @@
 import { useMemo, useState } from 'react';
-import { Form, Row, Col, Table } from 'react-bootstrap';
+import { Badge, Button, Col, Form, Row, Table } from 'react-bootstrap';
 import type { EventRow } from '../ws/types';
 
 interface EventsTableProps {
   events: EventRow[];
+  quickTypeFilter: string | null;
 }
 
-function compactJson(value: Record<string, unknown>): string {
-  const json = JSON.stringify(value);
-  if (json.length <= 120) {
-    return json;
+function severityVariant(type: string): string {
+  if (type.startsWith('signal_')) {
+    return 'primary';
   }
-  return `${json.slice(0, 117)}...`;
+  if (type.startsWith('order_')) {
+    return 'warning';
+  }
+  if (type.startsWith('position_')) {
+    return 'success';
+  }
+  if (type.startsWith('funding_')) {
+    return 'info';
+  }
+  if (type === 'error') {
+    return 'danger';
+  }
+  return 'secondary';
 }
 
-export function EventsTable({ events }: EventsTableProps) {
+export function EventsTable({ events, quickTypeFilter }: EventsTableProps) {
   const [symbolFilter, setSymbolFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const uniqueTypes = useMemo(
     () => [...new Set(events.map((event) => event.type))].sort((a, b) => a.localeCompare(b)),
     [events],
   );
+
+  const effectiveTypeFilter = quickTypeFilter ?? typeFilter;
 
   const filtered = useMemo(
     () =>
@@ -29,11 +44,23 @@ export function EventsTable({ events }: EventsTableProps) {
         const symbolMatch =
           symbolFilter.trim().length === 0 ||
           event.symbol.toLowerCase().includes(symbolFilter.trim().toLowerCase());
-        const typeMatch = typeFilter === 'all' || event.type === typeFilter;
+        const typeMatch = effectiveTypeFilter === 'all' || event.type === effectiveTypeFilter;
         return symbolMatch && typeMatch;
       }),
-    [events, symbolFilter, typeFilter],
+    [effectiveTypeFilter, events, symbolFilter],
   );
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   return (
     <>
@@ -67,16 +94,28 @@ export function EventsTable({ events }: EventsTableProps) {
           </tr>
         </thead>
         <tbody>
-          {filtered.map((event) => (
-            <tr key={event.id}>
-              <td>{new Date(event.ts).toLocaleString()}</td>
-              <td>{event.type}</td>
-              <td>{event.symbol}</td>
-              <td>
-                <code>{compactJson(event.data)}</code>
-              </td>
-            </tr>
-          ))}
+          {filtered.map((event) => {
+            const expanded = expandedIds.has(event.id);
+            return (
+              <tr key={event.id}>
+                <td>{new Date(event.ts).toLocaleString()}</td>
+                <td>
+                  <Badge bg={severityVariant(event.type)}>{event.type}</Badge>
+                </td>
+                <td>{event.symbol}</td>
+                <td>
+                  <div className="d-flex align-items-start justify-content-between gap-2">
+                    <code className="mb-0">
+                      {expanded ? JSON.stringify(event.data, null, 2) : JSON.stringify(event.data)}
+                    </code>
+                    <Button size="sm" variant="outline-secondary" onClick={() => toggleExpanded(event.id)}>
+                      {expanded ? 'Collapse' : 'Expand'}
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </Table>
     </>

@@ -6,7 +6,7 @@ export function AppNavbar() {
   const sessionId = useAppStore((state) => state.sessionId);
   const sessionState = useAppStore((state) => state.sessionState);
   const wsConnectionState = useAppStore((state) => state.wsConnectionState);
-  const wsLastMessageTs = useAppStore((state) => state.wsLastMessageTs);
+  const lastTickTs = useAppStore((state) => state.lastTickTs);
 
   const wsBadgeVariant =
     wsConnectionState === 'CONNECTED' ? 'success' : wsConnectionState === 'RECONNECTING' ? 'warning' : 'secondary';
@@ -33,7 +33,7 @@ export function AppNavbar() {
           </Nav>
           <div className="d-flex gap-2 align-items-center text-light small">
             <Badge bg={wsBadgeVariant}>{wsConnectionState}</Badge>
-            <span>last tick: {wsLastMessageTs ? new Date(wsLastMessageTs).toLocaleTimeString() : '-'}</span>
+            <span>last tick: {lastTickTs ? new Date(lastTickTs).toLocaleTimeString() : '-'}</span>
             {sessionId ? <span>{sessionId}</span> : <span>No session</span>}
             <Badge bg="info">{sessionState}</Badge>
           </div>
