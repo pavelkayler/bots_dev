@@ -44,6 +44,7 @@ export class SessionManager {
   private events: EventRow[] = [];
   private eventSeq = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private lastTickTs: number | null = null;
 
   private instrumentSpecs: InstrumentSpecMap = {};
 
@@ -218,6 +219,7 @@ export class SessionManager {
       this.config = null;
       this.tfMin = 5;
       this.sessionId = null;
+      this.lastTickTs = null;
     }
 
     return { ok: true, sessionId: activeSessionId, state: 'STOPPED' };
@@ -234,6 +236,10 @@ export class SessionManager {
     };
   }
 
+
+  getLastTickTs(): number | null {
+    return this.lastTickTs;
+  }
   getSnapshot(): SnapshotMessage {
     if (this.state === 'RUNNING' || this.state === 'COOLDOWN') {
       this.rebuildSymbolRows();
@@ -264,6 +270,7 @@ export class SessionManager {
     }
 
     const nowTs = Date.now();
+    this.lastTickTs = nowTs;
     this.runTradingLoop(nowTs, this.config);
     this.rebuildSymbolRows(nowTs);
 

@@ -25,6 +25,10 @@ export class WsHub {
     });
   }
 
+  getConnectedClientsCount(): number {
+    return this.clients.size;
+  }
+
   private makeHello(): HelloMessage {
     return {
       type: 'hello',

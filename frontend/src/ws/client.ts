@@ -62,6 +62,7 @@ export function createWsClient(): () => void {
               appStore.setWsConnectionState('RECONNECTING');
             }
             appStore.setError(`${message.scope}:${message.code} ${message.message}`);
+            appStore.addOperatorAlert('danger', `${message.scope}:${message.code} ${message.message}`);
             break;
           default:
             break;
@@ -78,12 +79,14 @@ export function createWsClient(): () => void {
       }
       reconnectAttempt += 1;
       appStore.setWsConnectionState('RECONNECTING');
+      appStore.addOperatorAlert('warning', 'WebSocket disconnected. Attempting reconnect...');
       const delayMs = Math.min(1000 * 2 ** reconnectAttempt, 10000);
       reconnectTimer = window.setTimeout(connect, delayMs);
     };
 
     socket.onerror = () => {
       appStore.setWsConnectionState('DISCONNECTED');
+      appStore.addOperatorAlert('danger', 'WebSocket transport error. Connection is down.');
     };
   };
 
