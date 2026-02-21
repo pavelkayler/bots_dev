@@ -4,14 +4,40 @@ import { sessionStartRequestSchema } from './dto';
 import type { SessionManager } from '../engine/SessionManager';
 import type { WsHub } from './wsHub';
 import { WS_ERROR_CODES } from '../types/dto';
+import { getRunLogger, serializeUnknownError } from '../logging/RunLogger';
 
 function resolveVersion(): string {
   return process.env.GIT_HASH ?? process.env.npm_package_version ?? 'unknown';
 }
 
 export function registerHttpRoutes(app: FastifyInstance, sessionManager: SessionManager, wsHub: WsHub): void {
+  const runLogger = getRunLogger();
   const startedAtTs = Date.now();
   const version = resolveVersion();
+
+  app.addHook('onRequest', async (request) => {
+    (request as FastifyRequest & { _runStartTs?: number })._runStartTs = Date.now();
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const startedTs = (request as FastifyRequest & { _runStartTs?: number })._runStartTs ?? Date.now();
+    runLogger.info('api', 'http_request', {
+      method: request.method,
+      path: request.url,
+      status: reply.statusCode,
+      durationMs: Date.now() - startedTs,
+    });
+  });
+
+  app.setErrorHandler((error, request, reply) => {
+    runLogger.error('api', 'http_error', {
+      method: request.method,
+      path: request.url,
+      status: reply.statusCode,
+      error: serializeUnknownError(error),
+    });
+    reply.send(error);
+  });
 
   app.post('/api/session/start', async (request: FastifyRequest, reply: FastifyReply) => {
     try {

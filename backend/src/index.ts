@@ -3,8 +3,17 @@ import websocket from '@fastify/websocket';
 import { registerHttpRoutes } from './api/http';
 import { WsHub } from './api/wsHub';
 import { SessionManager } from './engine/SessionManager';
+import { initRunLogger, serializeUnknownError } from './logging/RunLogger';
 
 async function main(): Promise<void> {
+  const runLogger = initRunLogger();
+  console.log(`[backend] debug log: ${runLogger.getFilePath()}`);
+  runLogger.info('lifecycle', 'process_start', {
+    nodeVersion: process.env.npm_config_user_agent ?? 'unknown',
+    platform: process.env.OS ?? process.env.OSTYPE ?? 'unknown',
+    pid: process.env.PID ?? 'unknown',
+  });
+
   const app = Fastify({ logger: false });
   await app.register(websocket);
 
@@ -15,15 +24,19 @@ async function main(): Promise<void> {
   wsHub.attachRoutes(app);
 
   const port = Number(process.env.PORT ?? 3000);
-  await app.listen({ host: '0.0.0.0', port });
-
-  console.log('=============================================');
-  console.log('[backend] bybit-paper-bot local runtime ready');
-  console.log(`[backend] http:    http://0.0.0.0:${port}`);
-  console.log(`[backend] health:  http://0.0.0.0:${port}/api/health`);
-  console.log(`[backend] version: http://0.0.0.0:${port}/api/version`);
-  console.log('[backend] press Ctrl+C for graceful shutdown');
-  console.log('=============================================');
+  const host = '0.0.0.0';
+  runLogger.info('lifecycle', 'listen_start', { host, port });
+  try {
+    await app.listen({ host, port });
+    runLogger.info('lifecycle', 'listening', { host, port });
+  } catch (error) {
+    runLogger.error('lifecycle', 'listen_failed', {
+      host,
+      port,
+      error: serializeUnknownError(error),
+    });
+    throw error;
+  }
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
@@ -31,21 +44,29 @@ async function main(): Promise<void> {
       return;
     }
     shuttingDown = true;
-    console.log(`[backend] received ${signal}; starting graceful shutdown...`);
+    runLogger.info('lifecycle', 'shutdown_start', { signal });
 
     try {
       await sessionManager.stop();
-      console.log('[backend] session manager stopped cleanly.');
+      runLogger.info('lifecycle', 'session_manager_stopped', { signal });
     } catch (error) {
-      console.error('[backend] session stop failed:', error);
+      runLogger.error('lifecycle', 'session_manager_stop_failed', {
+        signal,
+        error: serializeUnknownError(error),
+      });
     }
 
     try {
       await app.close();
-      console.log('[backend] http+ws server closed.');
+      runLogger.info('lifecycle', 'http_ws_server_closed', { signal });
     } catch (error) {
-      console.error('[backend] app close failed:', error);
+      runLogger.error('lifecycle', 'app_close_failed', {
+        signal,
+        error: serializeUnknownError(error),
+      });
     }
+
+    await runLogger.close();
 
     process.exit(0);
   };
@@ -56,10 +77,26 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => {
     void shutdown('SIGTERM');
   });
+
+  process.on('uncaughtException', (error) => {
+    runLogger.error('lifecycle', 'uncaught_exception', {
+      error: serializeUnknownError(error),
+    });
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    runLogger.error('lifecycle', 'unhandled_rejection', {
+      reason: serializeUnknownError(reason),
+    });
+  });
 }
 
 main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(message);
-  process.exit(1);
+  const runLogger = initRunLogger();
+  runLogger.error('lifecycle', 'startup_failure', {
+    error: serializeUnknownError(error),
+  });
+  void runLogger.close().finally(() => {
+    process.exit(1);
+  });
 });

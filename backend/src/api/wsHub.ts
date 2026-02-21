@@ -1,15 +1,25 @@
 import type { FastifyInstance } from 'fastify';
-import type { HelloMessage, TickMessage, EventsAppendMessage, SessionStateMessage, ErrorMessage, SnapshotMessage } from '../types/dto';
+import type {
+  HelloMessage,
+  TickMessage,
+  EventsAppendMessage,
+  SessionStateMessage,
+  ErrorMessage,
+  SnapshotMessage,
+} from '../types/dto';
 import type { SessionManager } from '../engine/SessionManager';
+import { getRunLogger, serializeUnknownError } from '../logging/RunLogger';
 
 type OutboundMessage = TickMessage | EventsAppendMessage | SessionStateMessage | ErrorMessage | SnapshotMessage | HelloMessage;
 type WsSocket = {
   readyState: number;
   send: (payload: string) => void;
-  on: (event: 'close', listener: () => void) => void;
+  on: (event: 'close', listener: (code: number, reason: unknown) => void) => void;
 };
+
 export class WsHub {
   private clients = new Set<WsSocket>();
+  private readonly runLogger = getRunLogger();
 
   constructor(private readonly sessionManager: SessionManager) {
     this.sessionManager.onTick((message) => this.broadcast(message));
@@ -19,13 +29,23 @@ export class WsHub {
   }
 
   attachRoutes(app: FastifyInstance): void {
-    app.get('/ws', { websocket: true }, (socket: WsSocket) => {
+    app.get('/ws', { websocket: true }, (socket: WsSocket, request) => {
       this.clients.add(socket);
+      this.runLogger.info('ws', 'client_connected', {
+        remoteAddress: request.ip,
+        clientsConnected: this.clients.size,
+      });
 
       this.sendInitialMessages(socket);
 
-      socket.on('close', () => {
+      socket.on('close', (code, reasonBuffer: unknown) => {
         this.clients.delete(socket);
+        this.runLogger.info('ws', 'client_disconnected', {
+          remoteAddress: request.ip,
+          code,
+          reason: String(reasonBuffer ?? ''),
+          clientsConnected: this.clients.size,
+        });
       });
     });
   }
@@ -64,7 +84,11 @@ export class WsHub {
   private safeSend(socket: WsSocket, payload: string): void {
     try {
       socket.send(payload);
-    } catch {
+    } catch (error) {
+      this.runLogger.error('ws', 'send_failed', {
+        clientsConnected: this.clients.size,
+        error: serializeUnknownError(error),
+      });
       this.clients.delete(socket);
     }
   }
