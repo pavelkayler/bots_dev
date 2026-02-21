@@ -10,6 +10,7 @@ import type {
   SessionStartResponse,
   SessionState,
   SessionStateMessage,
+  ErrorMessage,
   SessionStatusResponse,
   SessionStopResponse,
   SnapshotMessage,
@@ -27,6 +28,7 @@ import { EventLogger } from '../logging/EventLogger';
 import type { MarketTick } from '../paper/models';
 
 const TICK_MS = 1_000;
+const DATA_STALE_MS = 5_000;
 
 export class SessionManager {
   private sessionId: string | null = null;
@@ -65,13 +67,24 @@ export class SessionManager {
   private stateListeners: Array<(message: SessionStateMessage) => void> = [];
   private tickListeners: Array<(message: TickMessage) => void> = [];
   private eventsListeners: Array<(message: EventsAppendMessage) => void> = [];
+  private errorListeners: Array<(message: ErrorMessage) => void> = [];
 
   constructor() {
-    this.bybitWsClient.on('reconnecting', (shardId: number) => {
+    this.bybitWsClient.on('reconnecting', (payload: { shardId: number; attempt: number; reason: string }) => {
+      this.emitError({
+        type: 'error',
+        ts: Date.now(),
+        sessionId: this.sessionId,
+        scope: 'BYBIT_WS',
+        code: 'RECONNECTING',
+        message: 'Disconnected from Bybit public WS; reconnect scheduled.',
+        data: payload,
+      });
       this.addAndEmitEvents([
         this.addEvent('error', 'SYSTEM', {
-          code: 'BYBIT_WS_RECONNECTING',
-          shardId,
+          scope: 'BYBIT_WS',
+          code: 'RECONNECTING',
+          ...payload,
           message: 'Disconnected from Bybit public WS; reconnect scheduled.',
         }),
       ]);
@@ -80,6 +93,7 @@ export class SessionManager {
     this.bybitWsClient.on('ws_error', (error: Error) => {
       this.addAndEmitEvents([
         this.addEvent('error', 'SYSTEM', {
+          scope: 'BYBIT_WS',
           code: 'BYBIT_WS_ERROR',
           message: error.message,
         }),
@@ -97,6 +111,10 @@ export class SessionManager {
 
   onEventsAppend(listener: (message: EventsAppendMessage) => void): void {
     this.eventsListeners.push(listener);
+  }
+
+  onError(listener: (message: ErrorMessage) => void): void {
+    this.errorListeners.push(listener);
   }
 
   async start(config: SessionStartRequest): Promise<SessionStartResponse> {
@@ -138,6 +156,7 @@ export class SessionManager {
       }),
       this.addEvent('universe_built', 'SYSTEM', {
         count: this.universe.length,
+        subscriptionReport: this.bybitWsClient.getSubscriptionReport(),
         filters: {
           minVolatility24hPct: config.universe.minVolatility24hPct,
           minTurnover24hUSDT: config.universe.minTurnover24hUSDT,
@@ -148,6 +167,7 @@ export class SessionManager {
     ]);
 
     this.emitState();
+    this.tickOnce();
     this.startTicker();
 
     return { ok: true, sessionId: this.sessionId, state: 'RUNNING' };
@@ -209,7 +229,9 @@ export class SessionManager {
   }
 
   getSnapshot(): SnapshotMessage {
-    this.rebuildSymbolRows();
+    if (this.state === 'RUNNING' || this.state === 'COOLDOWN') {
+      this.rebuildSymbolRows();
+    }
     return {
       type: 'snapshot',
       ts: Date.now(),
@@ -226,32 +248,31 @@ export class SessionManager {
   private startTicker(): void {
     this.stopTicker();
     this.timer = setInterval(() => {
-      if (this.state !== 'RUNNING' && this.state !== 'COOLDOWN') {
-        return;
-      }
-
-      if (!this.config) {
-        return;
-      }
-
-      const nowTs = Date.now();
-      this.runTradingLoop(nowTs, this.config);
-
-      this.rebuildSymbolRows();
-
-      const tickMessage: TickMessage = {
-        type: 'tick',
-        ts: Date.now(),
-        session: { sessionId: this.sessionId, state: this.state },
-        counts: this.counts,
-        cooldown: this.cooldown,
-        symbolsDelta: Array.from(this.symbols.values()),
-      };
-
-      for (const listener of this.tickListeners) {
-        listener(tickMessage);
-      }
+      this.tickOnce();
     }, TICK_MS);
+  }
+
+  private tickOnce(): void {
+    if ((this.state !== 'RUNNING' && this.state !== 'COOLDOWN') || !this.config) {
+      return;
+    }
+
+    const nowTs = Date.now();
+    this.runTradingLoop(nowTs, this.config);
+    this.rebuildSymbolRows(nowTs);
+
+    const tickMessage: TickMessage = {
+      type: 'tick',
+      ts: nowTs,
+      session: { sessionId: this.sessionId, state: this.state },
+      counts: this.counts,
+      cooldown: this.cooldown,
+      symbolsDelta: Array.from(this.symbols.values()),
+    };
+
+    for (const listener of this.tickListeners) {
+      listener(tickMessage);
+    }
   }
 
   private stopTicker(): void {
@@ -261,9 +282,8 @@ export class SessionManager {
     }
   }
 
-  private rebuildSymbolRows(): void {
+  private rebuildSymbolRows(nowTs = Date.now()): void {
     this.symbols.clear();
-    const nowTs = Date.now();
     const isCooldownActive = this.cooldown.isActive;
 
     for (const symbol of this.universe) {
@@ -294,8 +314,10 @@ export class SessionManager {
 
       const nextFundingTimeTs = market?.nextFundingTime ?? 0;
       const fundingRate = market?.fundingRate ?? 0;
-      const dataReady = market?.fundingRate !== undefined && market?.nextFundingTime !== undefined;
-      const symbolStatus = this.paperBroker.getSymbolStatus(symbol, hasCandleRef && hasTickerBase, nowTs);
+      const dataStaleSec = this.marketStateStore.isDataStale(symbol, nowTs, DATA_STALE_MS);
+      const dataReady =
+        market?.fundingRate !== undefined && market?.nextFundingTime !== undefined && !dataStaleSec;
+      const symbolStatus = this.paperBroker.getSymbolStatus(symbol, hasCandleRef && hasTickerBase && dataReady, nowTs);
 
       this.symbols.set(symbol, {
         symbol,
@@ -366,7 +388,10 @@ export class SessionManager {
           prevCandleClose: candleRef?.prevCandleClose,
           prevCandleOivUSDT: candleRef?.prevCandleOivUSDT,
           isArmed: this.paperBroker.canArm(symbol, nowTs) && hasCandleRef,
-          dataReady: market?.fundingRate !== undefined && market?.nextFundingTime !== undefined,
+          dataReady:
+            market?.fundingRate !== undefined &&
+            market?.nextFundingTime !== undefined &&
+            !this.marketStateStore.isDataStale(symbol, nowTs, DATA_STALE_MS),
           cooldownBlocked: this.cooldown.isActive,
         },
         config,
@@ -473,6 +498,12 @@ export class SessionManager {
       });
     }
     return output;
+  }
+
+  private emitError(payload: ErrorMessage): void {
+    for (const listener of this.errorListeners) {
+      listener(payload);
+    }
   }
 
   private emitState(): void {

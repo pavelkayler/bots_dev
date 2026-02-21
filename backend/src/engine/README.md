@@ -23,3 +23,14 @@
 - Backend emits frontend `tick` exactly once per second.
 - For this stage, each 1Hz `tick` includes all universe rows in `symbolsDelta`.
 - Price/OIV movement fields are recomputed on each 1Hz emission from the latest ticker values and last confirmed candle references.
+
+## Stability hardening notes (Task #7)
+- Session runtime now has a single deterministic 1Hz scheduler (`tickOnce`) that drives:
+  - strategy evaluation,
+  - paper broker processing,
+  - outbound `tick` aggregation.
+- Market data freshness is now gated:
+  - each symbol tracks last ticker update time,
+  - if data is stale for more than 5 seconds, `gates.dataReady=false`,
+  - stale symbols remain visible in table output but are not armed for trading.
+- Bybit WS reconnect path emits frontend `error` messages (`scope=BYBIT_WS`, `code=RECONNECTING`) and persists matching `error` events.

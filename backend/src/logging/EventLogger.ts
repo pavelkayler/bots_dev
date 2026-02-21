@@ -2,10 +2,13 @@ import { createWriteStream, mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
 import type { EventRow } from '../api/dto';
 
+const MAX_QUEUE_LINES = 10_000;
+
 export class EventLogger {
   private stream: ReturnType<typeof createWriteStream> | null = null;
   private queue: string[] = [];
   private closing = false;
+  private overflowReported = false;
 
   start(sessionId: string): void {
     const filePath = resolve('data', 'sessions', sessionId, 'events.jsonl');
@@ -13,6 +16,7 @@ export class EventLogger {
     this.stream = createWriteStream(filePath, { flags: 'a' });
     this.closing = false;
     this.queue = [];
+    this.overflowReported = false;
 
     this.stream.on('drain', () => {
       this.flushQueue();
@@ -25,6 +29,25 @@ export class EventLogger {
     }
 
     for (const event of events) {
+      if (this.queue.length >= MAX_QUEUE_LINES) {
+        if (!this.overflowReported) {
+          const overflowEvent: EventRow = {
+            id: `evt_logger_overflow_${Date.now()}`,
+            ts: Date.now(),
+            type: 'error',
+            symbol: 'SYSTEM',
+            data: {
+              scope: 'EVENT_LOGGER',
+              code: 'QUEUE_OVERFLOW',
+              message: `Event logger queue overflowed (${MAX_QUEUE_LINES} lines). Dropping new events.`,
+            },
+          };
+          this.queue.push(`${JSON.stringify(overflowEvent)}\n`);
+          this.overflowReported = true;
+        }
+        continue;
+      }
+
       this.queue.push(`${JSON.stringify(event)}\n`);
     }
 
@@ -37,7 +60,7 @@ export class EventLogger {
     }
 
     this.closing = true;
-    this.flushQueue();
+    await this.flushQueueFully();
 
     await new Promise<void>((resolvePromise) => {
       const target = this.stream;
@@ -69,6 +92,22 @@ export class EventLogger {
       if (!canContinue) {
         break;
       }
+    }
+  }
+
+  private async flushQueueFully(): Promise<void> {
+    if (!this.stream) {
+      return;
+    }
+
+    this.flushQueue();
+    while (this.queue.length > 0 && this.stream) {
+      await new Promise<void>((resolvePromise) => {
+        this.stream?.once('drain', () => {
+          this.flushQueue();
+          resolvePromise();
+        });
+      });
     }
   }
 }
