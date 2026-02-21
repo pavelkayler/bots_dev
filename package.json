@@ -1,0 +1,10 @@
+{
+  "name": "bots_dev",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:start": "node scripts/dev.mjs start",
+    "dev:stop": "node scripts/dev.mjs stop",
+    "dev:restart": "node scripts/dev.mjs restart"
+  }
+}

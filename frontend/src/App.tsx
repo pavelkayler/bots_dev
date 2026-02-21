@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Container } from 'react-bootstrap';
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { Alerts } from './components/Alerts';
 import { AppNavbar } from './components/AppNavbar';
 import { ConfigPage } from './pages/ConfigPage';
 import { EventsPage } from './pages/EventsPage';
@@ -21,6 +22,7 @@ function App() {
   return (
     <>
       <AppNavbar />
+      <Alerts />
       <Container fluid className="pb-4">
         <Routes>
           <Route path="/config" element={<ConfigPage />} />

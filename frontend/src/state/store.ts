@@ -15,11 +15,19 @@ import type {
 } from '../ws/types';
 
 const MAX_EVENTS = 2000;
+const MAX_OPERATOR_ALERTS = 6;
 const DEFAULT_COUNTS: Counts = { symbolsTotal: 0, ordersActive: 0, positionsOpen: 0 };
 const DEFAULT_COOLDOWN: Cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 export type WsConnectionState = 'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED';
+
+export interface OperatorAlert {
+  id: string;
+  kind: 'danger' | 'warning' | 'info';
+  message: string;
+  ts: number;
+}
 
 export interface AppState {
   wsConnected: boolean;
@@ -37,6 +45,7 @@ export interface AppState {
   symbolsRenderPaused: boolean;
   events: EventRow[];
   lastError: string | null;
+  operatorAlerts: OperatorAlert[];
   startResponse: SessionStartResponse | null;
 }
 
@@ -56,6 +65,7 @@ const state: AppState = {
   symbolsRenderPaused: false,
   events: [],
   lastError: null,
+  operatorAlerts: [],
   startResponse: null,
 };
 
@@ -64,6 +74,16 @@ const listeners = new Set<() => void>();
 function setState(partial: Partial<AppState>) {
   Object.assign(state, partial);
   listeners.forEach((listener) => listener());
+}
+
+function pushOperatorAlert(kind: OperatorAlert['kind'], message: string): void {
+  const alert: OperatorAlert = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    kind,
+    message,
+    ts: Date.now(),
+  };
+  setState({ operatorAlerts: [...state.operatorAlerts, alert].slice(-MAX_OPERATOR_ALERTS) });
 }
 
 export function useAppStore<T>(selector: (s: AppState) => T): T {
@@ -86,6 +106,9 @@ export const appStore = {
   setWsHello: (protocolVersion: number, serverName: string, serverEnv: string) =>
     setState({ wsHello: { protocolVersion, serverName, serverEnv } }),
   setError: (message: string | null) => setState({ lastError: message }),
+  addOperatorAlert: (kind: OperatorAlert['kind'], message: string) => pushOperatorAlert(kind, message),
+  dismissOperatorAlert: (alertId: string) =>
+    setState({ operatorAlerts: state.operatorAlerts.filter((alert) => alert.id !== alertId) }),
 
   toggleSymbolsRenderPaused: () => {
     if (state.symbolsRenderPaused) {
@@ -103,6 +126,15 @@ export const appStore = {
     const symbolsByKey = new Map<string, SymbolRow>();
     for (const row of message.symbols) {
       symbolsByKey.set(row.symbol, row);
+    }
+
+    const wasCooldown = state.cooldown.isActive;
+    const isCooldown = message.cooldown.isActive;
+    if (!wasCooldown && isCooldown) {
+      pushOperatorAlert('warning', 'Session entered COOLDOWN window.');
+    }
+    if (wasCooldown && !isCooldown) {
+      pushOperatorAlert('info', 'Session exited COOLDOWN window.');
     }
 
     setState({
@@ -142,6 +174,15 @@ export const appStore = {
   },
 
   applySessionState: (message: SessionStateMessage) => {
+    const wasCooldown = state.cooldown.isActive;
+    const isCooldown = message.cooldown.isActive;
+    if (!wasCooldown && isCooldown) {
+      pushOperatorAlert('warning', 'Session entered COOLDOWN window.');
+    }
+    if (wasCooldown && !isCooldown) {
+      pushOperatorAlert('info', 'Session exited COOLDOWN window.');
+    }
+
     setState({
       sessionId: message.sessionId,
       sessionState: message.state,

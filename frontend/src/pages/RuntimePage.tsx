@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, Col, Row } from 'react-bootstrap';
+import { Alert, Badge, Button, Card, Col, Modal, Row } from 'react-bootstrap';
 import { appStore, useAppStore } from '../state/store';
 
 function formatRemaining(untilTs: number | null): string {
@@ -21,6 +21,7 @@ export function RuntimePage() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showConfirmStop, setShowConfirmStop] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setClock(Date.now()), 1000);
@@ -33,6 +34,7 @@ export function RuntimePage() {
   }, [clock, cooldown.untilTs]);
 
   const onStop = async () => {
+    setShowConfirmStop(false);
     setLoading(true);
     setFeedback(null);
     setError(null);
@@ -47,57 +49,81 @@ export function RuntimePage() {
   };
 
   return (
-    <Card>
-      <Card.Body>
-        <Card.Title>Runtime</Card.Title>
-        <Row className="g-3 mt-1">
-          <Col md={3}>
-            <strong>Session state</strong>
-            <div>
-              <Badge bg="primary">{sessionState}</Badge>
-            </div>
-          </Col>
-          <Col md={3}>
-            <strong>symbolsTotal</strong>
-            <div>{counts.symbolsTotal}</div>
-          </Col>
-          <Col md={3}>
-            <strong>ordersActive</strong>
-            <div>{counts.ordersActive}</div>
-          </Col>
-          <Col md={3}>
-            <strong>positionsOpen</strong>
-            <div>{counts.positionsOpen}</div>
-          </Col>
-          <Col md={3}>
-            <strong>Cooldown active</strong>
-            <div>{String(cooldown.isActive)}</div>
-          </Col>
-          <Col md={3}>
-            <strong>Cooldown until</strong>
-            <div>{cooldown.untilTs ? new Date(cooldown.untilTs).toLocaleString() : '-'}</div>
-          </Col>
-          <Col md={3}>
-            <strong>Cooldown countdown</strong>
-            <div>{cooldown.isActive ? cooldownCountdown : '-'}</div>
-          </Col>
-        </Row>
+    <>
+      <Card>
+        <Card.Body>
+          <Card.Title>Runtime</Card.Title>
+          <Row className="g-3 mt-1">
+            <Col md={3}>
+              <strong>Session state</strong>
+              <div>
+                <Badge bg="primary">{sessionState}</Badge>
+              </div>
+            </Col>
+            <Col md={3}>
+              <strong>symbolsTotal</strong>
+              <div>{counts.symbolsTotal}</div>
+            </Col>
+            <Col md={3}>
+              <strong>ordersActive</strong>
+              <div>{counts.ordersActive}</div>
+            </Col>
+            <Col md={3}>
+              <strong>positionsOpen</strong>
+              <div>{counts.positionsOpen}</div>
+            </Col>
+            <Col md={3}>
+              <strong>Cooldown active</strong>
+              <div>{String(cooldown.isActive)}</div>
+            </Col>
+            <Col md={3}>
+              <strong>Cooldown until</strong>
+              <div>{cooldown.untilTs ? new Date(cooldown.untilTs).toLocaleString() : '-'}</div>
+            </Col>
+            <Col md={3}>
+              <strong>Cooldown countdown</strong>
+              <div>{cooldown.isActive ? cooldownCountdown : '-'}</div>
+            </Col>
+          </Row>
 
-        <Button className="mt-4" variant="danger" onClick={onStop} disabled={loading}>
-          {loading ? 'Stopping...' : 'Stop'}
-        </Button>
+          <Button
+            className="mt-4"
+            variant="danger"
+            onClick={() => setShowConfirmStop(true)}
+            disabled={loading || sessionState === 'STOPPED'}
+          >
+            {loading ? 'Stopping...' : 'Stop'}
+          </Button>
 
-        {feedback && (
-          <Alert variant="success" className="mt-3 mb-0">
-            {feedback}
-          </Alert>
-        )}
-        {error && (
-          <Alert variant="danger" className="mt-3 mb-0">
-            {error}
-          </Alert>
-        )}
-      </Card.Body>
-    </Card>
+          {feedback && (
+            <Alert variant="success" className="mt-3 mb-0">
+              {feedback}
+            </Alert>
+          )}
+          {error && (
+            <Alert variant="danger" className="mt-3 mb-0">
+              {error}
+            </Alert>
+          )}
+        </Card.Body>
+      </Card>
+
+      <Modal show={showConfirmStop} onHide={() => setShowConfirmStop(false)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Confirm STOP</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          This will cancel active orders, close open positions, and stop the current session. Continue?
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowConfirmStop(false)}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onStop} disabled={loading}>
+            Confirm STOP
+          </Button>
+        </Modal.Footer>
+      </Modal>
+    </>
   );
 }
