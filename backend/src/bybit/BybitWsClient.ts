@@ -15,6 +15,7 @@ import {
   type KlineCandle,
   type TickerPatch,
 } from './types';
+import { getRunLogger, serializeUnknownError } from '../logging/RunLogger';
 
 type Shard = {
   id: number;
@@ -162,6 +163,7 @@ export class BybitWsClient extends SimpleEmitter {
   private readonly onTickerCb?: BybitWsClientOptions['onTicker'];
   private readonly onKlineCb?: BybitWsClientOptions['onKline'];
   private readonly onErrorCb?: BybitWsClientOptions['onError'];
+  private readonly runLogger = getRunLogger();
 
   private running = false;
   private subscriptions: BybitSubscriptions = { symbols: [], tfMin: 1, includeKline: true };
@@ -215,11 +217,13 @@ export class BybitWsClient extends SimpleEmitter {
       return;
     }
     this.running = true;
+    this.runLogger.info('bybit_ws', 'client_start', { totalTopicGroups: this.topicGroups.length });
     this.recreateShards();
   }
 
   stop(): void {
     this.running = false;
+    this.runLogger.info('bybit_ws', 'client_stop', { activeShards: this.shards.length });
     for (const shard of this.shards) {
       this.teardownShard(shard);
     }
@@ -234,6 +238,12 @@ export class BybitWsClient extends SimpleEmitter {
     for (const shard of this.shards) {
       this.teardownShard(shard);
     }
+
+    this.runLogger.info('bybit_ws', 'recreate_shards', {
+      groups: this.topicGroups.length,
+      topicsPerConnection: this.topicGroups.map((topics) => topics.length),
+      totalTopics: this.topicGroups.reduce((acc, topics) => acc + topics.length, 0),
+    });
 
     this.shards = this.topicGroups.map((topics, id) => ({
       id,
@@ -252,6 +262,13 @@ export class BybitWsClient extends SimpleEmitter {
       return;
     }
 
+    this.runLogger.info('bybit_ws', 'connect_attempt', {
+      shardId: shard.id,
+      reconnectAttempts: shard.reconnectAttempts,
+      topicsCount: shard.topics.length,
+      url: this.options.wsUrl,
+    });
+
     const ws = new WebSocket(this.options.wsUrl);
     shard.ws = ws;
 
@@ -261,6 +278,11 @@ export class BybitWsClient extends SimpleEmitter {
       this.sendSubscribe(shard);
       this.setupHeartbeat(shard);
       this.setupWatchdog(shard);
+      this.runLogger.info('bybit_ws', 'connected', {
+        shardId: shard.id,
+        topicsCount: shard.topics.length,
+        reconnectAttempts: shard.reconnectAttempts,
+      });
       this.emit('connected', shard.id);
     });
 
@@ -270,17 +292,27 @@ export class BybitWsClient extends SimpleEmitter {
       this.handleMessage(payload);
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code: number, reasonBuffer: unknown) => {
       this.clearHeartbeat(shard);
       this.clearWatchdog(shard);
       if (!this.running) {
         return;
       }
       const attempt = this.scheduleReconnect(shard);
+      this.runLogger.warn('bybit_ws', 'disconnected', {
+        shardId: shard.id,
+        code,
+        reason: String(reasonBuffer ?? ''),
+        attempt,
+      });
       this.emit('reconnecting', { shardId: shard.id, attempt, reason: 'disconnected' });
     });
 
     ws.on('error', (error: unknown) => {
+      this.runLogger.error('bybit_ws', 'socket_error', {
+        shardId: shard.id,
+        error: serializeUnknownError(error),
+      });
       this.handleError(error instanceof Error ? error : new Error(String(error)));
     });
   }
@@ -290,6 +322,12 @@ export class BybitWsClient extends SimpleEmitter {
       return;
     }
 
+    this.runLogger.info('bybit_ws', 'subscribe_sent', {
+      shardId: shard.id,
+      topicsCount: shard.topics.length,
+      topicsGroups: this.topicGroups.length,
+      symbolsCount: this.subscriptions.symbols.length,
+    });
     shard.ws.send(JSON.stringify({ op: 'subscribe', args: shard.topics }));
   }
 
@@ -320,6 +358,12 @@ export class BybitWsClient extends SimpleEmitter {
       if (staleMs <= this.options.watchdogTimeoutMs) {
         return;
       }
+      this.runLogger.warn('bybit_ws', 'watchdog_timeout', {
+        shardId: shard.id,
+        staleMs,
+        watchdogTimeoutMs: this.options.watchdogTimeoutMs,
+        lastMessageTs: shard.lastMessageTs,
+      });
       this.emit('reconnecting', {
         shardId: shard.id,
         attempt: shard.reconnectAttempts + 1,
@@ -348,6 +392,12 @@ export class BybitWsClient extends SimpleEmitter {
     if (shard.reconnectTimeout) {
       clearTimeout(shard.reconnectTimeout);
     }
+    this.runLogger.warn('bybit_ws', 'reconnect_scheduled', {
+      shardId: shard.id,
+      attempt: shard.reconnectAttempts,
+      delayMs: delay,
+      lastMessageTs: shard.lastMessageTs,
+    });
     shard.reconnectTimeout = setTimeout(() => this.connectShard(shard), delay);
     return shard.reconnectAttempts;
   }
@@ -379,7 +429,14 @@ export class BybitWsClient extends SimpleEmitter {
     }
 
     const control = message as BybitPublicControlMessage;
-    if (control.op || control.type === 'pong') {
+    if (control.type === 'pong') {
+      this.runLogger.info('bybit_ws', 'pong_received', {
+        atTs: Date.now(),
+      });
+      return;
+    }
+
+    if (control.op) {
       return;
     }
 
@@ -405,6 +462,9 @@ export class BybitWsClient extends SimpleEmitter {
   }
 
   private handleError(error: Error): void {
+    this.runLogger.error('bybit_ws', 'handle_error', {
+      error: serializeUnknownError(error),
+    });
     this.onErrorCb?.(error);
     this.emit('ws_error', error);
   }

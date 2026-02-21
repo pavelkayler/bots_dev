@@ -27,6 +27,7 @@ import { UniverseBuilder } from './UniverseBuilder';
 import type { InstrumentSpecMap } from '../types/engine';
 import { PaperBroker, type BrokerEvent } from '../paper/PaperBroker';
 import { EventLogger } from '../logging/EventLogger';
+import { getRunLogger, serializeUnknownError } from '../logging/RunLogger';
 import type { MarketTick } from '../types/paper';
 import { BybitFeed } from '../feed/BybitFeed';
 import type { MarketFeed } from '../feed/MarketFeed';
@@ -64,6 +65,7 @@ export class SessionManager {
   private readonly strategyEngine = new StrategyEngine();
   private readonly paperBroker = new PaperBroker();
   private readonly eventLogger = new EventLogger();
+  private readonly runLogger = getRunLogger();
 
   private stateListeners: Array<(message: SessionStateMessage) => void> = [];
   private tickListeners: Array<(message: TickMessage) => void> = [];
@@ -134,6 +136,11 @@ export class SessionManager {
   }
 
   async start(config: SessionStartRequest): Promise<SessionStartResponse> {
+    this.runLogger.info('session', 'start_requested', {
+      previousState: this.state,
+      tfMin: config.tfMin,
+      maxSymbols: config.universe.maxSymbols,
+    });
     if (this.state !== 'STOPPED') {
       await this.stop();
     }
@@ -150,6 +157,7 @@ export class SessionManager {
     this.previousSymbolSnapshots.clear();
     this.activeInvariantKeys.clear();
 
+    this.runLogger.info('session', 'universe_build_start', {});
     this.instrumentSpecs = await fetchInstrumentsInfoLinear();
     const candidateSymbols = this.buildCandidateSymbols(this.instrumentSpecs);
 
@@ -164,6 +172,10 @@ export class SessionManager {
     );
 
     this.universe = universeResult.symbols;
+    this.runLogger.info('session', 'universe_build_end', {
+      universeCount: this.universe.length,
+      candidateSymbols: candidateSymbols.length,
+    });
     this.candleTracker.reset(this.universe);
     this.paperBroker.initialize(this.universe);
     this.rebuildSymbolRows();
@@ -190,14 +202,25 @@ export class SessionManager {
     this.tickOnce();
     this.startTicker();
 
+    this.runLogger.info('session', 'start_completed', {
+      sessionId: this.sessionId,
+      state: this.state,
+      universeCount: this.universe.length,
+    });
+
     return { ok: true, sessionId: this.sessionId, state: 'RUNNING' };
   }
 
   async stop(): Promise<SessionStopResponse> {
     const activeSessionId = this.sessionId;
+    this.runLogger.info('session', 'stop_requested', {
+      activeSessionId,
+      state: this.state,
+    });
 
     if (this.state !== 'STOPPED') {
       this.state = 'STOPPING';
+      this.runLogger.info('session', 'state_transition', { from: 'RUNNING_OR_COOLDOWN', to: 'STOPPING' });
       this.emitState();
 
       if (this.config) {
@@ -222,6 +245,7 @@ export class SessionManager {
       this.stopTicker();
       this.marketFeed.stop();
       this.state = 'STOPPED';
+      this.runLogger.info('session', 'state_transition', { from: 'STOPPING', to: 'STOPPED' });
       this.cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
       this.emitState();
       await this.eventLogger.stop();
@@ -237,6 +261,7 @@ export class SessionManager {
       this.activeInvariantKeys.clear();
     }
 
+    this.runLogger.info('session', 'stop_completed', { activeSessionId });
     return { ok: true, sessionId: activeSessionId, state: 'STOPPED' };
   }
 
@@ -274,6 +299,7 @@ export class SessionManager {
 
   private startTicker(): void {
     this.stopTicker();
+    this.runLogger.info('session', 'tick_loop_start', { intervalMs: TICK_MS });
     this.timer = setInterval(() => {
       this.tickOnce();
     }, TICK_MS);
@@ -286,6 +312,8 @@ export class SessionManager {
 
     const nowTs = Date.now();
     this.lastTickTs = nowTs;
+
+    try {
     // Deterministic 1Hz pipeline order:
     // 1) use feed patches already merged in stores (snapshot read),
     // 2) evaluate cooldown gate,
@@ -344,6 +372,14 @@ export class SessionManager {
     }
 
     this.updateSymbolSnapshotCache(currentRows);
+    } catch (error) {
+      this.runLogger.error('session', 'tick_loop_exception', {
+        sessionId: this.sessionId,
+        state: this.state,
+        lastTickTs: this.lastTickTs,
+        error: serializeUnknownError(error),
+      });
+    }
   }
 
 
@@ -469,6 +505,7 @@ export class SessionManager {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+      this.runLogger.info('session', 'tick_loop_stop', { lastTickTs: this.lastTickTs });
     }
   }
 
@@ -655,6 +692,7 @@ export class SessionManager {
 
     if (!wasActive && isActive) {
       this.state = 'COOLDOWN';
+      this.runLogger.info('session', 'state_transition', { from: 'RUNNING', to: 'COOLDOWN' });
       this.emitState();
       this.addAndEmitEvents([
         this.addEvent('cooldown_entered', 'SYSTEM', {
@@ -668,6 +706,7 @@ export class SessionManager {
 
     if (wasActive && !isActive) {
       this.state = 'RUNNING';
+      this.runLogger.info('session', 'state_transition', { from: 'COOLDOWN', to: 'RUNNING' });
       this.emitState();
       this.addAndEmitEvents([
         this.addEvent('cooldown_exited', 'SYSTEM', {

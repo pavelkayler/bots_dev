@@ -92,3 +92,15 @@
 1. Verify write permissions to `data/` and `data/sessions/`.
 2. Start session and confirm `session_started` appears in UI events.
 3. Check backend startup path and logs for filesystem errors.
+
+
+---
+
+## Backend debug run log
+**Where to find it**
+- `data/debug/backend_debug.log` (created/overwritten on each backend process start).
+
+**What to look for**
+1. Port bind lifecycle entries: `listen_start`, `listening`, `listen_failed`.
+2. WS upgrade/client issues around `/ws`: `client_connected`, `client_disconnected`, `send_failed`.
+3. Bybit reconnect loops: `reconnect_scheduled`, `watchdog_timeout`, `disconnected`, repeated attempts.
