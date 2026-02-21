@@ -3,8 +3,9 @@ export const BYBIT_V5_REST_BASE_URL = 'https://api.bybit.com';
 
 export const BYBIT_WS_ARGS_MAX_CHARS = 21_000;
 export const BYBIT_WS_PING_INTERVAL_MS = 20_000;
-export const BYBIT_WS_RECONNECT_BASE_MS = 1_000;
-export const BYBIT_WS_RECONNECT_MAX_MS = 30_000;
+export const BYBIT_WS_RECONNECT_BASE_MS = 500;
+export const BYBIT_WS_RECONNECT_MAX_MS = 10_000;
+export const BYBIT_WS_WATCHDOG_TIMEOUT_MS = 45_000;
 
 export interface InstrumentSpec {
   symbol: string;
@@ -91,6 +92,7 @@ export interface BybitWsClientOptions {
   argsMaxChars?: number;
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
+  watchdogTimeoutMs?: number;
   onTicker?: (symbol: string, patch: TickerPatch) => void;
   onKline?: (symbol: string, tfMin: number, candle: KlineCandle) => void;
   onError?: (error: Error) => void;

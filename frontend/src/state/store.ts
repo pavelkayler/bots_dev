@@ -19,8 +19,11 @@ const DEFAULT_COUNTS: Counts = { symbolsTotal: 0, ordersActive: 0, positionsOpen
 const DEFAULT_COOLDOWN: Cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
+export type WsConnectionState = 'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED';
+
 export interface AppState {
   wsConnected: boolean;
+  wsConnectionState: WsConnectionState;
   wsLastMessageTs: number | null;
   wsHello: { protocolVersion: number; serverName: string; serverEnv: string } | null;
   sessionId: string | null;
@@ -29,7 +32,9 @@ export interface AppState {
   config: SessionStartRequest | null;
   counts: Counts;
   cooldown: Cooldown;
-  symbolsByKey: Record<string, SymbolRow>;
+  symbolsByKey: Map<string, SymbolRow>;
+  liveSymbolsByKey: Map<string, SymbolRow>;
+  symbolsRenderPaused: boolean;
   events: EventRow[];
   lastError: string | null;
   startResponse: SessionStartResponse | null;
@@ -37,6 +42,7 @@ export interface AppState {
 
 const state: AppState = {
   wsConnected: false,
+  wsConnectionState: 'DISCONNECTED',
   wsLastMessageTs: null,
   wsHello: null,
   sessionId: null,
@@ -45,7 +51,9 @@ const state: AppState = {
   config: null,
   counts: DEFAULT_COUNTS,
   cooldown: DEFAULT_COOLDOWN,
-  symbolsByKey: {},
+  symbolsByKey: new Map<string, SymbolRow>(),
+  liveSymbolsByKey: new Map<string, SymbolRow>(),
+  symbolsRenderPaused: false,
   events: [],
   lastError: null,
   startResponse: null,
@@ -70,17 +78,33 @@ export function useAppStore<T>(selector: (s: AppState) => T): T {
 
 export const appStore = {
   getState: () => state,
-  setWsConnected: (connected: boolean) => setState({ wsConnected: connected }),
+  setWsConnected: (connected: boolean) =>
+    setState({ wsConnected: connected, wsConnectionState: connected ? 'CONNECTED' : 'DISCONNECTED' }),
+  setWsConnectionState: (wsConnectionState: WsConnectionState) =>
+    setState({ wsConnectionState, wsConnected: wsConnectionState === 'CONNECTED' }),
   setWsLastMessageTs: (ts: number) => setState({ wsLastMessageTs: ts }),
   setWsHello: (protocolVersion: number, serverName: string, serverEnv: string) =>
     setState({ wsHello: { protocolVersion, serverName, serverEnv } }),
   setError: (message: string | null) => setState({ lastError: message }),
 
-  applySnapshot: (message: SnapshotMessage) => {
-    const symbolsByKey: Record<string, SymbolRow> = {};
-    for (const row of message.symbols) {
-      symbolsByKey[row.symbol] = row;
+  toggleSymbolsRenderPaused: () => {
+    if (state.symbolsRenderPaused) {
+      setState({
+        symbolsRenderPaused: false,
+        symbolsByKey: new Map(state.liveSymbolsByKey),
+      });
+      return;
     }
+
+    setState({ symbolsRenderPaused: true });
+  },
+
+  applySnapshot: (message: SnapshotMessage) => {
+    const symbolsByKey = new Map<string, SymbolRow>();
+    for (const row of message.symbols) {
+      symbolsByKey.set(row.symbol, row);
+    }
+
     setState({
       sessionId: message.session.sessionId,
       sessionState: message.session.state,
@@ -89,24 +113,32 @@ export const appStore = {
       counts: message.counts,
       cooldown: message.cooldown,
       symbolsByKey,
+      liveSymbolsByKey: new Map(symbolsByKey),
       events: message.eventsTail.slice(-MAX_EVENTS),
       wsLastMessageTs: message.ts,
     });
   },
 
   applyTick: (message: TickMessage) => {
-    const nextMap = { ...state.symbolsByKey };
+    const nextLiveMap = new Map(state.liveSymbolsByKey);
     for (const delta of message.symbolsDelta) {
-      nextMap[delta.symbol] = delta;
+      nextLiveMap.set(delta.symbol, delta);
     }
-    setState({
+
+    const partial: Partial<AppState> = {
       sessionId: message.session.sessionId,
       sessionState: message.session.state,
       counts: message.counts,
       cooldown: message.cooldown,
-      symbolsByKey: nextMap,
+      liveSymbolsByKey: nextLiveMap,
       wsLastMessageTs: message.ts,
-    });
+    };
+
+    if (!state.symbolsRenderPaused) {
+      partial.symbolsByKey = new Map(nextLiveMap);
+    }
+
+    setState(partial);
   },
 
   applySessionState: (message: SessionStateMessage) => {

@@ -6,6 +6,7 @@ import {
   BYBIT_WS_PING_INTERVAL_MS,
   BYBIT_WS_RECONNECT_BASE_MS,
   BYBIT_WS_RECONNECT_MAX_MS,
+  BYBIT_WS_WATCHDOG_TIMEOUT_MS,
   type BybitKlineRaw,
   type BybitSubscriptions,
   type BybitTickerRaw,
@@ -22,6 +23,8 @@ type Shard = {
   reconnectTimeout?: ReturnType<typeof setTimeout>;
   pingInterval?: ReturnType<typeof setInterval>;
   reconnectAttempts: number;
+  lastMessageTs: number;
+  watchdogInterval?: ReturnType<typeof setInterval>;
 };
 
 type Listener = (...args: any[]) => void;
@@ -154,6 +157,7 @@ export class BybitWsClient extends SimpleEmitter {
     Pick<
       BybitWsClientOptions,
       'wsUrl' | 'pingIntervalMs' | 'argsMaxChars' | 'reconnectBaseMs' | 'reconnectMaxMs'
+      | 'watchdogTimeoutMs'
     >
   >;
 
@@ -176,6 +180,7 @@ export class BybitWsClient extends SimpleEmitter {
       argsMaxChars: opts.argsMaxChars ?? BYBIT_WS_ARGS_MAX_CHARS,
       reconnectBaseMs: opts.reconnectBaseMs ?? BYBIT_WS_RECONNECT_BASE_MS,
       reconnectMaxMs: opts.reconnectMaxMs ?? BYBIT_WS_RECONNECT_MAX_MS,
+      watchdogTimeoutMs: opts.watchdogTimeoutMs ?? BYBIT_WS_WATCHDOG_TIMEOUT_MS,
     };
     this.onTickerCb = opts.onTicker;
     this.onKlineCb = opts.onKline;
@@ -191,10 +196,20 @@ export class BybitWsClient extends SimpleEmitter {
     const topics = buildTopicsWithOptions(this.subscriptions.symbols, this.subscriptions.tfMin, {
       includeKline: this.subscriptions.includeKline ?? true,
     });
-    this.topicGroups = partitionTopicsByArgsLength(topics, this.options.argsMaxChars);
-    if (this.running) {
+    const nextTopicGroups = partitionTopicsByArgsLength(topics, this.options.argsMaxChars);
+    const hasChanges = JSON.stringify(nextTopicGroups) !== JSON.stringify(this.topicGroups);
+    this.topicGroups = nextTopicGroups;
+    if (this.running && hasChanges) {
       this.recreateShards();
     }
+  }
+
+  getSubscriptionReport(): { totalSymbols: number; connections: number; topicsPerConnection: number[] } {
+    return {
+      totalSymbols: this.subscriptions.symbols.length,
+      connections: this.topicGroups.length,
+      topicsPerConnection: this.topicGroups.map((topics) => topics.length),
+    };
   }
 
   start(): void {
@@ -226,6 +241,7 @@ export class BybitWsClient extends SimpleEmitter {
       id,
       topics,
       reconnectAttempts: 0,
+      lastMessageTs: Date.now(),
     }));
 
     for (const shard of this.shards) {
@@ -242,24 +258,28 @@ export class BybitWsClient extends SimpleEmitter {
     shard.ws = ws;
 
     ws.on('open', () => {
+      shard.lastMessageTs = Date.now();
       shard.reconnectAttempts = 0;
       this.sendSubscribe(shard);
       this.setupHeartbeat(shard);
+      this.setupWatchdog(shard);
       this.emit('connected', shard.id);
     });
 
     ws.on('message', (raw: unknown) => {
+      shard.lastMessageTs = Date.now();
       const payload = typeof raw === 'string' ? raw : (raw as { toString: (encoding?: string) => string }).toString('utf8');
       this.handleMessage(payload);
     });
 
     ws.on('close', () => {
       this.clearHeartbeat(shard);
+      this.clearWatchdog(shard);
       if (!this.running) {
         return;
       }
-      this.scheduleReconnect(shard);
-      this.emit('reconnecting', shard.id);
+      const attempt = this.scheduleReconnect(shard);
+      this.emit('reconnecting', { shardId: shard.id, attempt, reason: 'disconnected' });
     });
 
     ws.on('error', (error: unknown) => {
@@ -292,7 +312,33 @@ export class BybitWsClient extends SimpleEmitter {
     }
   }
 
-  private scheduleReconnect(shard: Shard): void {
+  private setupWatchdog(shard: Shard): void {
+    this.clearWatchdog(shard);
+    shard.watchdogInterval = setInterval(() => {
+      if (!shard.ws || shard.ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const staleMs = Date.now() - shard.lastMessageTs;
+      if (staleMs <= this.options.watchdogTimeoutMs) {
+        return;
+      }
+      this.emit('reconnecting', {
+        shardId: shard.id,
+        attempt: shard.reconnectAttempts + 1,
+        reason: 'watchdog_timeout',
+      });
+      (shard.ws as any).terminate();
+    }, Math.min(this.options.pingIntervalMs, 5_000));
+  }
+
+  private clearWatchdog(shard: Shard): void {
+    if (shard.watchdogInterval) {
+      clearInterval(shard.watchdogInterval);
+      shard.watchdogInterval = undefined;
+    }
+  }
+
+  private scheduleReconnect(shard: Shard): number {
     shard.reconnectAttempts += 1;
     const delay = backoffMs(
       shard.reconnectAttempts,
@@ -304,6 +350,7 @@ export class BybitWsClient extends SimpleEmitter {
       clearTimeout(shard.reconnectTimeout);
     }
     shard.reconnectTimeout = setTimeout(() => this.connectShard(shard), delay);
+    return shard.reconnectAttempts;
   }
 
   private teardownShard(shard: Shard): void {
@@ -312,6 +359,7 @@ export class BybitWsClient extends SimpleEmitter {
       shard.reconnectTimeout = undefined;
     }
     this.clearHeartbeat(shard);
+    this.clearWatchdog(shard);
 
     if (shard.ws) {
       (shard.ws as any).removeAllListeners();

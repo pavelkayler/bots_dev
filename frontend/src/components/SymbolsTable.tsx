@@ -1,4 +1,5 @@
-import Table from 'react-bootstrap/Table';
+import { memo } from 'react';
+import { Table } from 'react-bootstrap';
 import type { SymbolRow } from '../ws/types';
 
 interface SymbolsTableProps {
@@ -6,7 +7,10 @@ interface SymbolsTableProps {
 }
 
 function formatNumber(value: number, digits = 4): string {
-  return Number.isFinite(value) ? value.toFixed(digits) : '-';
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  return value.toFixed(digits);
 }
 
 function formatCountdown(totalSec: number): string {
@@ -14,6 +18,39 @@ function formatCountdown(totalSec: number): string {
   const seconds = Math.max(0, totalSec % 60);
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
+
+const SymbolTableRow = memo(function SymbolTableRow({ row }: { row: SymbolRow }) {
+  return (
+    <tr>
+      <td>{row.symbol}</td>
+      <td>{row.status}</td>
+      <td>{formatNumber(row.market.markPrice, 2)}</td>
+      <td>{formatNumber(row.signalMetrics.priceMovePct, 3)}</td>
+      <td>{formatNumber(row.market.oivUSDT, 2)}</td>
+      <td>{formatNumber(row.signalMetrics.oivMovePct, 3)}</td>
+      <td>{formatNumber(row.funding.rate, 6)}</td>
+      <td>{row.funding.nextFundingTimeMsk}</td>
+      <td>{formatCountdown(row.funding.countdownSec)}</td>
+      <td>{String(row.gates.cooldownBlocked)}</td>
+      <td>{String(row.gates.dataReady)}</td>
+      <td>
+        {row.order
+          ? `${row.order.side}/${formatNumber(row.order.price, 2)}/${formatNumber(row.order.qty, 4)}/${new Date(
+              row.order.expiresTs,
+            ).toLocaleTimeString()}`
+          : '-'}
+      </td>
+      <td>
+        {row.position
+          ? `${row.position.side}/${formatNumber(row.position.entryPrice, 2)}/${formatNumber(
+              row.position.tpPrice,
+              2,
+            )}/${formatNumber(row.position.slPrice, 2)}/${formatNumber(row.position.unrealizedRoiPct, 2)}`
+          : '-'}
+      </td>
+    </tr>
+  );
+});
 
 export function SymbolsTable({ rows }: SymbolsTableProps) {
   return (
@@ -37,37 +74,7 @@ export function SymbolsTable({ rows }: SymbolsTableProps) {
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={row.symbol}>
-            <td>{row.symbol}</td>
-            <td>{row.status}</td>
-            <td>{formatNumber(row.market.markPrice, 2)}</td>
-            <td>{formatNumber(row.signalMetrics.priceMovePct, 3)}</td>
-            <td>{formatNumber(row.market.oivUSDT, 2)}</td>
-            <td>{formatNumber(row.signalMetrics.oivMovePct, 3)}</td>
-            <td>{formatNumber(row.funding.rate, 6)}</td>
-            <td>{row.funding.nextFundingTimeMsk}</td>
-            <td>{formatCountdown(row.funding.countdownSec)}</td>
-            <td>{String(row.gates.cooldownBlocked)}</td>
-            <td>{String(row.gates.dataReady)}</td>
-            <td>
-              {row.order
-                ? `${row.order.side}/${formatNumber(row.order.price, 2)}/${formatNumber(row.order.qty, 4)}/${new Date(
-                    row.order.expiresTs,
-                  ).toLocaleTimeString()}`
-                : '-'}
-            </td>
-            <td>
-              {row.position
-                ? `${row.position.side}/${formatNumber(row.position.entryPrice, 2)}/${formatNumber(
-                    row.position.tpPrice,
-                    2,
-                  )}/${formatNumber(row.position.slPrice, 2)}/${formatNumber(
-                    row.position.unrealizedRoiPct,
-                    2,
-                  )}`
-                : '-'}
-            </td>
-          </tr>
+          <SymbolTableRow key={row.symbol} row={row} />
         ))}
       </tbody>
     </Table>

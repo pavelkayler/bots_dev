@@ -8,6 +8,7 @@ export class WsHub {
     this.sessionManager.onTick((message) => this.broadcast(message));
     this.sessionManager.onEventsAppend((message) => this.broadcast(message));
     this.sessionManager.onSessionState((message) => this.broadcast(message));
+    this.sessionManager.onError((message) => this.broadcast(message));
   }
 
   attachRoutes(app: any): void {
