@@ -1,16 +1,28 @@
-# React + Vite
+# Frontend (Vite + React + TypeScript)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Run
 
-Currently, two official plugins are available:
+```bash
+npm install
+npm run dev
+```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Default dev URL: `http://localhost:5173`.
 
-## React Compiler
+## Environment variables
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Create `frontend/.env` (or `.env.local`) if needed:
 
-## Expanding the ESLint configuration
+- `VITE_API_BASE_URL` - Optional REST base URL (default: same origin).
+  - Example: `http://localhost:3000`
+- `VITE_WS_URL` - Optional full WebSocket URL (default: `{ws|wss}://<current-host>/ws`).
+  - Example: `ws://localhost:3000/ws`
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+If backend is served from another host/port during development, set both values.
+
+## Implemented pages
+
+- `/config` - session start form for `SessionStartRequest`
+- `/runtime` - state, counters, cooldown, stop control
+- `/symbols` - full symbols table updated from WS `snapshot` + `tick`
+- `/events` - appended events stream with symbol/type filters
