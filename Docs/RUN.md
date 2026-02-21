@@ -22,10 +22,12 @@ This launches:
 - backend on `http://localhost:3000`
 - frontend on `http://localhost:5173`
 
-### Windows batch helper
+### Windows canonical helper
 ```bat
-dev.bat start
+run.bat
 ```
+
+`run.bat` installs root/backend/frontend dependencies and then starts both services via `dev.bat start`.
 
 ## Stop and restart
 ### Cross-platform
