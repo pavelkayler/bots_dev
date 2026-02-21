@@ -9,11 +9,24 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (error) => {
+            console.error('[vite-proxy:/api] error:', error.message)
+          })
+        },
       },
       '/ws': {
-        target: 'ws://localhost:3000',
+        target: 'http://localhost:3000',
         ws: true,
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (error) => {
+            console.error('[vite-proxy:/ws] error:', error.message)
+          })
+          proxy.on('proxyReqWs', (_proxyReq, req) => {
+            console.log(`[vite-proxy:/ws] upgrade ${req.url ?? '/ws'}`)
+          })
+        },
       },
     },
   },

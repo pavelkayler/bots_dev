@@ -4,6 +4,10 @@ import type { WsIncomingMessage } from './types';
 const WS_BASE_URL = import.meta.env.VITE_WS_URL;
 
 function resolveDefaultWsUrl(): string {
+  if (import.meta.env.DEV && window.location.port === '5173') {
+    return 'ws://localhost:3000/ws';
+  }
+
   const wsUrl = new URL('/ws', window.location.href);
   wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
   return wsUrl.toString();
