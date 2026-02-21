@@ -4,7 +4,7 @@ import { Alert, Button, Card, Col, Form, Row } from 'react-bootstrap';
 import { appStore } from '../state/store';
 import type { SessionStartRequest } from '../ws/types';
 
-const defaultConfig: SessionStartRequest = {
+const DEFAULT_CONFIG: SessionStartRequest = {
   tfMin: 5,
   universe: {
     minVolatility24hPct: 5,
@@ -33,9 +33,11 @@ const defaultConfig: SessionStartRequest = {
   },
 };
 
+const createDefaultConfig = (): SessionStartRequest => structuredClone(DEFAULT_CONFIG);
+
 export function ConfigPage() {
   const startSession = appStore.startSession;
-  const [config, setConfig] = useState<SessionStartRequest>(defaultConfig);
+  const [config, setConfig] = useState<SessionStartRequest>(createDefaultConfig);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -67,6 +69,12 @@ export function ConfigPage() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const onResetToDefaults = () => {
+    setConfig(createDefaultConfig());
+    setFeedback(null);
+    setError(null);
   };
 
   return (
@@ -215,6 +223,9 @@ export function ConfigPage() {
           <div className="mt-4 d-flex gap-2">
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting ? 'Starting...' : 'Start'}
+            </Button>
+            <Button type="button" variant="outline-secondary" onClick={onResetToDefaults}>
+              Reset to defaults
             </Button>
           </div>
         </Form>
