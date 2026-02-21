@@ -1,0 +1,64 @@
+{
+  "name": "funding_cooldown",
+  "baseTs": 1700002000000,
+  "tfMin": 5,
+  "ticks": 6,
+  "symbols": ["SOLUSDT"],
+  "instrumentSpecs": {
+    "SOLUSDT": { "symbol": "SOLUSDT", "tickSize": 0.001, "qtyStep": 0.01, "minQty": 0.01 }
+  },
+  "config": {
+    "tfMin": 5,
+    "universe": { "minVolatility24hPct": 0, "minTurnover24hUSDT": 0, "maxSymbols": 1 },
+    "signal": { "priceMovePctThreshold": 0.5, "oivMovePctThreshold": 0.5 },
+    "trade": {
+      "marginUSDT": 100,
+      "leverage": 10,
+      "entryOffsetPct": 0,
+      "entryOrderTimeoutMin": 1,
+      "tpRoiPct": 1,
+      "slRoiPct": 1
+    },
+    "fundingCooldown": { "beforeMin": 5, "afterMin": 5 },
+    "fees": { "makerRate": 0.0002, "takerRate": 0.00055 }
+  },
+  "expected": {
+    "majorSequence": [],
+    "expectNoSignals": true
+  },
+  "frames": [
+    {
+      "t": 0,
+      "tickers": {
+        "SOLUSDT": {
+          "markPrice": 50,
+          "openInterestValue": 3000,
+          "turnover24h": 500000,
+          "highPrice24h": 53,
+          "lowPrice24h": 47,
+          "fundingRate": 0.0001,
+          "nextFundingTime": 1700002180000
+        }
+      },
+      "klines": [
+        {
+          "symbol": "SOLUSDT",
+          "tfMin": 5,
+          "candle": {
+            "start": 1700001700000,
+            "end": 1700002000000,
+            "open": 49,
+            "high": 50,
+            "low": 48,
+            "close": 50,
+            "confirm": true,
+            "timestamp": 1700002000000
+          }
+        }
+      ]
+    },
+    { "t": 1, "tickers": { "SOLUSDT": { "markPrice": 50.6, "openInterestValue": 3020, "fundingRate": 0.0001, "nextFundingTime": 1700002180000 } } },
+    { "t": 2, "tickers": { "SOLUSDT": { "markPrice": 50.7, "openInterestValue": 3025, "fundingRate": 0.0001, "nextFundingTime": 1700002180000 } } },
+    { "t": 3, "tickers": { "SOLUSDT": { "markPrice": 50.8, "openInterestValue": 3030, "fundingRate": 0.0001, "nextFundingTime": 1700002180000 } } }
+  ]
+}

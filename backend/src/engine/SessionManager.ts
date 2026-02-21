@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 import { nanoid } from 'nanoid';
-import { BybitWsClient, fetchInstrumentsInfoLinear, type InstrumentSpec } from '../bybit';
+import { fetchInstrumentsInfoLinear, type InstrumentSpec } from '../bybit';
 import type {
   Cooldown,
   Counts,
@@ -26,6 +26,8 @@ import type { InstrumentSpecMap } from './types';
 import { PaperBroker, type BrokerEvent } from '../paper/PaperBroker';
 import { EventLogger } from '../logging/EventLogger';
 import type { MarketTick } from '../paper/models';
+import { BybitFeed } from '../feed/BybitFeed';
+import type { MarketFeed } from '../feed/MarketFeed';
 
 const TICK_MS = 1_000;
 const DATA_STALE_MS = 5_000;
@@ -47,18 +49,9 @@ export class SessionManager {
 
   private readonly marketStateStore = new MarketStateStore();
   private readonly candleTracker = new CandleTracker(this.marketStateStore);
-  private readonly bybitWsClient = new BybitWsClient({
-    onTicker: (symbol, patch) => {
-      this.marketStateStore.applyTickerPatch(symbol, patch);
-    },
-    onKline: (symbol, tfMin, candle) => {
-      if (tfMin === this.tfMin) {
-        this.candleTracker.onKline(symbol, candle);
-      }
-    },
-  });
+  private readonly marketFeed: MarketFeed;
+  private readonly universeBuilder: UniverseBuilder;
 
-  private readonly universeBuilder = new UniverseBuilder(this.bybitWsClient, this.marketStateStore);
   private readonly fundingCooldownGate = new FundingCooldownGate();
   private readonly strategyEngine = new StrategyEngine();
   private readonly paperBroker = new PaperBroker();
@@ -69,8 +62,21 @@ export class SessionManager {
   private eventsListeners: Array<(message: EventsAppendMessage) => void> = [];
   private errorListeners: Array<(message: ErrorMessage) => void> = [];
 
-  constructor() {
-    this.bybitWsClient.on('reconnecting', (payload: { shardId: number; attempt: number; reason: string }) => {
+  constructor(feed?: MarketFeed) {
+    this.marketFeed = feed ?? new BybitFeed({
+      onTickerPatch: (symbol, patch) => {
+        this.marketStateStore.applyTickerPatch(symbol, patch);
+      },
+      onKline: (symbol, tfMin, candle) => {
+        if (tfMin === this.tfMin) {
+          this.candleTracker.onKline(symbol, candle);
+        }
+      },
+    });
+
+    this.universeBuilder = new UniverseBuilder(this.marketFeed, this.marketStateStore);
+
+    this.marketFeed.on('reconnecting', (payload: { shardId: number; attempt: number; reason: string }) => {
       this.emitError({
         type: 'error',
         ts: Date.now(),
@@ -90,7 +96,7 @@ export class SessionManager {
       ]);
     });
 
-    this.bybitWsClient.on('ws_error', (error: Error) => {
+    this.marketFeed.on('ws_error', (error: Error) => {
       this.addAndEmitEvents([
         this.addEvent('error', 'SYSTEM', {
           scope: 'BYBIT_WS',
@@ -156,7 +162,7 @@ export class SessionManager {
       }),
       this.addEvent('universe_built', 'SYSTEM', {
         count: this.universe.length,
-        subscriptionReport: this.bybitWsClient.getSubscriptionReport(),
+        subscriptionReport: this.marketFeed.getSubscriptionReport(),
         filters: {
           minVolatility24hPct: config.universe.minVolatility24hPct,
           minTurnover24hUSDT: config.universe.minTurnover24hUSDT,
@@ -200,7 +206,7 @@ export class SessionManager {
       }
 
       this.stopTicker();
-      this.bybitWsClient.stop();
+      this.marketFeed.stop();
       this.state = 'STOPPED';
       this.cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
       this.emitState();

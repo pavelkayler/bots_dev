@@ -10,8 +10,10 @@ export class EventLogger {
   private closing = false;
   private overflowReported = false;
 
+  constructor(private readonly baseDir = resolve('data', 'sessions')) {}
+
   start(sessionId: string): void {
-    const filePath = resolve('data', 'sessions', sessionId, 'events.jsonl');
+    const filePath = resolve(this.baseDir, sessionId, 'events.jsonl');
     mkdirSync(dirname(filePath), { recursive: true });
     this.stream = createWriteStream(filePath, { flags: 'a' });
     this.closing = false;

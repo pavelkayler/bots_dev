@@ -1,4 +1,4 @@
-import type { BybitWsClient } from '../bybit';
+import type { MarketFeed } from '../feed/MarketFeed';
 import { MarketStateStore } from './MarketStateStore';
 import type { UniverseBuildInput, UniverseBuildResult } from './types';
 
@@ -6,7 +6,7 @@ const DEFAULT_WARMUP_MS = 4_000;
 
 export class UniverseBuilder {
   constructor(
-    private readonly wsClient: BybitWsClient,
+    private readonly wsClient: MarketFeed,
     private readonly marketStateStore: MarketStateStore,
     private readonly warmupMs = DEFAULT_WARMUP_MS,
   ) {}

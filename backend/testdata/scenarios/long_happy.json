@@ -1,0 +1,142 @@
+{
+  "name": "long_happy",
+  "baseTs": 1700000000000,
+  "tfMin": 5,
+  "ticks": 6,
+  "symbols": [
+    "BTCUSDT"
+  ],
+  "instrumentSpecs": {
+    "BTCUSDT": {
+      "symbol": "BTCUSDT",
+      "tickSize": 0.1,
+      "qtyStep": 0.001,
+      "minQty": 0.001
+    }
+  },
+  "config": {
+    "tfMin": 5,
+    "universe": {
+      "minVolatility24hPct": 0,
+      "minTurnover24hUSDT": 0,
+      "maxSymbols": 1
+    },
+    "signal": {
+      "priceMovePctThreshold": 0.5,
+      "oivMovePctThreshold": 0.5
+    },
+    "trade": {
+      "marginUSDT": 100,
+      "leverage": 10,
+      "entryOffsetPct": 0,
+      "entryOrderTimeoutMin": 1,
+      "tpRoiPct": 1,
+      "slRoiPct": 1
+    },
+    "fundingCooldown": {
+      "beforeMin": 5,
+      "afterMin": 5
+    },
+    "fees": {
+      "makerRate": 0.0002,
+      "takerRate": 0.00055
+    }
+  },
+  "expected": {
+    "majorSequence": [
+      "signal_fired",
+      "order_placed",
+      "order_filled",
+      "position_opened",
+      "position_closed"
+    ],
+    "exitReason": "TP"
+  },
+  "frames": [
+    {
+      "t": 0,
+      "tickers": {
+        "BTCUSDT": {
+          "markPrice": 100,
+          "openInterestValue": 1000,
+          "turnover24h": 1000000,
+          "highPrice24h": 105,
+          "lowPrice24h": 95,
+          "fundingRate": 0.0001,
+          "nextFundingTime": 1700010000000
+        }
+      },
+      "klines": [
+        {
+          "symbol": "BTCUSDT",
+          "tfMin": 5,
+          "candle": {
+            "start": 1699999700000,
+            "end": 1700000000000,
+            "open": 99,
+            "high": 100,
+            "low": 98,
+            "close": 100,
+            "confirm": true,
+            "timestamp": 1700000000000
+          }
+        }
+      ]
+    },
+    {
+      "t": 1,
+      "tickers": {
+        "BTCUSDT": {
+          "markPrice": 100.4,
+          "openInterestValue": 1004,
+          "fundingRate": 0.0001,
+          "nextFundingTime": 1700010000000
+        }
+      }
+    },
+    {
+      "t": 2,
+      "tickers": {
+        "BTCUSDT": {
+          "markPrice": 101,
+          "openInterestValue": 1010,
+          "fundingRate": 0.0001,
+          "nextFundingTime": 1700010000000
+        }
+      }
+    },
+    {
+      "t": 3,
+      "tickers": {
+        "BTCUSDT": {
+          "markPrice": 100.9,
+          "openInterestValue": 1012,
+          "fundingRate": 0.0001,
+          "nextFundingTime": 1700010000000
+        }
+      }
+    },
+    {
+      "t": 4,
+      "tickers": {
+        "BTCUSDT": {
+          "markPrice": 101.2,
+          "openInterestValue": 1015,
+          "fundingRate": 0.0001,
+          "nextFundingTime": 1700010000000
+        }
+      }
+    },
+    {
+      "t": 5,
+      "tickers": {
+        "BTCUSDT": {
+          "markPrice": 100.2,
+          "openInterestValue": 1002,
+          "fundingRate": 0.0001,
+          "nextFundingTime": 1700010000000
+        }
+      }
+    }
+  ]
+}
