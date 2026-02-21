@@ -27,21 +27,19 @@ type Shard = {
   watchdogInterval?: ReturnType<typeof setInterval>;
 };
 
-type Listener = (...args: any[]) => void;
-
 class SimpleEmitter {
-  private listeners = new Map<string, Listener[]>();
+  private listeners = new Map<string, Array<(payload: unknown) => void>>();
 
-  on(event: string, listener: Listener): void {
+  on(event: string, listener: (payload: unknown) => void): void {
     const list = this.listeners.get(event) ?? [];
     list.push(listener);
     this.listeners.set(event, list);
   }
 
-  emit(event: string, ...args: unknown[]): void {
+  emit(event: string, payload: unknown): void {
     const list = this.listeners.get(event) ?? [];
     for (const listener of list) {
-      listener(...args);
+      listener(payload);
     }
   }
 }
@@ -327,7 +325,8 @@ export class BybitWsClient extends SimpleEmitter {
         attempt: shard.reconnectAttempts + 1,
         reason: 'watchdog_timeout',
       });
-      (shard.ws as any).terminate();
+      const wsWithTerminate = shard.ws as WebSocket & { terminate?: () => void };
+      wsWithTerminate.terminate?.();
     }, Math.min(this.options.pingIntervalMs, 5_000));
   }
 
@@ -362,7 +361,8 @@ export class BybitWsClient extends SimpleEmitter {
     this.clearWatchdog(shard);
 
     if (shard.ws) {
-      (shard.ws as any).removeAllListeners();
+      const wsWithCleanup = shard.ws as WebSocket & { removeAllListeners?: () => void };
+      wsWithCleanup.removeAllListeners?.();
       if (shard.ws.readyState === WebSocket.OPEN || shard.ws.readyState === WebSocket.CONNECTING) {
         shard.ws.close();
       }
@@ -389,7 +389,7 @@ export class BybitWsClient extends SimpleEmitter {
       const merged = { ...prev, ...ticker.patch };
       this.tickerState.set(ticker.symbol, merged);
       this.onTickerCb?.(ticker.symbol, ticker.patch);
-      this.emit('ticker', ticker.symbol, ticker.patch);
+      this.emit('ticker', { symbol: ticker.symbol, patch: ticker.patch });
       return;
     }
 
@@ -400,7 +400,7 @@ export class BybitWsClient extends SimpleEmitter {
 
     for (const event of klines) {
       this.onKlineCb?.(event.symbol, event.tfMin, event.candle);
-      this.emit('kline', event.symbol, event.tfMin, event.candle);
+      this.emit('kline', { symbol: event.symbol, tfMin: event.tfMin, candle: event.candle });
     }
   }
 

@@ -23,10 +23,13 @@
 - If a full tick payload exceeds **1MB**, engine logs one non-fatal `error` (`scope=ENGINE_TICK`, `code=PAYLOAD_TOO_LARGE_DELTA_MODE`) and switches to true symbol deltas for subsequent ticks.
 
 ## Stability hardening notes
-- Session runtime has a deterministic 1Hz scheduler (`tickOnce`) that drives:
-  - strategy evaluation,
-  - paper broker processing,
-  - outbound `tick` aggregation.
+- Session runtime has a deterministic single 1Hz scheduler (`tickOnce`) with fixed order:
+  1. read merged market stores,
+  2. evaluate cooldown,
+  3. evaluate strategy intents,
+  4. advance paper broker + place entries,
+  5. aggregate/broadcast `tick`,
+  6. flush event logger queue.
 - Bybit WS reconnect path emits frontend `error` messages (`scope=BYBIT_WS`, `code=RECONNECTING`) and persists matching `error` events.
 
 ## Invariant checks (non-fatal diagnostics)

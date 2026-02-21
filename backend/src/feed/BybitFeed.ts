@@ -29,7 +29,7 @@ export class BybitFeed implements MarketFeed {
     return this.client.getSubscriptionReport();
   }
 
-  on(event: string, listener: (...args: unknown[]) => void): void {
+  on(event: string, listener: (payload: unknown) => void): void {
     this.client.on(event, listener);
   }
 }

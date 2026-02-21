@@ -1,4 +1,4 @@
-import type { Cooldown } from '../api/dto';
+import type { Cooldown } from '../types/dto';
 import type { MarketState } from './types';
 
 export interface FundingCooldownConfig {

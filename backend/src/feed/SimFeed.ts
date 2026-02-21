@@ -16,7 +16,7 @@ export interface SimScenario {
   frames: SimFrame[];
 }
 
-type Listener = (...args: unknown[]) => void;
+type Listener = (payload: unknown) => void;
 
 export class SimFeed implements MarketFeed {
   private readonly listeners = new Map<string, Listener[]>();
@@ -87,7 +87,7 @@ export class SimFeed implements MarketFeed {
         continue;
       }
       this.callbacks.onTickerPatch(symbol, patch);
-      this.emit('ticker', symbol, patch);
+      this.emit('ticker', { symbol, patch });
     }
 
     for (const item of frame.klines ?? []) {
@@ -98,14 +98,14 @@ export class SimFeed implements MarketFeed {
         continue;
       }
       this.callbacks.onKline(item.symbol, item.tfMin, item.candle);
-      this.emit('kline', item.symbol, item.tfMin, item.candle);
+      this.emit('kline', { symbol: item.symbol, tfMin: item.tfMin, candle: item.candle });
     }
   }
 
-  private emit(event: string, ...args: unknown[]): void {
+  private emit(event: string, payload: unknown): void {
     const list = this.listeners.get(event) ?? [];
     for (const listener of list) {
-      listener(...args);
+      listener(payload);
     }
   }
 }

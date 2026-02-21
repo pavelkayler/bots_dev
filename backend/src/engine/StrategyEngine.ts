@@ -1,4 +1,4 @@
-import type { SessionStartRequest } from '../api/dto';
+import type { SessionStartRequest } from '../types/dto';
 
 export type SignalSide = 'LONG' | 'SHORT';
 

@@ -9,6 +9,8 @@ declare module 'luxon' {
 }
 
 declare const process: {
+  argv: string[];
+  env: Record<string, string | undefined>;
   on(event: string, listener: (...args: unknown[]) => void): void;
   exit(code?: number): void;
 };

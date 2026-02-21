@@ -1,4 +1,4 @@
-import type { OrderSide } from '../api/dto';
+import type { OrderSide } from '../types/dto';
 
 export type PositionSide = 'LONG' | 'SHORT';
 

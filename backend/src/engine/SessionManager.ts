@@ -16,16 +16,18 @@ import type {
   SnapshotMessage,
   SymbolRow,
   TickMessage,
-} from '../api/dto';
+  WsErrorCode,
+} from '../types/dto';
+import { WS_ERROR_CODES } from '../types/dto';
 import { CandleTracker } from './CandleTracker';
 import { FundingCooldownGate } from './FundingCooldownGate';
 import { MarketStateStore } from './MarketStateStore';
 import { StrategyEngine } from './StrategyEngine';
 import { UniverseBuilder } from './UniverseBuilder';
-import type { InstrumentSpecMap } from './types';
+import type { InstrumentSpecMap } from '../types/engine';
 import { PaperBroker, type BrokerEvent } from '../paper/PaperBroker';
 import { EventLogger } from '../logging/EventLogger';
-import type { MarketTick } from '../paper/models';
+import type { MarketTick } from '../types/paper';
 import { BybitFeed } from '../feed/BybitFeed';
 import type { MarketFeed } from '../feed/MarketFeed';
 
@@ -82,31 +84,33 @@ export class SessionManager {
 
     this.universeBuilder = new UniverseBuilder(this.marketFeed, this.marketStateStore);
 
-    this.marketFeed.on('reconnecting', (payload: { shardId: number; attempt: number; reason: string }) => {
+    this.marketFeed.on('reconnecting', (payload) => {
+      const reconnectPayload = payload as { shardId: number; attempt: number; reason: string };
       this.emitError({
         type: 'error',
         ts: Date.now(),
         sessionId: this.sessionId,
         scope: 'BYBIT_WS',
-        code: 'RECONNECTING',
+        code: WS_ERROR_CODES.RECONNECTING,
         message: 'Disconnected from Bybit public WS; reconnect scheduled.',
-        data: payload,
+        data: reconnectPayload,
       });
       this.addAndEmitEvents([
         this.addEvent('error', 'SYSTEM', {
           scope: 'BYBIT_WS',
-          code: 'RECONNECTING',
-          ...payload,
+          code: WS_ERROR_CODES.RECONNECTING,
+          ...reconnectPayload,
           message: 'Disconnected from Bybit public WS; reconnect scheduled.',
         }),
       ]);
     });
 
-    this.marketFeed.on('ws_error', (error: Error) => {
+    this.marketFeed.on('ws_error', (payload) => {
+      const error = payload instanceof Error ? payload : new Error(String(payload));
       this.addAndEmitEvents([
         this.addEvent('error', 'SYSTEM', {
           scope: 'BYBIT_WS',
-          code: 'BYBIT_WS_ERROR',
+          code: WS_ERROR_CODES.BYBIT_WS_ERROR,
           message: error.message,
         }),
       ]);
@@ -282,6 +286,13 @@ export class SessionManager {
 
     const nowTs = Date.now();
     this.lastTickTs = nowTs;
+    // Deterministic 1Hz pipeline order:
+    // 1) use feed patches already merged in stores (snapshot read),
+    // 2) evaluate cooldown gate,
+    // 3) evaluate strategy intents (when not in cooldown),
+    // 4) advance broker (fills/expiries/exits/funding) and place new orders,
+    // 5) compute DTO rows and broadcast tick,
+    // 6) flush event logger queue through append/stream backpressure.
     this.runTradingLoop(nowTs, this.config);
     this.rebuildSymbolRows(nowTs);
     this.checkInvariants();
@@ -306,14 +317,14 @@ export class SessionManager {
           ts: Date.now(),
           sessionId: this.sessionId,
           scope: 'ENGINE_TICK',
-          code: 'PAYLOAD_TOO_LARGE_DELTA_MODE',
+          code: WS_ERROR_CODES.PAYLOAD_TOO_LARGE_DELTA_MODE,
           message: 'Tick payload exceeded 1MB; switching to delta symbols mode.',
           data: { payloadBytes, limitBytes: TICK_PAYLOAD_WARN_BYTES },
         });
         this.addAndEmitEvents([
           this.addEvent('error', 'SYSTEM', {
             scope: 'ENGINE_TICK',
-            code: 'PAYLOAD_TOO_LARGE_DELTA_MODE',
+            code: WS_ERROR_CODES.PAYLOAD_TOO_LARGE_DELTA_MODE,
             message: 'Tick payload exceeded 1MB; switching to delta symbols mode.',
             payloadBytes,
             limitBytes: TICK_PAYLOAD_WARN_BYTES,
@@ -389,13 +400,13 @@ export class SessionManager {
     this.activeInvariantKeys = nextActive;
   }
 
-  private assertInvariants(symbolState: SymbolRow): Array<{ code: string; message: string; data: Record<string, unknown> }> {
-    const violations: Array<{ code: string; message: string; data: Record<string, unknown> }> = [];
+  private assertInvariants(symbolState: SymbolRow): Array<{ code: WsErrorCode; message: string; data: Record<string, unknown> }> {
+    const violations: Array<{ code: WsErrorCode; message: string; data: Record<string, unknown> }> = [];
     const { symbol, status, order, position } = symbolState;
 
     if (status === 'ORDER_PLACED' && position) {
       violations.push({
-        code: 'STATUS_ORDER_WITH_POSITION',
+        code: WS_ERROR_CODES.STATUS_ORDER_WITH_POSITION,
         message: `Invariant failed for ${symbol}: ORDER_PLACED cannot have open position.`,
         data: { status, hasPosition: true },
       });
@@ -403,7 +414,7 @@ export class SessionManager {
 
     if (status === 'POSITION_OPEN' && !position) {
       violations.push({
-        code: 'STATUS_POSITION_MISSING',
+        code: WS_ERROR_CODES.STATUS_POSITION_MISSING,
         message: `Invariant failed for ${symbol}: POSITION_OPEN requires position payload.`,
         data: { status, hasPosition: false },
       });
@@ -411,7 +422,7 @@ export class SessionManager {
 
     if (order && order.expiresTs < order.placedTs) {
       violations.push({
-        code: 'ORDER_EXPIRY_BEFORE_PLACED',
+        code: WS_ERROR_CODES.ORDER_EXPIRY_BEFORE_PLACED,
         message: `Invariant failed for ${symbol}: order expires before placed timestamp.`,
         data: { placedTs: order.placedTs, expiresTs: order.expiresTs },
       });
@@ -419,7 +430,7 @@ export class SessionManager {
 
     if (order && (!Number.isFinite(order.qty) || order.qty <= 0)) {
       violations.push({
-        code: 'ORDER_QTY_INVALID',
+        code: WS_ERROR_CODES.ORDER_QTY_INVALID,
         message: `Invariant failed for ${symbol}: order qty must be finite and > 0.`,
         data: { qty: order.qty },
       });
@@ -427,7 +438,7 @@ export class SessionManager {
 
     if (position && (!Number.isFinite(position.qty) || position.qty <= 0)) {
       violations.push({
-        code: 'POSITION_QTY_INVALID',
+        code: WS_ERROR_CODES.POSITION_QTY_INVALID,
         message: `Invariant failed for ${symbol}: position qty must be finite and > 0.`,
         data: { qty: position.qty },
       });
@@ -436,7 +447,7 @@ export class SessionManager {
     if (position) {
       if (position.side === 'LONG' && (position.tpPrice <= position.entryPrice || position.slPrice >= position.entryPrice)) {
         violations.push({
-          code: 'POSITION_LONG_TP_SL_INVALID',
+          code: WS_ERROR_CODES.POSITION_LONG_TP_SL_INVALID,
           message: `Invariant failed for ${symbol}: LONG requires tpPrice>entryPrice and slPrice<entryPrice.`,
           data: { entryPrice: position.entryPrice, tpPrice: position.tpPrice, slPrice: position.slPrice },
         });
@@ -444,7 +455,7 @@ export class SessionManager {
 
       if (position.side === 'SHORT' && (position.tpPrice >= position.entryPrice || position.slPrice <= position.entryPrice)) {
         violations.push({
-          code: 'POSITION_SHORT_TP_SL_INVALID',
+          code: WS_ERROR_CODES.POSITION_SHORT_TP_SL_INVALID,
           message: `Invariant failed for ${symbol}: SHORT requires tpPrice<entryPrice and slPrice>entryPrice.`,
           data: { entryPrice: position.entryPrice, tpPrice: position.tpPrice, slPrice: position.slPrice },
         });
@@ -543,53 +554,75 @@ export class SessionManager {
     );
     this.applyCooldownState(evaluatedCooldown);
 
-    const markBySymbol = this.getMarkBySymbol(marketSnapshot);
+    const strategyIntents: Array<{
+      symbol: string;
+      side: 'LONG' | 'SHORT';
+      markPrice: number;
+      prevCandleClose?: number;
+      prevCandleOivUSDT?: number;
+      priceMovePct: number;
+      oivMovePct: number;
+      fundingRate?: number;
+      nextFundingTimeTs?: number;
+    }> = [];
+
+    if (!this.cooldown.isActive) {
+      for (const symbol of this.universe) {
+        const market = marketSnapshot.get(symbol);
+        const candleRef = this.candleTracker.get(symbol);
+        const hasCandleRef =
+          candleRef?.prevCandleClose !== undefined && candleRef.prevCandleOivUSDT !== undefined;
+
+        const decision = this.strategyEngine.evaluate(
+          {
+            symbol,
+            markPrice: market?.markPrice,
+            oivUSDT: market?.openInterestValue,
+            fundingRate: market?.fundingRate,
+            prevCandleClose: candleRef?.prevCandleClose,
+            prevCandleOivUSDT: candleRef?.prevCandleOivUSDT,
+            isArmed: this.paperBroker.canArm(symbol, nowTs) && hasCandleRef,
+            dataReady:
+              market?.fundingRate !== undefined &&
+              market?.nextFundingTime !== undefined &&
+              !this.marketStateStore.isDataStale(symbol, nowTs, DATA_STALE_MS),
+            cooldownBlocked: this.cooldown.isActive,
+          },
+          config,
+        );
+
+        if (!decision || market?.markPrice === undefined) {
+          continue;
+        }
+
+        strategyIntents.push({
+          symbol,
+          side: decision.side,
+          markPrice: market.markPrice,
+          prevCandleClose: candleRef?.prevCandleClose,
+          prevCandleOivUSDT: candleRef?.prevCandleOivUSDT,
+          priceMovePct: decision.priceMovePct,
+          oivMovePct: decision.oivMovePct,
+          fundingRate: market.fundingRate,
+          nextFundingTimeTs: market.nextFundingTime,
+        });
+      }
+    }
+
     const marketBySymbol = this.getMarketBySymbol(marketSnapshot);
     const brokerEvents = this.paperBroker.processTick(nowTs, marketBySymbol, config);
     this.addAndEmitBrokerEvents(brokerEvents);
 
-    if (this.cooldown.isActive) {
-      return;
-    }
-
-    for (const symbol of this.universe) {
-      const market = marketSnapshot.get(symbol);
-      const candleRef = this.candleTracker.get(symbol);
-      const hasCandleRef =
-        candleRef?.prevCandleClose !== undefined && candleRef.prevCandleOivUSDT !== undefined;
-
-      const decision = this.strategyEngine.evaluate(
-        {
-          symbol,
-          markPrice: market?.markPrice,
-          oivUSDT: market?.openInterestValue,
-          fundingRate: market?.fundingRate,
-          prevCandleClose: candleRef?.prevCandleClose,
-          prevCandleOivUSDT: candleRef?.prevCandleOivUSDT,
-          isArmed: this.paperBroker.canArm(symbol, nowTs) && hasCandleRef,
-          dataReady:
-            market?.fundingRate !== undefined &&
-            market?.nextFundingTime !== undefined &&
-            !this.marketStateStore.isDataStale(symbol, nowTs, DATA_STALE_MS),
-          cooldownBlocked: this.cooldown.isActive,
-        },
-        config,
-      );
-
-      if (!decision || market?.markPrice === undefined) {
-        continue;
-      }
-
-      const instrument = this.instrumentSpecs[symbol];
+    for (const intent of strategyIntents) {
+      const instrument = this.instrumentSpecs[intent.symbol];
       if (!instrument) {
         continue;
       }
 
-      const side = decision.side;
       const orderEvents = this.paperBroker.placeEntryOrder({
-        symbol,
-        side,
-        markPrice: market.markPrice,
+        symbol: intent.symbol,
+        side: intent.side,
+        markPrice: intent.markPrice,
         nowTs,
         config,
         instrument,
@@ -597,17 +630,17 @@ export class SessionManager {
 
       if (orderEvents.length > 0) {
         this.addAndEmitEvents([
-          this.addEvent('signal_fired', symbol, {
+          this.addEvent('signal_fired', intent.symbol, {
             tfMin: config.tfMin,
-            decision: side,
-            markPrice: market.markPrice,
-            prevCandleClose: candleRef?.prevCandleClose,
-            priceMovePct: decision.priceMovePct,
-            oivUSDT: market.openInterestValue,
-            prevCandleOivUSDT: candleRef?.prevCandleOivUSDT,
-            oivMovePct: decision.oivMovePct,
-            fundingRate: market.fundingRate,
-            nextFundingTimeTs: market.nextFundingTime,
+            decision: intent.side,
+            markPrice: intent.markPrice,
+            prevCandleClose: intent.prevCandleClose,
+            priceMovePct: intent.priceMovePct,
+            oivUSDT: marketSnapshot.get(intent.symbol)?.openInterestValue,
+            prevCandleOivUSDT: intent.prevCandleOivUSDT,
+            oivMovePct: intent.oivMovePct,
+            fundingRate: intent.fundingRate,
+            nextFundingTimeTs: intent.nextFundingTimeTs,
           }),
           ...orderEvents.map((event) => this.addEvent(event.type, event.symbol, event.data)),
         ]);
