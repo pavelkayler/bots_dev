@@ -6,3 +6,20 @@ body {
 code {
   font-size: 12px;
 }
+
+.symbols-table-wrap {
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.symbols-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
+  white-space: nowrap;
+}
+
+td code {
+  white-space: pre-wrap;
+}

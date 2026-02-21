@@ -31,6 +31,7 @@ import type { MarketFeed } from '../feed/MarketFeed';
 
 const TICK_MS = 1_000;
 const DATA_STALE_MS = 5_000;
+const TICK_PAYLOAD_WARN_BYTES = 1024 * 1024;
 
 export class SessionManager {
   private sessionId: string | null = null;
@@ -45,6 +46,10 @@ export class SessionManager {
   private eventSeq = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastTickTs: number | null = null;
+  private useDeltaTickMode = false;
+  private payloadWarned = false;
+  private previousSymbolSnapshots = new Map<string, string>();
+  private activeInvariantKeys = new Set<string>();
 
   private instrumentSpecs: InstrumentSpecMap = {};
 
@@ -136,6 +141,10 @@ export class SessionManager {
     this.cooldown = { isActive: false, reason: null, fromTs: null, untilTs: null };
     this.events = [];
     this.eventSeq = 0;
+    this.useDeltaTickMode = false;
+    this.payloadWarned = false;
+    this.previousSymbolSnapshots.clear();
+    this.activeInvariantKeys.clear();
 
     this.instrumentSpecs = await fetchInstrumentsInfoLinear();
     const candidateSymbols = this.buildCandidateSymbols(this.instrumentSpecs);
@@ -220,6 +229,8 @@ export class SessionManager {
       this.tfMin = 5;
       this.sessionId = null;
       this.lastTickTs = null;
+      this.previousSymbolSnapshots.clear();
+      this.activeInvariantKeys.clear();
     }
 
     return { ok: true, sessionId: activeSessionId, state: 'STOPPED' };
@@ -273,19 +284,174 @@ export class SessionManager {
     this.lastTickTs = nowTs;
     this.runTradingLoop(nowTs, this.config);
     this.rebuildSymbolRows(nowTs);
+    this.checkInvariants();
 
-    const tickMessage: TickMessage = {
+    const currentRows = Array.from(this.symbols.values());
+    const fullTickMessage: TickMessage = {
       type: 'tick',
       ts: nowTs,
       session: { sessionId: this.sessionId, state: this.state },
       counts: this.counts,
       cooldown: this.cooldown,
-      symbolsDelta: Array.from(this.symbols.values()),
+      symbolsDelta: currentRows,
+    };
+
+    const payloadBytes = JSON.stringify(fullTickMessage).length;
+    if (!this.useDeltaTickMode && payloadBytes > TICK_PAYLOAD_WARN_BYTES) {
+      this.useDeltaTickMode = true;
+      if (!this.payloadWarned) {
+        this.payloadWarned = true;
+        this.emitError({
+          type: 'error',
+          ts: Date.now(),
+          sessionId: this.sessionId,
+          scope: 'ENGINE_TICK',
+          code: 'PAYLOAD_TOO_LARGE_DELTA_MODE',
+          message: 'Tick payload exceeded 1MB; switching to delta symbols mode.',
+          data: { payloadBytes, limitBytes: TICK_PAYLOAD_WARN_BYTES },
+        });
+        this.addAndEmitEvents([
+          this.addEvent('error', 'SYSTEM', {
+            scope: 'ENGINE_TICK',
+            code: 'PAYLOAD_TOO_LARGE_DELTA_MODE',
+            message: 'Tick payload exceeded 1MB; switching to delta symbols mode.',
+            payloadBytes,
+            limitBytes: TICK_PAYLOAD_WARN_BYTES,
+          }),
+        ]);
+      }
+    }
+
+    const symbolsDelta = this.useDeltaTickMode ? this.computeSymbolDeltas(currentRows) : currentRows;
+    const tickMessage: TickMessage = {
+      ...fullTickMessage,
+      symbolsDelta,
     };
 
     for (const listener of this.tickListeners) {
       listener(tickMessage);
     }
+
+    this.updateSymbolSnapshotCache(currentRows);
+  }
+
+
+  private computeSymbolDeltas(rows: SymbolRow[]): SymbolRow[] {
+    const changed: SymbolRow[] = [];
+    for (const row of rows) {
+      const encoded = JSON.stringify(row);
+      if (this.previousSymbolSnapshots.get(row.symbol) !== encoded) {
+        changed.push(row);
+      }
+    }
+    return changed;
+  }
+
+  private updateSymbolSnapshotCache(rows: SymbolRow[]): void {
+    const next = new Map<string, string>();
+    for (const row of rows) {
+      next.set(row.symbol, JSON.stringify(row));
+    }
+    this.previousSymbolSnapshots = next;
+  }
+
+  private checkInvariants(): void {
+    const nextActive = new Set<string>();
+
+    for (const row of this.symbols.values()) {
+      const violations = this.assertInvariants(row);
+      for (const violation of violations) {
+        const key = `${row.symbol}:${violation.code}`;
+        nextActive.add(key);
+        if (this.activeInvariantKeys.has(key)) {
+          continue;
+        }
+        this.emitError({
+          type: 'error',
+          ts: Date.now(),
+          sessionId: this.sessionId,
+          scope: 'ENGINE_INVARIANT',
+          code: violation.code,
+          message: violation.message,
+          data: { symbol: row.symbol, ...violation.data },
+        });
+        this.addAndEmitEvents([
+          this.addEvent('error', row.symbol, {
+            scope: 'ENGINE_INVARIANT',
+            code: violation.code,
+            message: violation.message,
+            ...violation.data,
+          }),
+        ]);
+      }
+    }
+
+    this.activeInvariantKeys = nextActive;
+  }
+
+  private assertInvariants(symbolState: SymbolRow): Array<{ code: string; message: string; data: Record<string, unknown> }> {
+    const violations: Array<{ code: string; message: string; data: Record<string, unknown> }> = [];
+    const { symbol, status, order, position } = symbolState;
+
+    if (status === 'ORDER_PLACED' && position) {
+      violations.push({
+        code: 'STATUS_ORDER_WITH_POSITION',
+        message: `Invariant failed for ${symbol}: ORDER_PLACED cannot have open position.`,
+        data: { status, hasPosition: true },
+      });
+    }
+
+    if (status === 'POSITION_OPEN' && !position) {
+      violations.push({
+        code: 'STATUS_POSITION_MISSING',
+        message: `Invariant failed for ${symbol}: POSITION_OPEN requires position payload.`,
+        data: { status, hasPosition: false },
+      });
+    }
+
+    if (order && order.expiresTs < order.placedTs) {
+      violations.push({
+        code: 'ORDER_EXPIRY_BEFORE_PLACED',
+        message: `Invariant failed for ${symbol}: order expires before placed timestamp.`,
+        data: { placedTs: order.placedTs, expiresTs: order.expiresTs },
+      });
+    }
+
+    if (order && (!Number.isFinite(order.qty) || order.qty <= 0)) {
+      violations.push({
+        code: 'ORDER_QTY_INVALID',
+        message: `Invariant failed for ${symbol}: order qty must be finite and > 0.`,
+        data: { qty: order.qty },
+      });
+    }
+
+    if (position && (!Number.isFinite(position.qty) || position.qty <= 0)) {
+      violations.push({
+        code: 'POSITION_QTY_INVALID',
+        message: `Invariant failed for ${symbol}: position qty must be finite and > 0.`,
+        data: { qty: position.qty },
+      });
+    }
+
+    if (position) {
+      if (position.side === 'LONG' && (position.tpPrice <= position.entryPrice || position.slPrice >= position.entryPrice)) {
+        violations.push({
+          code: 'POSITION_LONG_TP_SL_INVALID',
+          message: `Invariant failed for ${symbol}: LONG requires tpPrice>entryPrice and slPrice<entryPrice.`,
+          data: { entryPrice: position.entryPrice, tpPrice: position.tpPrice, slPrice: position.slPrice },
+        });
+      }
+
+      if (position.side === 'SHORT' && (position.tpPrice >= position.entryPrice || position.slPrice <= position.entryPrice)) {
+        violations.push({
+          code: 'POSITION_SHORT_TP_SL_INVALID',
+          message: `Invariant failed for ${symbol}: SHORT requires tpPrice<entryPrice and slPrice>entryPrice.`,
+          data: { entryPrice: position.entryPrice, tpPrice: position.tpPrice, slPrice: position.slPrice },
+        });
+      }
+    }
+
+    return violations;
   }
 
   private stopTicker(): void {

@@ -33,6 +33,7 @@ export interface AppState {
   wsConnected: boolean;
   wsConnectionState: WsConnectionState;
   wsLastMessageTs: number | null;
+  lastTickTs: number | null;
   wsHello: { protocolVersion: number; serverName: string; serverEnv: string } | null;
   sessionId: string | null;
   sessionState: SessionState;
@@ -67,6 +68,7 @@ const state: AppState = {
   lastError: null,
   operatorAlerts: [],
   startResponse: null,
+  lastTickTs: null,
 };
 
 const listeners = new Set<() => void>();
@@ -148,6 +150,7 @@ export const appStore = {
       liveSymbolsByKey: new Map(symbolsByKey),
       events: message.eventsTail.slice(-MAX_EVENTS),
       wsLastMessageTs: message.ts,
+      lastTickTs: message.ts,
     });
   },
 
@@ -164,6 +167,7 @@ export const appStore = {
       cooldown: message.cooldown,
       liveSymbolsByKey: nextLiveMap,
       wsLastMessageTs: message.ts,
+      lastTickTs: message.ts,
     };
 
     if (!state.symbolsRenderPaused) {
