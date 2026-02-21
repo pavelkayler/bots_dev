@@ -8,9 +8,6 @@ type WsSocket = {
   send: (payload: string) => void;
   on: (event: 'close', listener: () => void) => void;
 };
-type WsConnection = { socket: WsSocket };
-const SOCKET_OPEN = 1;
-
 export class WsHub {
   private clients = new Set<WsSocket>();
 
@@ -22,12 +19,10 @@ export class WsHub {
   }
 
   attachRoutes(app: FastifyInstance): void {
-    app.get('/ws', { websocket: true }, (connection: WsConnection) => {
-      const socket = connection.socket;
+    app.get('/ws', { websocket: true }, (socket: WsSocket) => {
       this.clients.add(socket);
 
-      this.send(socket, this.makeHello());
-      this.send(socket, this.sessionManager.getSnapshot());
+      this.sendInitialMessages(socket);
 
       socket.on('close', () => {
         this.clients.delete(socket);
@@ -51,15 +46,26 @@ export class WsHub {
   private broadcast(message: OutboundMessage): void {
     const payload = JSON.stringify(message);
     for (const socket of this.clients) {
-      if (socket.readyState === SOCKET_OPEN) {
-        socket.send(payload);
-      }
+      this.safeSend(socket, payload);
     }
   }
 
   private send(socket: WsSocket, message: OutboundMessage): void {
-    if (socket.readyState === SOCKET_OPEN) {
-      socket.send(JSON.stringify(message));
+    this.safeSend(socket, JSON.stringify(message));
+  }
+
+  private sendInitialMessages(socket: WsSocket): void {
+    setTimeout(() => {
+      this.send(socket, this.makeHello());
+      this.send(socket, this.sessionManager.getSnapshot());
+    }, 0);
+  }
+
+  private safeSend(socket: WsSocket, payload: string): void {
+    try {
+      socket.send(payload);
+    } catch {
+      this.clients.delete(socket);
     }
   }
 }
