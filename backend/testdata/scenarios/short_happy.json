@@ -1,0 +1,65 @@
+{
+  "name": "short_happy",
+  "baseTs": 1700001000000,
+  "tfMin": 5,
+  "ticks": 8,
+  "symbols": ["ETHUSDT"],
+  "instrumentSpecs": {
+    "ETHUSDT": { "symbol": "ETHUSDT", "tickSize": 0.01, "qtyStep": 0.001, "minQty": 0.001 }
+  },
+  "config": {
+    "tfMin": 5,
+    "universe": { "minVolatility24hPct": 0, "minTurnover24hUSDT": 0, "maxSymbols": 1 },
+    "signal": { "priceMovePctThreshold": 0.5, "oivMovePctThreshold": 0.5 },
+    "trade": {
+      "marginUSDT": 100,
+      "leverage": 10,
+      "entryOffsetPct": 0,
+      "entryOrderTimeoutMin": 1,
+      "tpRoiPct": 1,
+      "slRoiPct": 1
+    },
+    "fundingCooldown": { "beforeMin": 5, "afterMin": 5 },
+    "fees": { "makerRate": 0.0002, "takerRate": 0.00055 }
+  },
+  "expected": {
+    "majorSequence": ["signal_fired", "order_placed", "order_filled", "position_opened", "position_closed"],
+    "exitReason": "SL"
+  },
+  "frames": [
+    {
+      "t": 0,
+      "tickers": {
+        "ETHUSDT": {
+          "markPrice": 200,
+          "openInterestValue": 2000,
+          "turnover24h": 800000,
+          "highPrice24h": 210,
+          "lowPrice24h": 190,
+          "fundingRate": -0.0002,
+          "nextFundingTime": 1700011000000
+        }
+      },
+      "klines": [
+        {
+          "symbol": "ETHUSDT",
+          "tfMin": 5,
+          "candle": {
+            "start": 1700000700000,
+            "end": 1700001000000,
+            "open": 201,
+            "high": 202,
+            "low": 199,
+            "close": 200,
+            "confirm": true,
+            "timestamp": 1700001000000
+          }
+        }
+      ]
+    },
+    { "t": 1, "tickers": { "ETHUSDT": { "markPrice": 199.4, "openInterestValue": 1988, "fundingRate": -0.0002, "nextFundingTime": 1700011000000 } } },
+    { "t": 2, "tickers": { "ETHUSDT": { "markPrice": 198.8, "openInterestValue": 1988, "fundingRate": -0.0002, "nextFundingTime": 1700011000000 } } },
+    { "t": 3, "tickers": { "ETHUSDT": { "markPrice": 199, "openInterestValue": 1985, "fundingRate": -0.0002, "nextFundingTime": 1700011000000 } } },
+    { "t": 4, "tickers": { "ETHUSDT": { "markPrice": 199.2, "openInterestValue": 1984, "fundingRate": -0.0002, "nextFundingTime": 1700011000000 } } }
+  ]
+}
