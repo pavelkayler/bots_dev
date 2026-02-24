@@ -50,6 +50,7 @@ export function useWsFeed() {
 
   // events (via WS)
   const [events, setEvents] = useState<LogEvent[]>([]);
+  const [eventStream, setEventStream] = useState<LogEvent[]>([]);
   const eventsLimitRef = useRef<number>(5);
 
   const send = useCallback((msg: ClientWsMessage) => {
@@ -164,6 +165,7 @@ export function useWsFeed() {
               const lim = eventsLimitRef.current;
               return next.length > lim ? next.slice(next.length - lim) : next;
             });
+            setEventStream((prev) => [...prev, ev]);
             return;
           }
 
@@ -225,6 +227,7 @@ export function useWsFeed() {
     botStats,
 
     events,
+    eventStream,
     requestEventsTail,
     requestRowsRefresh
   };

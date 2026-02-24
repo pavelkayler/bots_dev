@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Container, Form } from "react-bootstrap";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -11,6 +11,9 @@ import { BotSummaryBar } from "./components/BotSummaryBar";
 import type { SymbolRow } from "../../shared/types/domain";
 import { ConfigPanel } from "../../features/config/components/ConfigPanel";
 import { SessionSummaryPanel } from "../../features/summary/components/SessionSummaryPanel";
+import { useRuntimeConfig } from "../../features/config/hooks/useRuntimeConfig";
+import { useTradeStatsBySymbol } from "../../features/stats/hooks/useTradeStatsBySymbol";
+import { TradeStatsBySymbolTable } from "../../features/stats/components/TradeStatsBySymbolTable";
 
 export function DashboardPage() {
   const {
@@ -23,14 +26,22 @@ export function DashboardPage() {
     universeSelectedId,
     universeSymbolsCount,
     events,
+    eventStream,
     botStats,
     requestEventsTail,
     requestRowsRefresh
   } = useWsFeed();
 
   const { status, busy, error, start, stop, canStart, canStop } = useSessionRuntime();
+  const { config } = useRuntimeConfig();
 
   const [activeOnly, setActiveOnly] = useState(true);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const universeReady = Boolean(universeSelectedId) && universeSymbolsCount > 0;
   const canStartFinal = canStart && universeReady;
@@ -44,6 +55,15 @@ export function DashboardPage() {
       return paperActive || hasSignal;
     });
   }, [rows, activeOnly]);
+
+  const klineTfMin = Number(config?.universe?.klineTfMin ?? 1);
+  const tfMs = Math.max(1, klineTfMin) * 60_000;
+  const remMs = tfMs - (nowMs % tfMs);
+  const remMin = Math.floor(remMs / 60_000);
+  const remSec = Math.floor((remMs % 60_000) / 1000);
+  const nextCandle = `${remMin}:${remSec.toString().padStart(2, "0")}`;
+
+  const tradeStats = useTradeStatsBySymbol(status.sessionState, status.sessionId, eventStream);
 
   return (
     <>
@@ -76,9 +96,10 @@ export function DashboardPage() {
         <Card className="mb-3">
           <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
             <b>Live rows (1Hz)</b>
-            <div className="ms-auto d-flex align-items-center gap-2">
+            <div className="ms-auto d-flex align-items-center gap-2 flex-wrap">
               <Form.Check type="switch" id="active-only" label="Active only" checked={activeOnly} onChange={(e) => setActiveOnly(e.currentTarget.checked)} />
               <Badge bg="secondary">rows: {displayedRows.length}</Badge>
+              <span style={{ fontSize: 12, opacity: 0.85 }}>Next candle in: {nextCandle}</span>
               <Button size="sm" variant="outline-secondary" onClick={() => requestRowsRefresh("tick")}>
                 Refresh rows
               </Button>
@@ -86,6 +107,15 @@ export function DashboardPage() {
           </Card.Header>
           <Card.Body>
             <LiveRowsTable rows={displayedRows} />
+          </Card.Body>
+        </Card>
+
+        <Card className="mb-3">
+          <Card.Header>
+            <b>Trade stats by symbol</b>
+          </Card.Header>
+          <Card.Body>
+            <TradeStatsBySymbolTable stats={tradeStats} />
           </Card.Body>
         </Card>
 

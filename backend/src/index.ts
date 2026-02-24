@@ -19,7 +19,7 @@ export async function buildApp() {
       const ok = /^http:\/\/(localhost|127\.0\.0\.1):5173$/.test(origin);
       return cb(null, ok);
     },
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type"]
   });
 
