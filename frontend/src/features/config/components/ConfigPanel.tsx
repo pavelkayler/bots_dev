@@ -16,7 +16,7 @@ type Props = {
 };
 
 export function ConfigPanel({ sessionState }: Props) {
-  const { draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, reload, save, reset } = useRuntimeConfig();
+  const { draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save } = useRuntimeConfig();
 
   const [universeList, setUniverseList] = useState<UniverseMeta[]>([]);
   const [universeLoading, setUniverseLoading] = useState(false);
@@ -106,12 +106,6 @@ export function ConfigPanel({ sessionState }: Props) {
         ) : null}
 
         <div className="ms-auto d-flex align-items-center gap-2">
-          <Button size="sm" variant="outline-secondary" onClick={() => void reload()} disabled={saving}>
-            Reload
-          </Button>
-          <Button size="sm" variant="outline-secondary" onClick={reset} disabled={!dirty || disabled || saving}>
-            Reset
-          </Button>
           <Button size="sm" variant="success" onClick={() => void save()} disabled={!dirty || disabled || saving}>
             Apply
           </Button>
