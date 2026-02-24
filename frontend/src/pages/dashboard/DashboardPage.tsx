@@ -82,7 +82,7 @@ export function DashboardPage() {
         <ConfigPanel sessionState={status.sessionState} />
 
         <h4 className="mb-2">Live rows (1Hz)</h4>
-        <LiveRowsTable />
+        <LiveRowsTable rows={displayedRows} />
 
         <EventsTail enabled={status.sessionState === "RUNNING"} events={events} onRequestTail={requestEventsTail} />
 
