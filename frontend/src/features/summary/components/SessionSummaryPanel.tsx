@@ -9,10 +9,11 @@ import { TradesTable } from "./TradesTable";
 type Props = {
   sessionState: SessionState;
   sessionId: string | null;
+  suppressStopRefresh?: boolean;
 };
 
-export function SessionSummaryPanel({ sessionState, sessionId }: Props) {
-  const { data, loading, error, lastUpdatedAt, refresh } = useSessionSummary(sessionState, sessionId);
+export function SessionSummaryPanel({ sessionState, sessionId, suppressStopRefresh }: Props) {
+  const { data, loading, error, lastUpdatedAt, refresh } = useSessionSummary(sessionState, sessionId, suppressStopRefresh);
 
   return (
     <Card className="mb-3">

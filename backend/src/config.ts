@@ -20,6 +20,7 @@ export const CONFIG = {
 
     paper: {
         enabled: true,
+        longOnly: false,
 
         marginUSDT: 10,
         leverage: 5,

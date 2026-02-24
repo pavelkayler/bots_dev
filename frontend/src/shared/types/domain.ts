@@ -25,6 +25,7 @@ export type RuntimeConfig = {
   };
   paper: {
     enabled: boolean;
+    longOnly: boolean;
     marginUSDT: number;
     leverage: number;
 

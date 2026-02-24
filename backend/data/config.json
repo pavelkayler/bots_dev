@@ -120,6 +120,7 @@
     "slRoiPct": 5,
     "makerFeeRate": 0.0002,
     "applyFunding": true,
-    "rearmDelayMs": 1000
+    "rearmDelayMs": 1000,
+    "longOnly": false
   }
 }

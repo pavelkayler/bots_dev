@@ -22,6 +22,7 @@ export type SignalConfig = {
     priceThresholdPct: number; // e.g. 0.3 means 0.3%
     oivThresholdPct: number;   // e.g. 0.3 means 0.3%
     requireFundingSign: boolean;
+    longOnly?: boolean;
 };
 
 export class SignalEngine {
@@ -58,6 +59,7 @@ export class SignalEngine {
         }
 
         if (longMatch) return { signal: "LONG", reason: "ok_long" };
+        if (this.cfg.longOnly) return { signal: null, reason: "threshold_not_met" };
         return { signal: "SHORT", reason: "ok_short" };
     }
 }

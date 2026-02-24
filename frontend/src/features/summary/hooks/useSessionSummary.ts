@@ -3,7 +3,7 @@ import type { SessionState } from "../../../shared/types/domain";
 import type { SessionSummaryResponse } from "../types";
 import { fetchSessionSummary } from "../api/summaryApi";
 
-export function useSessionSummary(sessionState: SessionState, sessionId: string | null) {
+export function useSessionSummary(sessionState: SessionState, sessionId: string | null, suppressStopRefresh = false) {
   const [data, setData] = useState<SessionSummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,10 +38,10 @@ export function useSessionSummary(sessionState: SessionState, sessionId: string 
     if (!sessionId) return;
 
     // Summary is generated on STOP. Refresh when we are not running.
-    if (sessionState !== "RUNNING") {
+    if (sessionState !== "RUNNING" && !suppressStopRefresh) {
       void refresh();
     }
-  }, [sessionState, sessionId, refresh]);
+  }, [sessionState, sessionId, refresh, suppressStopRefresh]);
 
   return { data, loading, error, lastUpdatedAt, refresh };
 }
