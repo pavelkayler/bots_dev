@@ -187,12 +187,12 @@ export function createWsHub(app: FastifyInstance) {
     priceThresholdPct: CONFIG.signals.priceThresholdPct,
     oivThresholdPct: CONFIG.signals.oivThresholdPct,
     requireFundingSign: CONFIG.signals.requireFundingSign,
-    longOnly: CONFIG.paper.longOnly,
+    directionMode: CONFIG.paper.directionMode,
   });
 
   function ensureEngines() {
     const cfg = configStore.get();
-    const key = JSON.stringify({ f: cfg.fundingCooldown, s: cfg.signals, p: { longOnly: cfg.paper.longOnly } });
+    const key = JSON.stringify({ f: cfg.fundingCooldown, s: cfg.signals, p: { directionMode: cfg.paper.directionMode } });
 
     if (key !== lastKey) {
       lastKey = key;
@@ -201,10 +201,10 @@ export function createWsHub(app: FastifyInstance) {
         priceThresholdPct: cfg.signals.priceThresholdPct,
         oivThresholdPct: cfg.signals.oivThresholdPct,
         requireFundingSign: cfg.signals.requireFundingSign,
-        longOnly: cfg.paper.longOnly,
+        directionMode: cfg.paper.directionMode,
       });
       app.log.info(
-        { cfg: { fundingCooldown: cfg.fundingCooldown, signals: cfg.signals, paper: { longOnly: cfg.paper.longOnly } } },
+        { cfg: { fundingCooldown: cfg.fundingCooldown, signals: cfg.signals, paper: { directionMode: cfg.paper.directionMode } } },
         "runtime config applied (wsHub)"
       );
     }
@@ -274,7 +274,7 @@ export function createWsHub(app: FastifyInstance) {
         cooldownActive,
       });
 
-      const signal = cfg.paper.longOnly && decision.signal === "SHORT" ? null : decision.signal;
+      const signal = decision.signal;
       const signalReason = signal ? decision.reason : "";
 
       out.push({

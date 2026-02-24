@@ -20,7 +20,7 @@ export const CONFIG = {
 
     paper: {
         enabled: true,
-        longOnly: false,
+        directionMode: "both" as "both" | "long" | "short",
 
         marginUSDT: 10,
         leverage: 5,
