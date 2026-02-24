@@ -217,9 +217,11 @@ export function createWsHub(app: FastifyInstance) {
 
   // Bybit upstream
   let streamsEnabled = runtime.getStatus().sessionState === "RUNNING";
+  let desiredStreams = streamsEnabled;
   let bybitConnected = false;
 
   let bybit: BybitWsClient | null = null;
+  let connectInFlight = false;
   let reconnectTimer: NodeJS.Timeout | null = null;
 
   // Universe tracking (auto-apply via reconnect when changed)
@@ -416,14 +418,16 @@ export function createWsHub(app: FastifyInstance) {
     const st = runtime.getStatus();
     if (st.sessionState === "RUNNING") {
       streamsEnabled = true;
-      void startBybit();
+      desiredStreams = true;
+      void startUpstreamIfNeeded();
       startTickTimer();
       broadcastStreamsState();
       return;
     }
 
     streamsEnabled = false;
-    stopBybitUpstream();
+    desiredStreams = false;
+    stopUpstreamHard();
     stopTickTimer();
     broadcastStreamsState();
   }
@@ -454,25 +458,33 @@ export function createWsHub(app: FastifyInstance) {
     }
   }
 
-  async function startBybit() {
-    if (!streamsEnabled) return;
+  async function startUpstreamIfNeeded() {
+    if (!desiredStreams) return;
+    if (connectInFlight) return;
     if (bybit) return;
+
+    connectInFlight = true;
 
     bybit = new BybitWsClient(CONFIG.bybit.wsUrl, {
       onOpen: () => {
+        connectInFlight = false;
         bybitConnected = true;
         app.log.info("bybit ws: open");
         broadcastStreamsState();
         subscribeAll();
       },
       onClose: () => {
+        connectInFlight = false;
+        bybit = null;
         bybitConnected = false;
         app.log.warn("bybit ws: close");
         broadcastStreamsState();
         scheduleReconnect();
       },
       onError: (err) => {
+        connectInFlight = false;
         app.log.error({ err }, "bybit ws: error");
+        scheduleReconnect();
       },
       onTicker: (topic, _type, data) => {
         const symbol = topic.slice("tickers.".length);
@@ -488,6 +500,7 @@ export function createWsHub(app: FastifyInstance) {
     try {
       await bybit.connect();
     } catch (err) {
+      connectInFlight = false;
       app.log.error({ err }, "bybit ws: connect failed");
       bybit = null;
       scheduleReconnect();
@@ -495,13 +508,16 @@ export function createWsHub(app: FastifyInstance) {
   }
 
   function scheduleReconnect() {
-    if (!streamsEnabled) return;
-    if (reconnectTimer) return;
+    if (!desiredStreams) return;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
 
     reconnectTimer = setTimeout(async () => {
       reconnectTimer = null;
 
-      if (!streamsEnabled) return;
+      if (!desiredStreams) return;
 
       try {
         bybit?.close();
@@ -510,15 +526,19 @@ export function createWsHub(app: FastifyInstance) {
       }
       bybit = null;
 
-      await startBybit();
+      await startUpstreamIfNeeded();
     }, 2000);
   }
 
-  function stopBybitUpstream() {
+  function stopUpstreamHard() {
+    desiredStreams = false;
+
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+
+    connectInFlight = false;
 
     try {
       bybit?.close();
@@ -535,8 +555,9 @@ export function createWsHub(app: FastifyInstance) {
     if (!streamsEnabled) return;
 
     app.log.info({ reason, universe: configStore.get().universe }, "apply subscriptions (reconnect bybit)");
-    stopBybitUpstream();
-    void startBybit();
+    stopUpstreamHard();
+    desiredStreams = true;
+    void startUpstreamIfNeeded();
   }
 
   function toggleStreams() {
@@ -545,12 +566,13 @@ export function createWsHub(app: FastifyInstance) {
     app.log.info({ streamsEnabled }, "streams toggle");
 
     if (!streamsEnabled) {
-      stopBybitUpstream();
+      stopUpstreamHard();
       return;
     }
 
+    desiredStreams = true;
     broadcastStreamsState();
-    void startBybit();
+    void startUpstreamIfNeeded();
   }
 
   function onConfigChange(cfg: RuntimeConfig, meta: any) {
@@ -650,6 +672,8 @@ export function createWsHub(app: FastifyInstance) {
 
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = null;
+
+    connectInFlight = false;
 
     try {
       bybit?.close();
