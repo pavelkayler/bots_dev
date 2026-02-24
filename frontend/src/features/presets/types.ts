@@ -3,12 +3,14 @@ import type { RuntimeConfig } from "../../shared/types/domain";
 export type PresetMeta = {
   id: string;
   name: string;
-  createdAt: number;
   updatedAt: number;
 };
 
 export type PresetFile = {
-  meta: PresetMeta;
+  id: string;
+  name: string;
+  createdAt?: number;
+  updatedAt?: number;
   config: RuntimeConfig;
 };
 

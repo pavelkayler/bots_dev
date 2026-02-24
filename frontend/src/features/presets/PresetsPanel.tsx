@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Spinner, Table } from "react-bootstrap";
 import type { SessionState } from "../../shared/types/domain";
 import { fmtTime } from "../../shared/utils/format";
-import { createPreset, listPresets, readPreset } from "./api";
+import { listPresets, readPreset, savePreset } from "./api";
 import type { PresetMeta } from "./types";
 import { updateRuntimeConfig, fetchRuntimeConfig } from "../config/api/configApi";
 
@@ -50,7 +50,7 @@ export function PresetsPanel({ sessionState }: Props) {
     setError(null);
     try {
       const cfg = await fetchRuntimeConfig();
-      await createPreset(name, cfg);
+      await savePreset(name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "preset", name, cfg);
       await refresh();
     } catch (e: any) {
       setError(String(e?.message ?? e));

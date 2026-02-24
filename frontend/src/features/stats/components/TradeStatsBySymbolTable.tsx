@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import { Table } from "react-bootstrap";
-import { fmtMoney, fmtTime } from "../../../shared/utils/format";
+import { fmtMoney, fmtTime, formatFee } from "../../../shared/utils/format";
 import type { TradeStatsBySymbol } from "../hooks/useTradeStatsBySymbol";
 
 type SortKey =
@@ -99,7 +99,7 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
                 <td style={td}>{row.losses}</td>
                 <td style={td}>{winRate.toFixed(2)}</td>
                 <td style={td}>{fmtMoney(row.netPnl)}</td>
-                <td style={td}>{fmtMoney(row.fees)}</td>
+                <td style={td}>{formatFee(row.fees)}</td>
                 <td style={td}>{fmtMoney(row.funding)}</td>
                 <td style={td}>{formatAvgHold(row.avgHoldMs)}</td>
                 <td style={td}>{fmtTime(row.lastCloseTs)}</td>

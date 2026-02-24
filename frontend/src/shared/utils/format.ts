@@ -13,6 +13,11 @@ export function fmtMoney(n: number | null | undefined) {
   return sign + n.toFixed(4);
 }
 
+export function formatFee(n: number | null | undefined) {
+  if (n == null || !Number.isFinite(n)) return "-";
+  return "-" + Math.abs(n).toFixed(4);
+}
+
 export function fmtPct(n: number | null | undefined) {
   if (n == null || !Number.isFinite(n)) return "-";
   return n.toFixed(3) + "%";

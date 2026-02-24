@@ -36,12 +36,13 @@ export function useRuntimeConfig() {
     return JSON.stringify(config) !== JSON.stringify(draft);
   }, [config, draft]);
 
-  async function save() {
-    if (!draft) return;
+  async function save(nextDraft?: RuntimeConfig) {
+    const payload = nextDraft ?? draft;
+    if (!payload) return;
     setError(null);
     setSaving(true);
     try {
-      const res = await updateRuntimeConfig(draft);
+      const res = await updateRuntimeConfig(payload);
       setConfig(res.config);
       setDraft(deepClone(res.config));
       setLastApplied(res.applied ?? null);

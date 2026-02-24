@@ -1,6 +1,6 @@
 import { Badge, Card } from "react-bootstrap";
 import type { PaperSummary } from "../types";
-import { fmtMoney, fmtNum, fmtTime } from "../../../shared/utils/format";
+import { fmtMoney, fmtNum, fmtTime, formatFee } from "../../../shared/utils/format";
 
 type Props = {
   summary: PaperSummary;
@@ -52,7 +52,7 @@ export function SummaryCard({ summary }: Props) {
 
           <div>
             <div style={{ opacity: 0.75, fontSize: 12 }}>Fees</div>
-            <div>{fmtMoney(pnl.fees ?? 0)}</div>
+            <div>{formatFee(pnl.fees ?? 0)}</div>
           </div>
 
           <div>

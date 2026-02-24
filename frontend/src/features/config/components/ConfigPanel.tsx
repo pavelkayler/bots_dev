@@ -1,29 +1,71 @@
 import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Col, Form, Row } from "react-bootstrap";
-import type { SessionState } from "../../../shared/types/domain";
+import type { RuntimeConfig, SessionState } from "../../../shared/types/domain";
 import { useRuntimeConfig } from "../hooks/useRuntimeConfig";
 import { fmtTime } from "../../../shared/utils/format";
 import { listUniverses, readUniverse } from "../../universe/api";
 import type { UniverseMeta } from "../../universe/types";
-
-function num(v: any, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
+import { deletePreset, listPresets, readPreset, savePreset } from "../../presets/api";
+import type { PresetMeta } from "../../presets/types";
 
 type Props = {
   sessionState?: SessionState;
 };
 
+type NumericDraft = {
+  signalsPriceThresholdPct: string;
+  signalsOivThresholdPct: string;
+  fundingBeforeMin: string;
+  fundingAfterMin: string;
+  paperMarginUSDT: string;
+  paperLeverage: string;
+  paperEntryOffsetPct: string;
+  paperEntryTimeoutSec: string;
+  paperTpRoiPct: string;
+  paperSlRoiPct: string;
+  paperMakerFeeRate: string;
+  paperRearmDelayMs: string;
+};
+
+function toNumericDraft(cfg: RuntimeConfig): NumericDraft {
+  return {
+    signalsPriceThresholdPct: String(cfg.signals.priceThresholdPct),
+    signalsOivThresholdPct: String(cfg.signals.oivThresholdPct),
+    fundingBeforeMin: String(cfg.fundingCooldown.beforeMin),
+    fundingAfterMin: String(cfg.fundingCooldown.afterMin),
+    paperMarginUSDT: String(cfg.paper.marginUSDT),
+    paperLeverage: String(cfg.paper.leverage),
+    paperEntryOffsetPct: String(cfg.paper.entryOffsetPct),
+    paperEntryTimeoutSec: String(cfg.paper.entryTimeoutSec),
+    paperTpRoiPct: String(cfg.paper.tpRoiPct),
+    paperSlRoiPct: String(cfg.paper.slRoiPct),
+    paperMakerFeeRate: String(cfg.paper.makerFeeRate),
+    paperRearmDelayMs: String(cfg.paper.rearmDelayMs),
+  };
+}
+
+function parseNumber(v: string, label: string): number {
+  if (v.trim() === "") throw new Error(`${label} is required.`);
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`${label} must be a valid number.`);
+  return n;
+}
+
 export function ConfigPanel({ sessionState }: Props) {
   const { draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save } = useRuntimeConfig();
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [numericDraft, setNumericDraft] = useState<NumericDraft | null>(null);
 
   const [universeList, setUniverseList] = useState<UniverseMeta[]>([]);
   const [universeLoading, setUniverseLoading] = useState(false);
   const [universeError, setUniverseError] = useState<string | null>(null);
   const [selectedUniverseId, setSelectedUniverseId] = useState<string>("");
 
-  const disabled = !draft;
+  const [presets, setPresets] = useState<PresetMeta[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState("");
+  const [presetBusy, setPresetBusy] = useState(false);
+
+  const disabled = !draft || !numericDraft;
   const universeLocked = sessionState === "RUNNING" || sessionState === "STOPPING";
 
   const badge = useMemo(() => {
@@ -54,20 +96,30 @@ export function ConfigPanel({ sessionState }: Props) {
     }
   }
 
+  async function refreshPresets() {
+    try {
+      const res = await listPresets();
+      setPresets(res.presets ?? []);
+    } catch (e: any) {
+      setInputError(String(e?.message ?? e));
+    }
+  }
+
   useEffect(() => {
     void refreshUniverses();
+    void refreshPresets();
   }, []);
 
   useEffect(() => {
     if (!draft) return;
     const id = String((draft as any).universe?.selectedId ?? "");
     setSelectedUniverseId(id);
+    setNumericDraft(toNumericDraft(draft));
   }, [draft]);
 
   async function onUniverseSelect(id: string) {
     setSelectedUniverseId(id);
-    if (!id) return;
-    if (!draft) return;
+    if (!id || !draft) return;
 
     setUniverseError(null);
     setUniverseLoading(true);
@@ -88,15 +140,108 @@ export function ConfigPanel({ sessionState }: Props) {
     }
   }
 
+  function setNumericField<K extends keyof NumericDraft>(key: K, value: string) {
+    if (!numericDraft) return;
+    setInputError(null);
+    setNumericDraft({ ...numericDraft, [key]: value });
+  }
+
+  function buildConfigForApply(): RuntimeConfig {
+    if (!draft || !numericDraft) throw new Error("Config is not loaded.");
+    return {
+      ...draft,
+      signals: {
+        ...draft.signals,
+        priceThresholdPct: parseNumber(numericDraft.signalsPriceThresholdPct, "priceThresholdPct"),
+        oivThresholdPct: parseNumber(numericDraft.signalsOivThresholdPct, "oivThresholdPct"),
+      },
+      fundingCooldown: {
+        ...draft.fundingCooldown,
+        beforeMin: parseNumber(numericDraft.fundingBeforeMin, "beforeMin"),
+        afterMin: parseNumber(numericDraft.fundingAfterMin, "afterMin"),
+      },
+      paper: {
+        ...draft.paper,
+        marginUSDT: parseNumber(numericDraft.paperMarginUSDT, "marginUSDT"),
+        leverage: parseNumber(numericDraft.paperLeverage, "leverage"),
+        entryOffsetPct: parseNumber(numericDraft.paperEntryOffsetPct, "entryOffsetPct"),
+        entryTimeoutSec: parseNumber(numericDraft.paperEntryTimeoutSec, "entryTimeoutSec"),
+        tpRoiPct: parseNumber(numericDraft.paperTpRoiPct, "tpRoiPct"),
+        slRoiPct: parseNumber(numericDraft.paperSlRoiPct, "slRoiPct"),
+        makerFeeRate: parseNumber(numericDraft.paperMakerFeeRate, "makerFeeRate"),
+        rearmDelayMs: parseNumber(numericDraft.paperRearmDelayMs, "rearmDelayMs"),
+      },
+    };
+  }
+
+  async function onApply() {
+    setInputError(null);
+    try {
+      await save(buildConfigForApply());
+    } catch (e: any) {
+      setInputError(String(e?.message ?? e));
+    }
+  }
+
+  async function onPresetSelect(id: string) {
+    setSelectedPresetId(id);
+    if (!id || !draft) return;
+    setPresetBusy(true);
+    setInputError(null);
+    try {
+      const preset = await readPreset(id);
+      const merged = { ...preset.config, universe: { ...draft.universe, ...preset.config.universe } };
+      setDraft(merged);
+      setNumericDraft(toNumericDraft(merged));
+    } catch (e: any) {
+      setInputError(String(e?.message ?? e));
+    } finally {
+      setPresetBusy(false);
+    }
+  }
+
+  async function onPresetSave() {
+    if (!selectedPresetId) {
+      setInputError("Select a preset to save.");
+      return;
+    }
+    setPresetBusy(true);
+    setInputError(null);
+    try {
+      const cfg = buildConfigForApply();
+      const selected = presets.find((p) => p.id === selectedPresetId);
+      await savePreset(selectedPresetId, selected?.name ?? selectedPresetId, cfg);
+      await refreshPresets();
+    } catch (e: any) {
+      setInputError(String(e?.message ?? e));
+    } finally {
+      setPresetBusy(false);
+    }
+  }
+
+  async function onPresetRemove() {
+    if (!selectedPresetId) {
+      setInputError("Select a preset to remove.");
+      return;
+    }
+    setPresetBusy(true);
+    setInputError(null);
+    try {
+      await deletePreset(selectedPresetId);
+      setSelectedPresetId("");
+      await refreshPresets();
+    } catch (e: any) {
+      setInputError(String(e?.message ?? e));
+    } finally {
+      setPresetBusy(false);
+    }
+  }
+
   return (
     <Card className="mb-3">
       <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
         <b>Config</b>
         {badge}
-
-        <span style={{ opacity: 0.75, fontSize: 12 }}>
-          Universe symbols are selected from saved universes. Universe changes require Session STOPPED.
-        </span>
 
         {appliedHint ? (
           <span style={{ opacity: 0.8, fontSize: 12 }}>
@@ -106,293 +251,73 @@ export function ConfigPanel({ sessionState }: Props) {
         ) : null}
 
         <div className="ms-auto d-flex align-items-center gap-2">
-          <Button size="sm" variant="success" onClick={() => void save()} disabled={!dirty || disabled || saving}>
+          <Button size="sm" variant="success" onClick={() => void onApply()} disabled={disabled || saving}>
             Apply
           </Button>
         </div>
       </Card.Header>
 
       <Card.Body>
-        {!draft ? (
+        {!draft || !numericDraft ? (
           <div style={{ opacity: 0.8 }}>Loading config…</div>
         ) : (
           <>
             {universeError ? <div style={{ color: "#b00020", marginBottom: 8 }}>{universeError}</div> : null}
+            {inputError ? <div style={{ color: "#b00020", marginBottom: 8 }}>{inputError}</div> : null}
+
+            <Row className="g-2 mb-3">
+              <Col md={8}>
+                <Form.Label>Preset</Form.Label>
+                <Form.Select value={selectedPresetId} onChange={(e) => void onPresetSelect(e.currentTarget.value)} disabled={presetBusy}>
+                  <option value="">Select preset…</option>
+                  {presets.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </Form.Select>
+              </Col>
+              <Col md={4} className="d-flex align-items-end gap-2">
+                <Button size="sm" variant="outline-danger" onClick={() => void onPresetRemove()} disabled={presetBusy}>Remove</Button>
+                <Button size="sm" variant="outline-primary" onClick={() => void onPresetSave()} disabled={presetBusy}>Save</Button>
+              </Col>
+            </Row>
 
             <Row className="g-3">
               <Col md={4}>
                 <h6>Universe</h6>
-
                 <Form.Group className="mb-2">
                   <Form.Label>Universe (saved sets)</Form.Label>
-                  <Form.Select
-                    value={selectedUniverseId}
-                    onChange={(e) => void onUniverseSelect(e.currentTarget.value)}
-                    disabled={universeLocked || universeLoading}
-                  >
+                  <Form.Select value={selectedUniverseId} onChange={(e) => void onUniverseSelect(e.currentTarget.value)} disabled={universeLocked || universeLoading}>
                     <option value="">Select universe…</option>
-                    {universeList.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.count})
-                      </option>
-                    ))}
+                    {universeList.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.count})</option>)}
                   </Form.Select>
-
-                  <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>
-                    current symbols: {draft.universe.symbols.length}
-                  </div>
-                  {!selectedUniverseId ? (
-                    <div style={{ color: "#b00020", fontSize: 12, marginTop: 4 }}>
-                      Universe is not selected. Choose one and click Apply before Start.
-                    </div>
-                  ) : null}
-                  {universeLocked ? (
-                    <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>
-                      Locked while session is {sessionState}.
-                    </div>
-                  ) : null}
                 </Form.Group>
-
                 <Form.Group className="mb-2">
                   <Form.Label>klineTfMin</Form.Label>
-                  <Form.Select
-                    value={draft.universe.klineTfMin}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        universe: { ...draft.universe, klineTfMin: Number(e.currentTarget.value) }
-                      })
-                    }
-                  >
-                    <option value={1}>1</option>
-                    <option value={3}>3</option>
-                    <option value={5}>5</option>
-                    <option value={15}>15</option>
-                    <option value={30}>30</option>
-                    <option value={60}>60</option>
+                  <Form.Select value={draft.universe.klineTfMin} onChange={(e) => setDraft({ ...draft, universe: { ...draft.universe, klineTfMin: Number(e.currentTarget.value) } })}>
+                    <option value={1}>1</option><option value={3}>3</option><option value={5}>5</option><option value={15}>15</option><option value={30}>30</option><option value={60}>60</option>
                   </Form.Select>
                 </Form.Group>
               </Col>
 
               <Col md={4}>
                 <h6>Signals</h6>
-                <Form.Group className="mb-2">
-                  <Form.Label>priceThresholdPct</Form.Label>
-                  <Form.Control
-                    type="number"
-                    step="0.001"
-                    value={draft.signals.priceThresholdPct}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        signals: { ...draft.signals, priceThresholdPct: num(e.currentTarget.value, 0) }
-                      })
-                    }
-                  />
-                </Form.Group>
-
-                <Form.Group className="mb-2">
-                  <Form.Label>oivThresholdPct</Form.Label>
-                  <Form.Control
-                    type="number"
-                    step="0.001"
-                    value={draft.signals.oivThresholdPct}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        signals: { ...draft.signals, oivThresholdPct: num(e.currentTarget.value, 0) }
-                      })
-                    }
-                  />
-                </Form.Group>
-
-                <Form.Check
-                  type="switch"
-                  id="requireFundingSign"
-                  label="requireFundingSign"
-                  checked={draft.signals.requireFundingSign}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      signals: { ...draft.signals, requireFundingSign: e.currentTarget.checked }
-                    })
-                  }
-                />
+                <Form.Group className="mb-2"><Form.Label>priceThresholdPct</Form.Label><Form.Control type="number" step="0.001" value={numericDraft.signalsPriceThresholdPct} onChange={(e) => setNumericField("signalsPriceThresholdPct", e.currentTarget.value)} /></Form.Group>
+                <Form.Group className="mb-2"><Form.Label>oivThresholdPct</Form.Label><Form.Control type="number" step="0.001" value={numericDraft.signalsOivThresholdPct} onChange={(e) => setNumericField("signalsOivThresholdPct", e.currentTarget.value)} /></Form.Group>
+                <Form.Check type="switch" id="requireFundingSign" label="requireFundingSign" checked={draft.signals.requireFundingSign} onChange={(e) => setDraft({ ...draft, signals: { ...draft.signals, requireFundingSign: e.currentTarget.checked } })} />
               </Col>
 
               <Col md={4}>
                 <h6>Funding cooldown</h6>
-
-                <Form.Group className="mb-2">
-                  <Form.Label>beforeMin</Form.Label>
-                  <Form.Control
-                    type="number"
-                    step="1"
-                    value={draft.fundingCooldown.beforeMin}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        fundingCooldown: { ...draft.fundingCooldown, beforeMin: num(e.currentTarget.value, 0) }
-                      })
-                    }
-                  />
-                </Form.Group>
-
-                <Form.Group className="mb-2">
-                  <Form.Label>afterMin</Form.Label>
-                  <Form.Control
-                    type="number"
-                    step="1"
-                    value={draft.fundingCooldown.afterMin}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        fundingCooldown: { ...draft.fundingCooldown, afterMin: num(e.currentTarget.value, 0) }
-                      })
-                    }
-                  />
-                </Form.Group>
-
+                <Form.Group className="mb-2"><Form.Label>beforeMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingBeforeMin} onChange={(e) => setNumericField("fundingBeforeMin", e.currentTarget.value)} /></Form.Group>
+                <Form.Group className="mb-2"><Form.Label>afterMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingAfterMin} onChange={(e) => setNumericField("fundingAfterMin", e.currentTarget.value)} /></Form.Group>
                 <hr />
-
-                <div className="d-flex align-items-baseline justify-content-between">
-                  <h6 className="mb-0">Paper</h6>
-                  <span style={{ opacity: 0.7, fontSize: 12 }}>applies next Start</span>
-                </div>
-
-                <Form.Check
-                  className="mt-2"
-                  type="switch"
-                  id="paperEnabled"
-                  label="enabled"
-                  checked={draft.paper.enabled}
-                  onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, enabled: e.currentTarget.checked } })}
-                />
-
-                <Row className="g-2 mt-1">
-                  <Col>
-                    <Form.Group>
-                      <Form.Label>marginUSDT</Form.Label>
-                      <Form.Control
-                        type="number"
-                        step="1"
-                        value={draft.paper.marginUSDT}
-                        onChange={(e) =>
-                          setDraft({ ...draft, paper: { ...draft.paper, marginUSDT: num(e.currentTarget.value, 0) } })
-                        }
-                      />
-                    </Form.Group>
-                  </Col>
-                  <Col>
-                    <Form.Group>
-                      <Form.Label>leverage</Form.Label>
-                      <Form.Control
-                        type="number"
-                        step="1"
-                        value={draft.paper.leverage}
-                        onChange={(e) =>
-                          setDraft({ ...draft, paper: { ...draft.paper, leverage: num(e.currentTarget.value, 1) } })
-                        }
-                      />
-                    </Form.Group>
-                  </Col>
-                </Row>
-
-                <Row className="g-2 mt-1">
-                  <Col>
-                    <Form.Group>
-                      <Form.Label>entryOffsetPct</Form.Label>
-                      <Form.Control
-                        type="number"
-                        step="0.01"
-                        value={draft.paper.entryOffsetPct}
-                        onChange={(e) =>
-                          setDraft({ ...draft, paper: { ...draft.paper, entryOffsetPct: num(e.currentTarget.value, 0) } })
-                        }
-                      />
-                    </Form.Group>
-                  </Col>
-                  <Col>
-                    <Form.Group>
-                      <Form.Label>entryTimeoutSec</Form.Label>
-                      <Form.Control
-                        type="number"
-                        step="1"
-                        value={draft.paper.entryTimeoutSec}
-                        onChange={(e) =>
-                          setDraft({ ...draft, paper: { ...draft.paper, entryTimeoutSec: num(e.currentTarget.value, 1) } })
-                        }
-                      />
-                    </Form.Group>
-                  </Col>
-                </Row>
-
-                <Row className="g-2 mt-1">
-                  <Col>
-                    <Form.Group>
-                      <Form.Label>tpRoiPct</Form.Label>
-                      <Form.Control
-                        type="number"
-                        step="0.1"
-                        value={draft.paper.tpRoiPct}
-                        onChange={(e) =>
-                          setDraft({ ...draft, paper: { ...draft.paper, tpRoiPct: num(e.currentTarget.value, 0) } })
-                        }
-                      />
-                    </Form.Group>
-                  </Col>
-                  <Col>
-                    <Form.Group>
-                      <Form.Label>slRoiPct</Form.Label>
-                      <Form.Control
-                        type="number"
-                        step="0.1"
-                        value={draft.paper.slRoiPct}
-                        onChange={(e) =>
-                          setDraft({ ...draft, paper: { ...draft.paper, slRoiPct: num(e.currentTarget.value, 0) } })
-                        }
-                      />
-                    </Form.Group>
-                  </Col>
-                </Row>
-
-                <Row className="g-2 mt-1">
-                  <Col>
-                    <Form.Group>
-                      <Form.Label>makerFeeRate</Form.Label>
-                      <Form.Control
-                        type="number"
-                        step="0.0001"
-                        value={draft.paper.makerFeeRate}
-                        onChange={(e) =>
-                          setDraft({ ...draft, paper: { ...draft.paper, makerFeeRate: num(e.currentTarget.value, 0) } })
-                        }
-                      />
-                    </Form.Group>
-                  </Col>
-                  <Col>
-                    <Form.Group>
-                      <Form.Label>rearmDelayMs</Form.Label>
-                      <Form.Control
-                        type="number"
-                        step="100"
-                        value={draft.paper.rearmDelayMs}
-                        onChange={(e) =>
-                          setDraft({ ...draft, paper: { ...draft.paper, rearmDelayMs: num(e.currentTarget.value, 0) } })
-                        }
-                      />
-                    </Form.Group>
-                  </Col>
-                </Row>
-
-                <Form.Check
-                  className="mt-2"
-                  type="switch"
-                  id="applyFunding"
-                  label="applyFunding"
-                  checked={draft.paper.applyFunding}
-                  onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, applyFunding: e.currentTarget.checked } })}
-                />
+                <h6 className="mb-0">Paper</h6>
+                <Form.Check className="mt-2" type="switch" id="paperEnabled" label="enabled" checked={draft.paper.enabled} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, enabled: e.currentTarget.checked } })} />
+                <Row className="g-2 mt-1"><Col><Form.Label>marginUSDT</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperMarginUSDT} onChange={(e) => setNumericField("paperMarginUSDT", e.currentTarget.value)} /></Col><Col><Form.Label>leverage</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperLeverage} onChange={(e) => setNumericField("paperLeverage", e.currentTarget.value)} /></Col></Row>
+                <Row className="g-2 mt-1"><Col><Form.Label>entryOffsetPct</Form.Label><Form.Control type="number" step="0.01" value={numericDraft.paperEntryOffsetPct} onChange={(e) => setNumericField("paperEntryOffsetPct", e.currentTarget.value)} /></Col><Col><Form.Label>entryTimeoutSec</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperEntryTimeoutSec} onChange={(e) => setNumericField("paperEntryTimeoutSec", e.currentTarget.value)} /></Col></Row>
+                <Row className="g-2 mt-1"><Col><Form.Label>tpRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperTpRoiPct} onChange={(e) => setNumericField("paperTpRoiPct", e.currentTarget.value)} /></Col><Col><Form.Label>slRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperSlRoiPct} onChange={(e) => setNumericField("paperSlRoiPct", e.currentTarget.value)} /></Col></Row>
+                <Row className="g-2 mt-1"><Col><Form.Label>makerFeeRate</Form.Label><Form.Control type="number" step="0.0001" value={numericDraft.paperMakerFeeRate} onChange={(e) => setNumericField("paperMakerFeeRate", e.currentTarget.value)} /></Col><Col><Form.Label>rearmDelayMs</Form.Label><Form.Control type="number" step="100" value={numericDraft.paperRearmDelayMs} onChange={(e) => setNumericField("paperRearmDelayMs", e.currentTarget.value)} /></Col></Row>
+                <Form.Check className="mt-2" type="switch" id="applyFunding" label="applyFunding" checked={draft.paper.applyFunding} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, applyFunding: e.currentTarget.checked } })} />
               </Col>
             </Row>
           </>
