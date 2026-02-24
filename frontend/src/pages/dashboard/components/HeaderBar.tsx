@@ -9,8 +9,6 @@ type Props = {
   lastServerTime: number | null;
 
   streams: StreamsState;
-  onToggleStreams: () => void;
-  onApplySubscriptions: () => void;
 
   canStart: boolean;
   canStop: boolean;
@@ -26,8 +24,6 @@ export function HeaderBar(props: Props) {
     wsUrl,
     lastServerTime,
     streams,
-    onToggleStreams,
-    onApplySubscriptions,
     canStart,
     canStop,
     busy,
@@ -72,20 +68,6 @@ export function HeaderBar(props: Props) {
           </div>
 
           <div className="ms-auto d-flex align-items-center gap-2">
-            <Button size="sm" variant="outline-secondary" onClick={onToggleStreams}>
-              Toggle streams
-            </Button>
-
-            <Button
-              size="sm"
-              variant="outline-secondary"
-              onClick={onApplySubscriptions}
-              disabled={!streams.streamsEnabled}
-              title={!streams.streamsEnabled ? "Streams are OFF" : "Reconnect + re-subscribe with current universe"}
-            >
-              Apply subscriptions
-            </Button>
-
             <Button size="sm" variant="success" onClick={onStart} disabled={!canStart}>
               {busy === "start" ? <Spinner animation="border" size="sm" /> : "Start"}
             </Button>
