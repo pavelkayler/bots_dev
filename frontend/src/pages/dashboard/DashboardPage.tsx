@@ -113,8 +113,9 @@ export function DashboardPage() {
     return `${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
   }
 
-  const sessionStartTs = useMemo(() => parseSessionStartTs(status.sessionId), [status.sessionId]);
-  const uptime = status.sessionState === "RUNNING" && sessionStartTs != null ? formatElapsed(nowMs - sessionStartTs) : null;
+  const runningSessionId = wsSessionState === "RUNNING" ? wsSessionId : status.sessionId;
+  const sessionStartTs = useMemo(() => parseSessionStartTs(runningSessionId), [runningSessionId]);
+  const uptimeText = (wsSessionState === "RUNNING" || status.sessionState === "RUNNING") && sessionStartTs != null ? formatElapsed(nowMs - sessionStartTs) : null;
 
   const klineTfMin = Number(draftKlineTfMin || 1);
   const tfMs = Math.max(1, klineTfMin) * 60_000;
@@ -147,7 +148,7 @@ export function DashboardPage() {
           apiError={error}
         />
 
-        <BotSummaryBar sessionState={status.sessionState} botStats={botStats} uptime={uptime} />
+        <BotSummaryBar sessionState={status.sessionState} botStats={botStats} uptimeText={uptimeText} />
 
         <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} suppressStopRefresh={isRebooting} />
 
