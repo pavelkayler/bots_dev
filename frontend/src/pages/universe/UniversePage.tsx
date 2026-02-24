@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Container, Form, Modal, Spinner, Table } from "react-bootstrap";
 import { Link } from "react-router-dom";
-import { createUniverse, listUniverses, readUniverse } from "../../features/universe/api";
+import { createUniverse, deleteUniverse, listUniverses, readUniverse } from "../../features/universe/api";
 import type { UniverseFile, UniverseMeta } from "../../features/universe/types";
 import { fmtNum, fmtTime } from "../../shared/utils/format";
 
@@ -84,12 +84,13 @@ export function UniversePage() {
     }
   }
 
-  async function onCopySymbols() {
-    if (!modalUniverse) return;
+  async function onDelete(id: string) {
+    setError(null);
     try {
-      await navigator.clipboard.writeText(joinSymbols(modalUniverse.symbols));
-    } catch {
-      // ignore
+      await deleteUniverse(id);
+      await refresh();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
     }
   }
 
@@ -187,9 +188,14 @@ export function UniversePage() {
                     <td style={{ fontSize: 12 }}>{fmtNum(u.minVolatilityPct)}%</td>
                     <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(u.updatedAt)}</td>
                     <td style={{ fontSize: 12 }}>
-                      <Button size="sm" variant="outline-secondary" onClick={() => void onViewSymbols(u.id)}>
-                        View symbols
-                      </Button>
+                      <div className="d-flex align-items-center gap-2">
+                        <Button size="sm" variant="outline-secondary" onClick={() => void onViewSymbols(u.id)}>
+                          View symbols
+                        </Button>
+                        <Button size="sm" variant="outline-danger" onClick={() => void onDelete(u.id)}>
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -218,12 +224,6 @@ export function UniversePage() {
                 <Badge bg="secondary">{modalUniverse.meta.name}</Badge>
                 <span>count: {modalUniverse.symbols.length}</span>
                 <span style={{ opacity: 0.75 }}>updated: {fmtTime(modalUniverse.meta.updatedAt)}</span>
-
-                <div className="ms-auto">
-                  <Button size="sm" variant="outline-secondary" onClick={() => void onCopySymbols()}>
-                    Copy
-                  </Button>
-                </div>
               </div>
 
               <Form.Control as="textarea" rows={18} readOnly value={joinSymbols(modalUniverse.symbols)} />

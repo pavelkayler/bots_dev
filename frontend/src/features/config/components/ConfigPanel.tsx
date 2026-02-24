@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, Col, Form, Row, Spinner } from "react-bootstrap";
+import { Badge, Button, Card, Col, Form, Row } from "react-bootstrap";
 import type { SessionState } from "../../../shared/types/domain";
 import { useRuntimeConfig } from "../hooks/useRuntimeConfig";
 import { fmtTime } from "../../../shared/utils/format";
@@ -131,24 +131,18 @@ export function ConfigPanel({ sessionState }: Props) {
 
                 <Form.Group className="mb-2">
                   <Form.Label>Universe (saved sets)</Form.Label>
-                  <div className="d-flex gap-2">
-                    <Form.Select
-                      value={selectedUniverseId}
-                      onChange={(e) => void onUniverseSelect(e.currentTarget.value)}
-                      disabled={universeLocked || universeLoading}
-                    >
-                      <option value="">Select universe…</option>
-                      {universeList.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name} ({u.count})
-                        </option>
-                      ))}
-                    </Form.Select>
-
-                    <Button size="sm" variant="outline-secondary" onClick={() => void refreshUniverses()} disabled={universeLoading}>
-                      {universeLoading ? <Spinner animation="border" size="sm" /> : "↻"}
-                    </Button>
-                  </div>
+                  <Form.Select
+                    value={selectedUniverseId}
+                    onChange={(e) => void onUniverseSelect(e.currentTarget.value)}
+                    disabled={universeLocked || universeLoading}
+                  >
+                    <option value="">Select universe…</option>
+                    {universeList.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.count})
+                      </option>
+                    ))}
+                  </Form.Select>
 
                   <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>
                     current symbols: {draft.universe.symbols.length}
@@ -167,17 +161,22 @@ export function ConfigPanel({ sessionState }: Props) {
 
                 <Form.Group className="mb-2">
                   <Form.Label>klineTfMin</Form.Label>
-                  <Form.Control
-                    type="number"
-                    step="1"
+                  <Form.Select
                     value={draft.universe.klineTfMin}
                     onChange={(e) =>
                       setDraft({
                         ...draft,
-                        universe: { ...draft.universe, klineTfMin: num(e.currentTarget.value, 1) }
+                        universe: { ...draft.universe, klineTfMin: Number(e.currentTarget.value) }
                       })
                     }
-                  />
+                  >
+                    <option value={1}>1</option>
+                    <option value={3}>3</option>
+                    <option value={5}>5</option>
+                    <option value={15}>15</option>
+                    <option value={30}>30</option>
+                    <option value={60}>60</option>
+                  </Form.Select>
                 </Form.Group>
               </Col>
 

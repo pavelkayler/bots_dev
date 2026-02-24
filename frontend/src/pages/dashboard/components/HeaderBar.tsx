@@ -60,8 +60,8 @@ export function HeaderBar(props: Props) {
 
         <div className="d-flex align-items-center gap-2 flex-wrap" style={{ width: "100%" }}>
           <Badge bg={connVariant}>{conn}</Badge>
-          <Badge bg={sessionVariant}>Session: {sessionState}</Badge>
           <Badge bg={streamsVariant}>{streamsText}</Badge>
+          <Badge bg={sessionVariant}>Session: {sessionState}</Badge>
 
           <div style={{ fontSize: 12, opacity: 0.8 }}>
             WS: {wsUrl} · Last tick: {lastServerTime ? new Date(lastServerTime).toLocaleTimeString() : "-"}

@@ -69,6 +69,12 @@ export function writeUniverse(file: UniverseFile): UniverseFile {
   return file;
 }
 
+export function deleteUniverse(id: string): void {
+  const fp = filePathForId(id);
+  if (!fs.existsSync(fp)) throw new Error("universe_not_found");
+  fs.unlinkSync(fp);
+}
+
 export function formatUniverseName(minTurnoverUsd: number, minVolatilityPct: number): { id: string; name: string } {
   const t = formatTurnover(minTurnoverUsd);
   const v = formatVol(minVolatilityPct);

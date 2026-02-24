@@ -4,7 +4,7 @@ import path from "node:path";
 import { runtime } from "../runtime/runtime.js";
 import { CONFIG } from "../config.js";
 import { configStore } from "../runtime/configStore.js";
-import { listUniverses, readUniverse, writeUniverse, formatUniverseName } from "../universe/universeStore.js";
+import { deleteUniverse, listUniverses, readUniverse, writeUniverse, formatUniverseName } from "../universe/universeStore.js";
 import { buildUniverseByTickersWs } from "../universe/universeBuilder.js";
 import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
@@ -198,6 +198,28 @@ const now = Date.now();
     } catch (e: any) {
       reply.code(400);
       return { error: "universe_create_failed", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.delete("/api/universes/:id", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    const status = runtime.getStatus();
+    const selectedId = String((configStore.get() as any)?.universe?.selectedId ?? "");
+
+    if ((status.sessionState === "RUNNING" || status.sessionState === "STOPPING") && selectedId === id) {
+      reply.code(409);
+      return {
+        error: "universe_in_use",
+        message: "Cannot delete universe while it is used by a running session."
+      };
+    }
+
+    try {
+      deleteUniverse(id);
+      return { ok: true as const };
+    } catch {
+      reply.code(404);
+      return { error: "universe_not_found" };
     }
   });
 

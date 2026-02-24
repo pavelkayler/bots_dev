@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Badge, Button, Card, Table } from "react-bootstrap";
+import { Badge, Button, Card, Form, Table } from "react-bootstrap";
 import { getApiBase } from "../../../shared/config/env";
 import { fmtTime } from "../../../shared/utils/format";
 import type { LogEvent } from "../../../shared/types/domain";
@@ -21,13 +21,7 @@ function safeStr(v: any): string {
 }
 
 export function EventsTail({ enabled, events, onRequestTail }: Props) {
-  const limit = 5;
-  const [expanded, setExpanded] = useState(false);
-
-  const rows = useMemo(() => {
-    if (expanded) return events;
-    return events.slice(Math.max(0, events.length - limit));
-  }, [events, expanded]);
+  const [limit, setLimit] = useState(5);
 
   const downloadUrl = useMemo(() => {
     const base = getApiBase();
@@ -42,9 +36,22 @@ export function EventsTail({ enabled, events, onRequestTail }: Props) {
         <Badge bg="secondary">count: {events.length}</Badge>
 
         <div className="ms-auto d-flex align-items-center gap-2">
-          <Button size="sm" variant="outline-secondary" onClick={() => onRequestTail(limit)} disabled={!enabled}>
-            Refresh
-          </Button>
+          <Form.Select
+            size="sm"
+            value={limit}
+            style={{ width: 88 }}
+            disabled={!enabled}
+            onChange={(e) => {
+              const next = Number(e.currentTarget.value);
+              setLimit(next);
+              onRequestTail(next);
+            }}
+          >
+            <option value={5}>5</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </Form.Select>
 
           <Button
             size="sm"
@@ -54,14 +61,11 @@ export function EventsTail({ enabled, events, onRequestTail }: Props) {
             Download jsonl
           </Button>
 
-          <Button size="sm" variant="outline-secondary" onClick={() => setExpanded((v) => !v)}>
-            {expanded ? "Show tail" : "Show all"}
-          </Button>
         </div>
       </Card.Header>
 
       <Card.Body>
-        {!rows.length ? (
+        {!events.length ? (
           <div style={{ opacity: 0.75 }}>No events.</div>
         ) : (
           <Table striped bordered hover size="sm" style={{ tableLayout: "fixed", width: "100%" }}>
@@ -74,7 +78,7 @@ export function EventsTail({ enabled, events, onRequestTail }: Props) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((ev, i) => (
+              {events.map((ev, i) => (
                 <tr key={`${ev.ts ?? 0}-${i}`}>
                   <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {ev.ts ? fmtTime(ev.ts) : "—"}
