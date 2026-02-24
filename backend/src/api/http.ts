@@ -9,6 +9,7 @@ import { buildUniverseByTickersWs } from "../universe/universeBuilder.js";
 import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
 import type { SessionSummaryResponse } from "../paper/summary.js";
+import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
 
 function safeBody(reqBody: any) {
   if (reqBody == null) return {};
@@ -220,6 +221,52 @@ const now = Date.now();
     } catch {
       reply.code(404);
       return { error: "universe_not_found" };
+    }
+  });
+
+  // presets
+  app.get("/api/presets", async () => {
+    return { presets: listPresets().map((p) => ({ id: p.id, name: p.name, updatedAt: p.updatedAt })) };
+  });
+
+  app.get("/api/presets/:id", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    try {
+      return readPreset(id);
+    } catch (e: any) {
+      reply.code(404);
+      return { error: "preset_not_found", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.put("/api/presets/:id", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    const body = safeBody((req as any).body) as any;
+    const name = String(body?.name ?? "").trim();
+    const config = body?.config;
+
+    if (!name || !config || typeof config !== "object") {
+      reply.code(400);
+      return { error: "invalid_preset_payload" };
+    }
+
+    try {
+      const preset = putPreset(id, name, config);
+      return preset;
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "preset_save_failed", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.delete("/api/presets/:id", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    try {
+      deletePreset(id);
+      return { ok: true as const };
+    } catch (e: any) {
+      reply.code(404);
+      return { error: "preset_not_found", message: String(e?.message ?? e) };
     }
   });
 

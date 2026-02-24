@@ -1,7 +1,7 @@
+import { deleteJson, getJson, putJson } from "../../shared/api/http";
 import { getApiBase } from "../../shared/config/env";
-import { postJson, getJson } from "../../shared/api/http";
-import type { PresetFile, PresetsListResponse } from "./types";
 import type { RuntimeConfig } from "../../shared/types/domain";
+import type { PresetFile, PresetsListResponse } from "./types";
 
 export async function listPresets(): Promise<PresetsListResponse> {
   const base = getApiBase();
@@ -13,7 +13,12 @@ export async function readPreset(id: string): Promise<PresetFile> {
   return await getJson<PresetFile>(`${base}/api/presets/${encodeURIComponent(id)}`);
 }
 
-export async function createPreset(name: string, config?: RuntimeConfig): Promise<PresetFile> {
+export async function savePreset(id: string, name: string, config: RuntimeConfig): Promise<PresetFile> {
   const base = getApiBase();
-  return await postJson<PresetFile>(`${base}/api/presets`, { name, config });
+  return await putJson<PresetFile>(`${base}/api/presets/${encodeURIComponent(id)}`, { name, config });
+}
+
+export async function deletePreset(id: string): Promise<void> {
+  const base = getApiBase();
+  await deleteJson<void>(`${base}/api/presets/${encodeURIComponent(id)}`);
 }

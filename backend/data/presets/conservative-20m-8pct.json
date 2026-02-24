@@ -1,0 +1,34 @@
+{
+  "id": "conservative-20m-8pct",
+  "name": "Conservative [20m/8%]",
+  "createdAt": 0,
+  "updatedAt": 0,
+  "config": {
+    "universe": {
+      "selectedId": "",
+      "symbols": ["BTCUSDT"],
+      "klineTfMin": 5
+    },
+    "signals": {
+      "priceThresholdPct": 0.6,
+      "oivThresholdPct": 0.8,
+      "requireFundingSign": true
+    },
+    "fundingCooldown": {
+      "beforeMin": 15,
+      "afterMin": 30
+    },
+    "paper": {
+      "enabled": true,
+      "marginUSDT": 100,
+      "leverage": 6,
+      "entryOffsetPct": 0.015,
+      "entryTimeoutSec": 90,
+      "tpRoiPct": 3,
+      "slRoiPct": 2,
+      "makerFeeRate": 0.0002,
+      "rearmDelayMs": 4000,
+      "applyFunding": true
+    }
+  }
+}

@@ -1,5 +1,5 @@
 import { Badge, Card } from "react-bootstrap";
-import { fmtMoney, fmtNum } from "../../../shared/utils/format";
+import { fmtMoney, fmtNum, formatFee } from "../../../shared/utils/format";
 import type { BotStats } from "../../../shared/types/domain";
 
 type Props = {
@@ -53,7 +53,7 @@ export function BotSummaryBar({ sessionState, botStats }: Props) {
 
           <div>
             <div style={{ opacity: 0.75, fontSize: 12 }}>Fees / Funding</div>
-            <div>{fmtMoney(botStats.feesPaid)} / {fmtMoney(botStats.fundingAccrued)}</div>
+            <div>{formatFee(botStats.feesPaid)} / {fmtMoney(botStats.fundingAccrued)}</div>
           </div>
         </div>
       </Card.Body>
