@@ -60,6 +60,41 @@ function parseNumber(v: string, label: string): number {
   return n;
 }
 
+function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft | null): { ok: true; parsed: RuntimeConfig } | { ok: false } {
+  if (!draft || !numericDraft) return { ok: false };
+  try {
+    return {
+      ok: true,
+      parsed: {
+        ...draft,
+        signals: {
+          ...draft.signals,
+          priceThresholdPct: parseNumber(numericDraft.signalsPriceThresholdPct, "priceThresholdPct"),
+          oivThresholdPct: parseNumber(numericDraft.signalsOivThresholdPct, "oivThresholdPct"),
+        },
+        fundingCooldown: {
+          ...draft.fundingCooldown,
+          beforeMin: parseNumber(numericDraft.fundingBeforeMin, "beforeMin"),
+          afterMin: parseNumber(numericDraft.fundingAfterMin, "afterMin"),
+        },
+        paper: {
+          ...draft.paper,
+          marginUSDT: parseNumber(numericDraft.paperMarginUSDT, "marginUSDT"),
+          leverage: parseNumber(numericDraft.paperLeverage, "leverage"),
+          entryOffsetPct: parseNumber(numericDraft.paperEntryOffsetPct, "entryOffsetPct"),
+          entryTimeoutSec: parseNumber(numericDraft.paperEntryTimeoutSec, "entryTimeoutSec"),
+          tpRoiPct: parseNumber(numericDraft.paperTpRoiPct, "tpRoiPct"),
+          slRoiPct: parseNumber(numericDraft.paperSlRoiPct, "slRoiPct"),
+          makerFeeRate: parseNumber(numericDraft.paperMakerFeeRate, "makerFeeRate"),
+          rearmDelayMs: parseNumber(numericDraft.paperRearmDelayMs, "rearmDelayMs"),
+        },
+      },
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props) {
   const { draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save } = useRuntimeConfig();
   const [inputError, setInputError] = useState<string | null>(null);
@@ -76,29 +111,18 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props
 
   const disabled = !draft || !numericDraft;
   const universeLocked = sessionState === "RUNNING" || sessionState === "STOPPING";
+  const hasUniverse = !!selectedUniverseId;
+  const validation = useMemo(() => validateDraft(draft, numericDraft), [draft, numericDraft]);
+  const isDraftValid = validation.ok;
 
   const isDirty = useMemo(() => {
-    if (!draft || !numericDraft) return false;
-    try {
-      const parsed = buildConfigForApply();
-      return JSON.stringify(parsed) !== JSON.stringify(draft);
-    } catch {
-      return true;
-    }
-  }, [draft, numericDraft]);
+    if (!draft) return false;
+    if (!validation.ok) return dirty;
+    return dirty || JSON.stringify(validation.parsed) !== JSON.stringify(draft);
+  }, [draft, validation, dirty]);
 
-  const isValidForApply = useMemo(() => {
-    if (!draft || !numericDraft) return false;
-    if (!selectedUniverseId) return false;
-    try {
-      buildConfigForApply();
-      return true;
-    } catch {
-      return false;
-    }
-  }, [draft, numericDraft, selectedUniverseId]);
-
-  const applyDisabled = disabled || saving || !isDirty || !isValidForApply;
+  const canApply = hasUniverse && isDraftValid && isDirty && !saving;
+  const applyDisabled = disabled || !canApply;
 
   const badge = useMemo(() => {
     if (saving) return <Badge bg="warning">saving...</Badge>;
@@ -179,31 +203,8 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props
   }
 
   function buildConfigForApply(): RuntimeConfig {
-    if (!draft || !numericDraft) throw new Error("Config is not loaded.");
-    return {
-      ...draft,
-      signals: {
-        ...draft.signals,
-        priceThresholdPct: parseNumber(numericDraft.signalsPriceThresholdPct, "priceThresholdPct"),
-        oivThresholdPct: parseNumber(numericDraft.signalsOivThresholdPct, "oivThresholdPct"),
-      },
-      fundingCooldown: {
-        ...draft.fundingCooldown,
-        beforeMin: parseNumber(numericDraft.fundingBeforeMin, "beforeMin"),
-        afterMin: parseNumber(numericDraft.fundingAfterMin, "afterMin"),
-      },
-      paper: {
-        ...draft.paper,
-        marginUSDT: parseNumber(numericDraft.paperMarginUSDT, "marginUSDT"),
-        leverage: parseNumber(numericDraft.paperLeverage, "leverage"),
-        entryOffsetPct: parseNumber(numericDraft.paperEntryOffsetPct, "entryOffsetPct"),
-        entryTimeoutSec: parseNumber(numericDraft.paperEntryTimeoutSec, "entryTimeoutSec"),
-        tpRoiPct: parseNumber(numericDraft.paperTpRoiPct, "tpRoiPct"),
-        slRoiPct: parseNumber(numericDraft.paperSlRoiPct, "slRoiPct"),
-        makerFeeRate: parseNumber(numericDraft.paperMakerFeeRate, "makerFeeRate"),
-        rearmDelayMs: parseNumber(numericDraft.paperRearmDelayMs, "rearmDelayMs"),
-      },
-    };
+    if (!validation.ok) throw new Error("Config is not loaded.");
+    return validation.parsed;
   }
 
   async function onApply() {
