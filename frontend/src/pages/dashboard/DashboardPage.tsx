@@ -20,8 +20,6 @@ export function DashboardPage() {
     lastMsg,
     wsUrl,
     streams,
-    toggleStreams,
-    applySubscriptions,
     universeSelectedId,
     universeSymbolsCount,
     events,
@@ -55,8 +53,6 @@ export function DashboardPage() {
         wsUrl={wsUrl}
         lastServerTime={lastServerTime}
         streams={streams}
-        onToggleStreams={toggleStreams}
-        onApplySubscriptions={applySubscriptions}
         canStart={canStartFinal}
         canStop={canStop}
         busy={busy}

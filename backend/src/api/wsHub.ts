@@ -41,10 +41,14 @@ type StreamsState = {
   bybitConnected: boolean;
 };
 
+type BotStats = ReturnType<typeof runtime.getBotStats> & {
+  unrealizedPnl: number;
+};
+
 type ServerWsMessage =
   | { type: "hello"; serverTime: number }
-  | { type: "snapshot"; payload: { sessionState: string; sessionId: string | null; rows: SymbolRow[]; universeSelectedId: string; universeSymbolsCount: number } & StreamsState }
-  | { type: "tick"; payload: { serverTime: number; rows: SymbolRow[]; universeSelectedId: string; universeSymbolsCount: number } }
+  | { type: "snapshot"; payload: { sessionState: string; sessionId: string | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number } & StreamsState }
+  | { type: "tick"; payload: { serverTime: number; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number } }
   | { type: "streams_state"; payload: StreamsState }
   | { type: "events_tail"; payload: { limit: number; count: number; events: LogEvent[] } }
   | { type: "events_append"; payload: { event: LogEvent } }
@@ -312,6 +316,19 @@ export function createWsHub(app: FastifyInstance) {
     }));
   }
 
+  function computeBotStats(rows: SymbolRow[]): BotStats {
+    const base = runtime.getBotStats();
+    const unrealizedPnl = rows.reduce((sum, row) => {
+      const value = row.paperUnrealizedPnl;
+      return sum + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+    }, 0);
+
+    return {
+      ...base,
+      unrealizedPnl,
+    };
+  }
+
   function sendEventsTail(ws: WebSocket, limit: number) {
     const st = runtime.getStatus();
     const file = st.eventsFile;
@@ -340,12 +357,12 @@ export function createWsHub(app: FastifyInstance) {
       const st = runtime.getStatus();
       safeSend(ws, {
         type: "snapshot",
-        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, streamsEnabled, bybitConnected, ...getUniverseInfo() },
+        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo() },
       });
       return;
     }
 
-    safeSend(ws, { type: "tick", payload: { serverTime: now, rows, ...getUniverseInfo() } });
+    safeSend(ws, { type: "tick", payload: { serverTime: now, rows, botStats: computeBotStats(rows), ...getUniverseInfo() } });
   }
 
   function broadcastSnapshot() {
@@ -356,7 +373,7 @@ export function createWsHub(app: FastifyInstance) {
 
     const msg: ServerWsMessage = {
       type: "snapshot",
-      payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, streamsEnabled, bybitConnected, ...getUniverseInfo() },
+      payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo() },
     };
 
     for (const c of clients) safeSend(c, msg);
@@ -528,7 +545,7 @@ export function createWsHub(app: FastifyInstance) {
       safeSend(ws, { type: "hello", serverTime: now });
       safeSend(ws, {
         type: "snapshot",
-        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, streamsEnabled, bybitConnected, ...getUniverseInfo() },
+        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo() },
       });
       safeSend(ws, { type: "streams_state", payload: { streamsEnabled, bybitConnected } });
 
@@ -584,7 +601,7 @@ export function createWsHub(app: FastifyInstance) {
       const baseRows = computeBaseRows(now);
       const rows = attachPaper(baseRows, now);
 
-      const msg: ServerWsMessage = { type: "tick", payload: { serverTime: now, rows, ...getUniverseInfo() } };
+      const msg: ServerWsMessage = { type: "tick", payload: { serverTime: now, rows, botStats: computeBotStats(rows), ...getUniverseInfo() } };
       for (const c of clients) safeSend(c, msg);
     }, 1000);
 

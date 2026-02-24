@@ -128,7 +128,7 @@ class Runtime extends EventEmitter {
 
 
   getBotStats(): PaperStats {
-    if (!this.paper || !this.isRunning()) {
+    if (!this.paper) {
       return {
         openPositions: 0,
         pendingOrders: 0,
