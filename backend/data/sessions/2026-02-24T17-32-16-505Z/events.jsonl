@@ -1,0 +1,14 @@
+{"ts":1771954336505,"type":"SESSION_START","payload":{"sessionId":"2026-02-24T17-32-16-505Z"}}
+{"ts":1771954336506,"type":"SESSION_STATE","payload":{"state":"RUNNING","sessionId":"2026-02-24T17-32-16-505Z"}}
+{"ts":1771954337045,"type":"SIGNAL_ACCEPTED","symbol":"POWERUSDT","payload":{"signal":"LONG","signalReason":"ok_long","markPrice":0.51922,"fundingRate":0.00011122,"nextFundingTime":1771963200000,"entryOffsetPct":0.01}}
+{"ts":1771954337045,"type":"ORDER_PLACED","symbol":"POWERUSDT","payload":{"orderId":"8f3eeef5-9552-42d2-8647-e27db8639904","side":"LONG","entryPrice":0.519168078,"qty":1926.1584877335235,"expiresAt":1771954367045}}
+{"ts":1771954344054,"type":"ORDER_FILLED","symbol":"POWERUSDT","payload":{"orderId":"8f3eeef5-9552-42d2-8647-e27db8639904","side":"LONG","entryPrice":0.519168078,"qty":1926.1584877335235,"fee":0.2}}
+{"ts":1771954344054,"type":"POSITION_OPEN","symbol":"POWERUSDT","payload":{"positionId":"bbd6f37a-375f-4a40-9656-57d894f9d967","side":"LONG","entryPrice":0.519168078,"qty":1926.1584877335235,"tpPrice":0.5217639183899999,"slPrice":0.5165722376099999}}
+{"ts":1771954356056,"type":"POSITION_CLOSE_TP","symbol":"POWERUSDT","payload":{"side":"LONG","entryPrice":0.519168078,"closePrice":0.5217639183899999,"qty":1926.1584877335235,"pnlFromMove":4.999999999999879,"fundingAccrued":0,"feesPaid":0.40099999999999997,"realizedPnl":4.598999999999879}}
+{"ts":1771954357056,"type":"SIGNAL_ACCEPTED","symbol":"POWERUSDT","payload":{"signal":"LONG","signalReason":"ok_long","markPrice":0.52274,"fundingRate":0.00011122,"nextFundingTime":1771963200000,"entryOffsetPct":0.01}}
+{"ts":1771954357056,"type":"ORDER_PLACED","symbol":"POWERUSDT","payload":{"orderId":"3e238798-8c93-4b8b-a95e-e3747f41da64","side":"LONG","entryPrice":0.522687726,"qty":1913.188219766997,"expiresAt":1771954387056}}
+{"ts":1771954358056,"type":"ORDER_FILLED","symbol":"POWERUSDT","payload":{"orderId":"3e238798-8c93-4b8b-a95e-e3747f41da64","side":"LONG","entryPrice":0.522687726,"qty":1913.188219766997,"fee":0.2}}
+{"ts":1771954358056,"type":"POSITION_OPEN","symbol":"POWERUSDT","payload":{"positionId":"867d3d19-132a-4889-9410-4d420ff182ae","side":"LONG","entryPrice":0.522687726,"qty":1913.188219766997,"tpPrice":0.52530116463,"slPrice":0.52007428737}}
+{"ts":1771954359056,"type":"POSITION_CLOSE_SL","symbol":"POWERUSDT","payload":{"side":"LONG","entryPrice":0.522687726,"closePrice":0.52007428737,"qty":1913.188219766997,"pnlFromMove":-4.999999999999932,"fundingAccrued":0,"feesPaid":0.399,"realizedPnl":-5.398999999999932}}
+{"ts":1771954360056,"type":"SIGNAL_ACCEPTED","symbol":"POWERUSDT","payload":{"signal":"LONG","signalReason":"ok_long","markPrice":0.51959,"fundingRate":0.00011122,"nextFundingTime":1771963200000,"entryOffsetPct":0.01}}
+{"ts":1771954360056,"type":"ORDER_PLACED","symbol":"POWERUSDT","payload":{"orderId":"085c7524-2b2e-4b1a-9f0a-15e187263dad","side":"LONG","entryPrice":0.519538041,"qty":1924.7868704189843,"expiresAt":1771954390056}}

@@ -1,0 +1,164 @@
+{
+  "summary": {
+    "generatedAt": 1771953733311,
+    "sessionId": "2026-02-24T17-20-44-964Z",
+    "startTs": 1771953644965,
+    "endTs": 1771953733309,
+    "durationSec": 88.344,
+    "trades": {
+      "total": 6,
+      "wins": 1,
+      "losses": 5,
+      "winRate": 0.166667,
+      "avgWin": 1.6004,
+      "avgLoss": -2.3996,
+      "expectancy": -1.73293333,
+      "avgHoldSec": 21.9
+    },
+    "pnl": {
+      "netRealized": -10.3976,
+      "grossFromMove": -8,
+      "funding": 0,
+      "fees": 2.3976
+    },
+    "equity": {
+      "maxDrawdown": 10.3976,
+      "peak": 0,
+      "trough": -10.3976
+    },
+    "perSymbol": [
+      {
+        "symbol": "RAVEUSDT",
+        "trades": 2,
+        "wins": 0,
+        "losses": 2,
+        "winRate": 0,
+        "netRealized": -4.799199999999889
+      },
+      {
+        "symbol": "POWERUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -2.399600000000045
+      },
+      {
+        "symbol": "TRIAUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -2.3996000000000386
+      },
+      {
+        "symbol": "ENSOUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -2.3995999999999995
+      },
+      {
+        "symbol": "FOGOUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 1.6003999999999912
+      }
+    ]
+  },
+  "trades": [
+    {
+      "symbol": "RAVEUSDT",
+      "side": "LONG",
+      "openedAt": 1771953646275,
+      "closedAt": 1771953658309,
+      "entryPrice": 0.257584239,
+      "closePrice": 0.257069070522,
+      "qty": 3882.225107724856,
+      "closeType": "SL",
+      "pnlFromMove": -1.999999999999935,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39960000000000007,
+      "realizedPnl": -2.399599999999935,
+      "holdMs": 12034
+    },
+    {
+      "symbol": "FOGOUSDT",
+      "side": "SHORT",
+      "openedAt": 1771953654298,
+      "closedAt": 1771953667337,
+      "entryPrice": 0.027732773000000002,
+      "closePrice": 0.027677307454000002,
+      "qty": 36058.420843815366,
+      "closeType": "TP",
+      "pnlFromMove": 1.9999999999999911,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39960000000000007,
+      "realizedPnl": 1.6003999999999912,
+      "holdMs": 13039
+    },
+    {
+      "symbol": "RAVEUSDT",
+      "side": "LONG",
+      "openedAt": 1771953662322,
+      "closedAt": 1771953668337,
+      "entryPrice": 0.25689430799999996,
+      "closePrice": 0.25638051938399997,
+      "qty": 3892.651447925425,
+      "closeType": "SL",
+      "pnlFromMove": -1.9999999999999545,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3996,
+      "realizedPnl": -2.399599999999954,
+      "holdMs": 6015
+    },
+    {
+      "symbol": "ENSOUSDT",
+      "side": "LONG",
+      "openedAt": 1771953667337,
+      "closedAt": 1771953691419,
+      "entryPrice": 2.75602437,
+      "closePrice": 2.75051232126,
+      "qty": 362.84149403221716,
+      "closeType": "SL",
+      "pnlFromMove": -1.9999999999999991,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3996,
+      "realizedPnl": -2.3995999999999995,
+      "holdMs": 24082
+    },
+    {
+      "symbol": "POWERUSDT",
+      "side": "LONG",
+      "openedAt": 1771953665330,
+      "closedAt": 1771953695422,
+      "entryPrice": 0.49729026600000004,
+      "closePrice": 0.496295685468,
+      "qty": 2010.8979973478909,
+      "closeType": "SL",
+      "pnlFromMove": -2.000000000000045,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3996,
+      "realizedPnl": -2.399600000000045,
+      "holdMs": 30092
+    },
+    {
+      "symbol": "TRIAUSDT",
+      "side": "LONG",
+      "openedAt": 1771953649290,
+      "closedAt": 1771953695422,
+      "entryPrice": 0.0192220776,
+      "closePrice": 0.0191836334448,
+      "qty": 52023.51279655639,
+      "closeType": "SL",
+      "pnlFromMove": -2.0000000000000386,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3996,
+      "realizedPnl": -2.3996000000000386,
+      "holdMs": 46132
+    }
+  ]
+}

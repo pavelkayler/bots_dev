@@ -1,0 +1,57 @@
+{
+  "summary": {
+    "generatedAt": 1771941015480,
+    "sessionId": "2026-02-24T13-47-13-259Z",
+    "startTs": 1771940833259,
+    "endTs": 1771941015479,
+    "durationSec": 182.22,
+    "trades": {
+      "total": 1,
+      "wins": 1,
+      "losses": 0,
+      "winRate": 1,
+      "avgWin": 0.6002,
+      "avgLoss": null,
+      "expectancy": null,
+      "avgHoldSec": 42.27
+    },
+    "pnl": {
+      "netRealized": 0.6002,
+      "grossFromMove": 1,
+      "funding": 0,
+      "fees": 0.3998
+    },
+    "equity": {
+      "maxDrawdown": 0,
+      "peak": 0.6002,
+      "trough": 0
+    },
+    "perSymbol": [
+      {
+        "symbol": "ETHUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 0.6002000000000514
+      }
+    ]
+  },
+  "trades": [
+    {
+      "symbol": "ETHUSDT",
+      "side": "SHORT",
+      "openedAt": 1771940954900,
+      "closedAt": 1771940997167,
+      "entryPrice": 1816.391621,
+      "closePrice": 1814.575229379,
+      "qty": 0.5505420683726001,
+      "closeType": "TP",
+      "pnlFromMove": 1.0000000000000513,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3998,
+      "realizedPnl": 0.6002000000000514,
+      "holdMs": 42267
+    }
+  ]
+}

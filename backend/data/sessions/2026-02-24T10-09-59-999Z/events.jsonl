@@ -1,0 +1,14 @@
+{"ts":1771927800000,"type":"SESSION_START","payload":{"sessionId":"2026-02-24T10-09-59-999Z"}}
+{"ts":1771927800000,"type":"SESSION_STATE","payload":{"state":"RUNNING","sessionId":"2026-02-24T10-09-59-999Z"}}
+{"ts":1771927802364,"type":"SIGNAL_ACCEPTED","symbol":"SOLUSDT","payload":{"signal":"SHORT","signalReason":"ok_short","markPrice":76.507,"fundingRate":-0.00007995,"nextFundingTime":1771948800000,"entryOffsetPct":0.02}}
+{"ts":1771927802364,"type":"ORDER_PLACED","symbol":"SOLUSDT","payload":{"orderId":"7c1d01cb-3627-4890-82d6-903bc2451e63","side":"SHORT","entryPrice":76.5223014,"qty":0.6534042897983201,"expiresAt":1771927832364}}
+{"ts":1771927803365,"type":"SIGNAL_ACCEPTED","symbol":"BTCUSDT","payload":{"signal":"SHORT","signalReason":"ok_short","markPrice":63146.66,"fundingRate":-0.0000817,"nextFundingTime":1771948800000,"entryOffsetPct":0.02}}
+{"ts":1771927803365,"type":"ORDER_PLACED","symbol":"BTCUSDT","payload":{"orderId":"40d826d1-3b47-494f-aaa5-43dea1f39703","side":"SHORT","entryPrice":63159.289332,"qty":0.000791649186189738,"expiresAt":1771927833365}}
+{"ts":1771927804368,"type":"SIGNAL_ACCEPTED","symbol":"ETHUSDT","payload":{"signal":"SHORT","signalReason":"ok_short","markPrice":1824.03,"fundingRate":-0.00007924,"nextFundingTime":1771948800000,"entryOffsetPct":0.02}}
+{"ts":1771927804368,"type":"ORDER_PLACED","symbol":"ETHUSDT","payload":{"orderId":"1c3c2787-f731-487e-ac2b-13ea2058c0e1","side":"SHORT","entryPrice":1824.394806,"qty":0.027406348579573844,"expiresAt":1771927834368}}
+{"ts":1771927804788,"type":"SESSION_STATE","payload":{"state":"STOPPING","sessionId":"2026-02-24T10-09-59-999Z"}}
+{"ts":1771927804788,"type":"ORDER_CANCELED","symbol":"BTCUSDT","payload":{"orderId":"40d826d1-3b47-494f-aaa5-43dea1f39703","side":"SHORT","entryPrice":63159.289332,"qty":0.000791649186189738}}
+{"ts":1771927804788,"type":"ORDER_CANCELED","symbol":"ETHUSDT","payload":{"orderId":"1c3c2787-f731-487e-ac2b-13ea2058c0e1","side":"SHORT","entryPrice":1824.394806,"qty":0.027406348579573844}}
+{"ts":1771927804788,"type":"ORDER_CANCELED","symbol":"SOLUSDT","payload":{"orderId":"7c1d01cb-3627-4890-82d6-903bc2451e63","side":"SHORT","entryPrice":76.5223014,"qty":0.6534042897983201}}
+{"ts":1771927804788,"type":"SESSION_STOP","payload":{"symbols":["BTCUSDT","ETHUSDT","SOLUSDT"]}}
+{"ts":1771927804789,"type":"SESSION_STATE","payload":{"state":"STOPPED","sessionId":"2026-02-24T10-09-59-999Z"}}

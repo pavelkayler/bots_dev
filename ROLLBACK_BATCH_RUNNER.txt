@@ -1,0 +1,13 @@
+Rollback: remove Batch Runner patch
+
+1) Extract this archive into the project root with overwrite.
+2) Delete these files/directories (optional but recommended):
+
+- backend/src/batch/batchRunner.ts
+- frontend/src/features/batch/
+
+If you do not delete them, the project will still work because all imports/usages are removed.
+
+After rollback:
+- /api/batch/* endpoints are removed
+- Dashboard no longer shows Batch runner panel
