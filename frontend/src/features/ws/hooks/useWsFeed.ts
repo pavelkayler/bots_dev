@@ -120,7 +120,8 @@ export function useWsFeed() {
           if (msg.type === "snapshot") {
             setWsSessionState(msg.payload.sessionState);
             setWsSessionId(msg.payload.sessionId ?? null);
-            setRows(Array.isArray((msg.payload as any).rows) ? (msg.payload as any).rows : []);
+            const snapshotRows = (msg as any)?.payload?.rows;
+            setRows(Array.isArray(snapshotRows) ? snapshotRows : []);
 
             setStreams({
               streamsEnabled: msg.payload.streamsEnabled,
@@ -136,7 +137,8 @@ export function useWsFeed() {
 
           if (msg.type === "tick") {
             setLastServerTime(msg.payload.serverTime);
-            setRows(Array.isArray((msg.payload as any).rows) ? (msg.payload as any).rows : []);
+            const tickRows = (msg as any)?.payload?.rows;
+            setRows(Array.isArray(tickRows) ? tickRows : []);
 
             setUniverseSelectedId((msg.payload as any).universeSelectedId ?? "");
             setUniverseSymbolsCount(Number((msg.payload as any).universeSymbolsCount ?? 0));
