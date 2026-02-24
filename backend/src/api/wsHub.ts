@@ -156,7 +156,7 @@ function finiteOr<T extends number | null>(value: T | undefined, fallback: numbe
 }
 
 function readJsonlTail(filePath: string, limit: number): LogEvent[] {
-  const max = Math.max(1, Math.min(5, Math.floor(limit)));
+  const max = Math.max(1, Math.min(100, Math.floor(limit)));
   const text = fs.readFileSync(filePath, "utf8");
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
@@ -214,7 +214,7 @@ export function createWsHub(app: FastifyInstance) {
   let tickTimer: NodeJS.Timeout | null = null;
 
   // Bybit upstream
-  let streamsEnabled = true;
+  let streamsEnabled = runtime.getStatus().sessionState === "RUNNING";
   let bybitConnected = false;
 
   let bybit: BybitWsClient | null = null;
@@ -227,6 +227,11 @@ export function createWsHub(app: FastifyInstance) {
   function broadcastStreamsState() {
     const msg: ServerWsMessage = { type: "streams_state", payload: { streamsEnabled, bybitConnected } };
     for (const c of clients) safeSend(c, msg);
+  }
+
+  function rowsAllowed() {
+    const st = runtime.getStatus();
+    return st.sessionState === "RUNNING";
   }
 
   function computeBaseRows(now: number): SymbolRowBase[] {
@@ -350,8 +355,7 @@ export function createWsHub(app: FastifyInstance) {
 
   function sendRowsToClient(ws: WebSocket, mode: "tick" | "snapshot") {
     const now = nowMs();
-    const baseRows = computeBaseRows(now);
-    const rows = attachPaper(baseRows, now);
+    const rows = rowsAllowed() ? attachPaper(computeBaseRows(now), now) : [];
 
     if (mode === "snapshot") {
       const st = runtime.getStatus();
@@ -367,8 +371,7 @@ export function createWsHub(app: FastifyInstance) {
 
   function broadcastSnapshot() {
     const now = nowMs();
-    const baseRows = computeBaseRows(now);
-    const rows = attachPaper(baseRows, now);
+    const rows = rowsAllowed() ? attachPaper(computeBaseRows(now), now) : [];
     const st = runtime.getStatus();
 
     const msg: ServerWsMessage = {
@@ -389,7 +392,41 @@ export function createWsHub(app: FastifyInstance) {
     for (const c of clients) safeSend(c, msg);
   }
 
-  const onRuntimeState = () => broadcastSnapshot();
+  function startTickTimer() {
+    if (tickTimer) return;
+    tickTimer = setInterval(() => {
+      const now = nowMs();
+      const rows = rowsAllowed() ? attachPaper(computeBaseRows(now), now) : [];
+      const msg: ServerWsMessage = { type: "tick", payload: { serverTime: now, rows, botStats: computeBotStats(rows), ...getUniverseInfo() } };
+      for (const c of clients) safeSend(c, msg);
+    }, 1000);
+  }
+
+  function stopTickTimer() {
+    if (tickTimer) clearInterval(tickTimer);
+    tickTimer = null;
+  }
+
+  function syncRuntimeStreamLifecycle() {
+    const st = runtime.getStatus();
+    if (st.sessionState === "RUNNING") {
+      streamsEnabled = true;
+      void startBybit();
+      startTickTimer();
+      broadcastStreamsState();
+      return;
+    }
+
+    streamsEnabled = false;
+    stopBybitUpstream();
+    stopTickTimer();
+    broadcastStreamsState();
+  }
+
+  const onRuntimeState = () => {
+    syncRuntimeStreamLifecycle();
+    broadcastSnapshot();
+  };
   const onRuntimeEvent = (ev: LogEvent) => broadcastEventAppend(ev);
 
   runtime.on("state", onRuntimeState);
@@ -538,9 +575,8 @@ export function createWsHub(app: FastifyInstance) {
       clientEventsLimit.set(ws, 5);
 
       const now = nowMs();
-      const baseRows = computeBaseRows(now);
-      const rows = attachPaper(baseRows, now);
       const st = runtime.getStatus();
+      const rows = rowsAllowed() ? attachPaper(computeBaseRows(now), now) : [];
 
       safeSend(ws, { type: "hello", serverTime: now });
       safeSend(ws, {
@@ -557,7 +593,7 @@ export function createWsHub(app: FastifyInstance) {
         if (!msg) return;
 
         if (msg.type === "events_tail_request") {
-          const lim = Math.max(1, Math.min(5, Math.floor(msg.payload.limit)));
+          const lim = Math.max(1, Math.min(100, Math.floor(msg.payload.limit)));
           clientEventsLimit.set(ws, lim);
           sendEventsTail(ws, lim);
           return;
@@ -590,20 +626,7 @@ export function createWsHub(app: FastifyInstance) {
       });
     });
 
-    if (streamsEnabled) {
-      await startBybit();
-    } else {
-      broadcastStreamsState();
-    }
-
-    tickTimer = setInterval(() => {
-      const now = nowMs();
-      const baseRows = computeBaseRows(now);
-      const rows = attachPaper(baseRows, now);
-
-      const msg: ServerWsMessage = { type: "tick", payload: { serverTime: now, rows, botStats: computeBotStats(rows), ...getUniverseInfo() } };
-      for (const c of clients) safeSend(c, msg);
-    }, 1000);
+    syncRuntimeStreamLifecycle();
 
     app.log.info("wsHub: /ws ready (dynamic universe via runtime config)");
   });

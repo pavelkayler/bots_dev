@@ -35,3 +35,12 @@ export async function postJson<T>(url: string, body: unknown = {}): Promise<T> {
   }
   return (await res.json()) as T;
 }
+
+export async function deleteJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    const bodyText = await readErrorBody(res);
+    throw new Error(`DELETE ${url} failed: ${res.status}${bodyText}`);
+  }
+  return (await res.json()) as T;
+}

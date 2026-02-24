@@ -9,6 +9,15 @@ export function useSessionSummary(sessionState: SessionState, sessionId: string 
   const [error, setError] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
+  useEffect(() => {
+    if (sessionState === "RUNNING" && sessionId) {
+      setData(null);
+      setError(null);
+      setLastUpdatedAt(null);
+      setLoading(false);
+    }
+  }, [sessionState, sessionId]);
+
   const refresh = useCallback(async () => {
     if (!sessionId) return;
 

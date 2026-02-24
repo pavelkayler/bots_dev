@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Container } from "react-bootstrap";
+import { Badge, Button, Card, Container, Form } from "react-bootstrap";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
 import { LiveRowsTable } from "../../features/market/components/LiveRowsTable";
@@ -64,11 +64,7 @@ export function DashboardPage() {
         <SessionMetaBar
           sessionId={status.sessionId}
           eventsFile={status.eventsFile}
-          activeOnly={activeOnly}
-          onToggleActiveOnly={setActiveOnly}
-          rowsCount={displayedRows.length}
           apiError={error}
-          onRefreshRows={() => requestRowsRefresh("tick")}
         />
 
         <BotSummaryBar sessionState={status.sessionState} botStats={botStats} />
@@ -77,8 +73,21 @@ export function DashboardPage() {
 
         <ConfigPanel sessionState={status.sessionState} />
 
-        <h4 className="mb-2">Live rows (1Hz)</h4>
-        <LiveRowsTable rows={displayedRows} />
+        <Card className="mb-3">
+          <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
+            <b>Live rows (1Hz)</b>
+            <div className="ms-auto d-flex align-items-center gap-2">
+              <Form.Check type="switch" id="active-only" label="Active only" checked={activeOnly} onChange={(e) => setActiveOnly(e.currentTarget.checked)} />
+              <Badge bg="secondary">rows: {displayedRows.length}</Badge>
+              <Button size="sm" variant="outline-secondary" onClick={() => requestRowsRefresh("tick")}>
+                Refresh rows
+              </Button>
+            </div>
+          </Card.Header>
+          <Card.Body>
+            <LiveRowsTable rows={displayedRows} />
+          </Card.Body>
+        </Card>
 
         <EventsTail enabled={status.sessionState === "RUNNING"} events={events} onRequestTail={requestEventsTail} />
 

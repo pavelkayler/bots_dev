@@ -64,7 +64,7 @@ export function useWsFeed() {
 
   const requestEventsTail = useCallback(
     (limit: number) => {
-      const lim = Math.max(1, Math.min(5, Math.floor(limit)));
+      const lim = Math.max(1, Math.min(100, Math.floor(limit)));
       eventsLimitRef.current = lim;
       send({ type: "events_tail_request", payload: { limit: lim } });
     },
