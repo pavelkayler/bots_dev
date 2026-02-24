@@ -146,6 +146,11 @@ function pctChange(now: number, ref: number): number | null {
   return ((now - ref) / ref) * 100;
 }
 
+function finiteOr<T extends number | null>(value: T | undefined, fallback: number | null): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return fallback;
+}
+
 function readJsonlTail(filePath: string, limit: number): LogEvent[] {
   const max = Math.max(1, Math.min(5, Math.floor(limit)));
   const text = fs.readFileSync(filePath, "utf8");
@@ -231,12 +236,12 @@ export function createWsHub(app: FastifyInstance) {
     for (const symbol of symbols) {
       const raw = cache.getRawRow(symbol);
 
-      const markPrice = raw?.markPrice ?? 0;
-      const openInterestValue = raw?.openInterestValue ?? 0;
-      const fundingRate = raw?.fundingRate ?? 0;
-      const nextFundingTime = raw?.nextFundingTime ?? 0;
-      const fundingIntervalHour = raw?.fundingIntervalHour ?? null;
-      const updatedAt = raw?.updatedAt ?? 0;
+      const markPrice = finiteOr(raw?.markPrice, 0) ?? 0;
+      const openInterestValue = finiteOr(raw?.openInterestValue, 0) ?? 0;
+      const fundingRate = finiteOr(raw?.fundingRate, 0) ?? 0;
+      const nextFundingTime = finiteOr(raw?.nextFundingTime, 0) ?? 0;
+      const fundingIntervalHour = finiteOr(raw?.fundingIntervalHour, null);
+      const updatedAt = finiteOr(raw?.updatedAt, 0) ?? 0;
 
       const refs = candles.getRefs(symbol);
 
@@ -277,8 +282,8 @@ export function createWsHub(app: FastifyInstance) {
         cooldownWindowStartMs: cooldown ? cooldown.windowStartMs : null,
         cooldownWindowEndMs: cooldown ? cooldown.windowEndMs : null,
 
-          signal: decision.signal,
-          signalReason: decision.reason,
+        signal: decision.signal,
+        signalReason: decision.reason,
       });
     }
 
