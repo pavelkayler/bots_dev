@@ -1,35 +1,16 @@
 # API transport architecture
 
-## REST endpoints
-- `POST /api/session/start`
-- `POST /api/session/stop`
-- `GET /api/session/status`
-- `GET /api/health`
-- `GET /api/version`
+Last update: 2026-02-24
 
-Request validation and response DTOs are defined in `api/dto.ts` and consumed by `api/http.ts`.
+## REST
+- `/api/session/*` start/stop/status + downloads
+- `/api/config` get/patch
+- `/api/universes/*` list/create/read
 
-## WebSocket channel (`/ws`)
-Connection flow:
-1. Server sends `hello` once.
-2. Server sends full `snapshot` once.
-3. During RUNNING/COOLDOWN session:
-   - `tick` at 1Hz (<= 1/sec)
-   - `events_append` on event batches
-   - `session_state` on lifecycle transitions
-   - `error` on transport/engine diagnostics
+## WebSocket `/ws`
+- push: `snapshot`, `tick`, `streams_state`, `events_tail`, `events_append`
+- receive: `events_tail_request`, `rows_refresh_request`, `streams_toggle_request`, `streams_apply_subscriptions_request`
 
-## Message frequency and cadence
-- `tick`: 1Hz, produced only by `SessionManager` scheduler.
-- `events_append`: bursty, tied to engine/broker events.
-- `session_state`: on transitions only.
-- `hello`/`snapshot`: per WS connection.
-
-## Data flow
-```text
-SessionManager listeners
-   ├─ onTick ---------> wsHub.broadcast("tick")
-   ├─ onEventsAppend -> wsHub.broadcast("events_append")
-   ├─ onSessionState -> wsHub.broadcast("session_state")
-   └─ onError -------> wsHub.broadcast("error")
-```
+Design notes:
+- WS is used for high-frequency UI updates and event streaming.
+- REST is used for config/universe persistence and file downloads.

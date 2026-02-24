@@ -1,63 +1,32 @@
 # 02 Bybit Data Interfaces (V5)
 
-## 1. WebSocket
-### Endpoint (public linear)
-Use official Bybit V5 public WS for linear instruments.
+Last update: 2026-02-24
 
-Key topics (per symbol):
-- `tickers.{symbol}` — snapshot + delta updates
-- `kline.{tfMin}.{symbol}` — candle stream; use `confirm=true` for close boundary
+## 1) Public WebSocket (primary)
+Endpoint:
+- `wss://stream.bybit.com/v5/public/linear`
 
-Important behavior:
-- Tickers are **snapshot + delta**: if a field is missing, it means it has not changed; keep last known value in memory.
+Topics used:
+- `tickers.<symbol>` — 24h stats and funding fields used for filtering and runtime rows
+- `kline.<tfMin>.<symbol>` — candle boundaries (`confirm=true`) used to create **reference points**
 
-### Operational constraints
-- Subscribe args length limit (public WS): total `args` length up to 21,000 characters per connection.
-  - For 100–200 symbols with 2 topics each, implement **batching** and potentially **multiple WS connections**.
+Notes:
+- Ticker payload can arrive as **object or array**; implementation must normalize both.
+- Funding fields vary by instrument. Use per-symbol values provided in ticker:
+  - `fundingRate`
+  - `nextFundingTime`
+  - optional `fundingIntervalHour` (if present)
 
-### Heartbeat & reconnect
-- Maintain ping/pong.
-- On disconnect: reconnect with backoff, then resubscribe to all topics for that connection.
+## 2) REST (allowed only as symbol seed)
+Purpose: get the list of **Trading** instruments to subscribe via WS (avoid garbage symbols).
 
-## 2. REST bootstrap (start-only)
-To simulate "as exchange":
-- tickSize (price step)
-- qtyStep / minQty
-- additional constraints if needed
+Endpoint:
+- `GET https://api.bybit.com/v5/market/instruments-info?category=linear&status=Trading&limit=...&cursor=...`
 
-Use V5 Market endpoint:
-- `GET /v5/market/instruments-info?category=linear`
+Filtering rules after seed:
+- symbol matches `^[A-Z0-9]{2,28}USDT$`
+- exclude symbols containing `-`
+- prefer `contractType` containing `perpetual`
+- `settleCoin == USDT` if field exists
 
-Store per symbol:
-- tickSize
-- qtyStep
-- minQty
-- optionally minNotional, maxOrderQty if needed later
-
-## 3. Fields used in this project (canonical)
-### Tickers (per symbol)
-- markPrice
-- openInterestValue
-- turnover24h
-- highPrice24h
-- lowPrice24h
-- fundingRate
-- nextFundingTime (timestamp)
-
-### Kline (per symbol, per tfMin)
-- close
-- confirm (true at candle close)
-
-## 4. Funding cooldown window (global gate)
-From tickers:
-- nextFundingTimeTs
-
-Cooldown parameters:
-- beforeMin, afterMin
-
-Cooldown interval:
-- [nextFundingTimeTs - beforeMin*60s, nextFundingTimeTs + afterMin*60s]
-
-Inside cooldown:
-- session state is COOLDOWN
-- signals are not evaluated
+The seed list is used ONLY to build WS subscriptions. All metrics/filters are computed from WS tickers.

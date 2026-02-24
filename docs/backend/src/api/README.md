@@ -1,34 +1,29 @@
-# Backend Session API + WS (dummy plumbing)
+# Backend API (REST + WS)
+
+Last update: 2026-02-24
 
 ## Run locally
-
-From repository root:
-
+From `backend/`:
 ```bash
-cd backend
-npx tsc -p tsconfig.json
-node dist/index.js
+npm install
+npm run dev
 ```
 
-The server starts on `http://localhost:3000` by default.
-
-## REST endpoints
-
-- `POST /api/session/start`
-  - Validates request body against `SessionStartRequest`.
-  - Deterministic behavior: if a previous session is active, it is stopped first, then a new one starts.
-  - Returns `{ ok, sessionId, state }`.
-- `POST /api/session/stop`
-  - Transitions state `STOPPING -> STOPPED`, stops tick loop.
-  - Returns `{ ok, sessionId, state }`.
+## Key endpoints
 - `GET /api/session/status`
-  - Returns `{ ok, sessionId, state, tfMin, counts, cooldown }`.
+- `POST /api/session/start`
+- `POST /api/session/stop`
+- `GET /api/config`
+- `POST /api/config`
+- `GET /api/session/events/download`
+- `GET /api/session/summary`
+- `GET /api/session/summary/download`
+- `GET /api/universes`
+- `POST /api/universes/create`
 
-## WebSocket
-
-- `GET /ws`
-  - On connect sends:
-    1. `hello`
-    2. `snapshot`
-  - While session is `RUNNING` / `COOLDOWN`, emits `tick` every 1000ms.
-  - Emits `events_append` (dummy `EventRow`) and `session_state` on state changes.
+## WS
+- `ws://localhost:8080/ws`
+The dashboard connects here and receives:
+- snapshot
+- tick (1Hz)
+- events tail + append

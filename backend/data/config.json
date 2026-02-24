@@ -106,8 +106,8 @@
     "afterMin": 5
   },
   "signals": {
-    "priceThresholdPct": 0.5,
-    "oivThresholdPct": 0.7,
+    "priceThresholdPct": 0.2,
+    "oivThresholdPct": 0.2,
     "requireFundingSign": true
   },
   "paper": {

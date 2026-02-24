@@ -1,62 +1,23 @@
-# 09 Project Structure (recommended)
+# 09 Project Structure
+
+Last update: 2026-02-24
 
 ## Repository layout
-```
-/backend
-  /src
-    /api
-      http.ts        # REST routes
-      wsHub.ts       # WS server to frontend
-      dto.ts         # DTO types + zod schemas
-    /bybit
-      BybitWsClient.ts
-      topicBuilder.ts
-      rest.ts        # instruments-info bootstrap
-    /engine
-      SessionManager.ts
-      UniverseBuilder.ts
-      MarketStateStore.ts
-      CandleTracker.ts
-      FundingCooldownGate.ts
-      StrategyEngine.ts
-    /paper
-      PaperBroker.ts
-      rounding.ts
-      fees.ts
-      funding.ts
-      models.ts
-    /logging
-      EventLogger.ts
-    index.ts
-  package.json
-  tsconfig.json
+- `backend/` Node.js (ESM) + TypeScript + Fastify + WS
+- `frontend/` Vite + React + TypeScript + react-bootstrap + react-router-dom
+- `docs/` canonical specs and contracts
+- `run.bat` start backend + frontend locally
 
-/frontend
-  /src
-    /pages
-      ConfigPage.tsx
-      RuntimePage.tsx
-      SymbolsPage.tsx
-      EventsPage.tsx
-    /components
-      AppNavbar.tsx
-      SymbolsTable.tsx
-      EventsTable.tsx
-      StatusBadge.tsx
-    /ws
-      client.ts
-      types.ts
-    /state
-      store.ts
-    App.tsx
-    main.tsx
-  package.json
-  tsconfig.json
-```
+## Frontend architecture
+- `src/app` providers and routing
+- `src/pages` route pages (`/` dashboard, `/universe` builder)
+- `src/features` feature modules (ws, session, market, events, config, universe, summary)
+- `src/shared` shared types, utils, http, env
 
-## Runtime overview
-Bybit WS -> MarketStateStore (last values) -> 1Hz Engine -> PaperBroker
-                                                  |
-                                                  +-> EventLogger (JSONL)
-                                                  +-> wsHub (snapshot/tick/events)
-Frontend WS client -> state store -> pages/tables
+## Backend architecture (high level)
+- `src/api` http routes, wsHub
+- `src/bybit` WS client(s)
+- `src/engine` market cache, candle refs, signal engine
+- `src/paper` paper broker and summary builder
+- `src/runtime` runtime session orchestrator + config store
+- `data/` persisted sessions and universes
