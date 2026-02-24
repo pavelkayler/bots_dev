@@ -1,6 +1,6 @@
 # 08 Roadmap
 
-Last update: 2026-02-24
+Last update: 2026-02-25
 
 Legend:
 - ✅ done
@@ -14,22 +14,28 @@ Legend:
 - ✅ PaperBroker with JSONL logging
 - ✅ Session API start/stop/status
 - ✅ Events via WS (tail + append)
-- ✅ Dashboard базовая панель
+- ✅ Summary computation + download
 
-## Phase B — Universes
+## Phase B — Universes + ops UI
 - ✅ Universe Builder page (/universe)
-- ✅ REST seed list of Trading symbols (only to seed WS subscriptions)
 - ✅ WS-based filtering by turnover + volatility, save to `data/universes/*.json`
 - ✅ Config: select Universe via dropdown and apply to runtime config
+- ✅ Universe delete with “in use” protection (409)
 
-## Phase C — LiveRows reliability
-- 🟡 Fix LiveRows empty/non-updating when cache fields are partial.
-  Target: rows are built from Universe symbol list; cache fields may be 0/empty until filled.
-- 🟡 Ensure ActiveOnly filters to active symbols (paper open/pending and signals)
+## Phase C — Dashboard operator UX
+- ✅ LiveRows table wired correctly (ActiveOnly filtering works)
+- ✅ LiveRows header controls: ActiveOnly + rows count + Next candle countdown + Refresh rows
+- ✅ Bot stats via WS snapshot/tick + uptime display
+- ✅ Trade stats by symbol (real-time; sortable)
+- ✅ Events tail limit selector (5/25/50/100)
+- ✅ Summary resets on Start; trades table global sort + pagination (50/100/200)
+- ✅ Fees displayed as negative values (UI)
 
-## Phase D — Server-side bot stats
-- ⏳ Move Bot summary stats calculation to server and push via WS snapshot/tick (survive frontend reload).
-- ⏳ Persist per-session stats to summary.
+## Phase D — Config ergonomics
+- ✅ Numeric inputs allow empty while typing; Apply validates
+- ✅ Apply gating (dirty + valid + universe selected) + Apply & Reboot (stop+start without summary flash)
+- ✅ Presets (select / overwrite save / remove) + preferred universe auto-select
+- ✅ Direction mode: both / long / short (default both), applied to signals + trading
 
-## Phase E — Export pack
-- ⏳ One-click download of run pack: events.jsonl + summary.json + runtime config snapshot.
+## Phase E — Next steps (planned)
+See: `docs/20_future_plan.md`

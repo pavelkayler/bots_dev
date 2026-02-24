@@ -1,18 +1,18 @@
 # 09 Project Structure
 
-Last update: 2026-02-24
+Last update: 2026-02-25
 
 ## Repository layout
 - `backend/` Node.js (ESM) + TypeScript + Fastify + WS
 - `frontend/` Vite + React + TypeScript + react-bootstrap + react-router-dom
 - `docs/` canonical specs and contracts
-- `run.bat` start backend + frontend locally
+- `start.bat` start backend + frontend locally
 
 ## Frontend architecture
 - `src/app` providers and routing
 - `src/pages` route pages (`/` dashboard, `/universe` builder)
-- `src/features` feature modules (ws, session, market, events, config, universe, summary)
-- `src/shared` shared types, utils, http, env
+- `src/features` feature modules (ws, session, market, events, config, universe, summary, stats, presets)
+- `src/shared` shared types, utils, http, formatters
 
 ## Backend architecture (high level)
 - `src/api` http routes, wsHub
@@ -20,4 +20,7 @@ Last update: 2026-02-24
 - `src/engine` market cache, candle refs, signal engine
 - `src/paper` paper broker and summary builder
 - `src/runtime` runtime session orchestrator + config store
-- `data/` persisted sessions and universes
+- `data/`
+  - `sessions/` per-run events + summary
+  - `universes/` saved symbol sets
+  - `presets/` saved config presets
