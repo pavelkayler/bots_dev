@@ -31,7 +31,7 @@
       "makerFeeRate": 0.0002,
       "rearmDelayMs": 1500,
       "applyFunding": false,
-      "longOnly": false
+      "directionMode": "both"
     }
   }
 }

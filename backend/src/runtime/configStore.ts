@@ -38,7 +38,7 @@ const fundingCooldownSchema = z
 const paperSchema = z
   .object({
     enabled: z.boolean(),
-    longOnly: z.boolean(),
+    directionMode: z.enum(["both", "long", "short"]),
 
     marginUSDT: z.number().finite().min(0),
     leverage: z.number().finite().min(1).max(1000),
@@ -121,8 +121,11 @@ function migrateLoaded(raw: any): any {
 
   if (!raw.paper || typeof raw.paper !== "object") {
     raw.paper = { ...CONFIG.paper };
-  } else if (raw.paper.longOnly == null) {
-    raw.paper.longOnly = CONFIG.paper.longOnly;
+  } else {
+    if (raw.paper.directionMode == null) {
+      raw.paper.directionMode = raw.paper.longOnly === true ? "long" : "both";
+    }
+    delete raw.paper.longOnly;
   }
   return raw;
 }
@@ -142,6 +145,23 @@ function quarantineBadConfigFile() {
   } catch {
     // ignore
   }
+}
+
+
+function normalizeIncomingPatch(rawPatch: unknown): unknown {
+  if (!rawPatch || typeof rawPatch !== "object") return rawPatch;
+
+  const patch = deepClone(rawPatch as Record<string, unknown>);
+  const paper = (patch as any).paper;
+
+  if (paper && typeof paper === "object") {
+    if ((paper as any).directionMode == null) {
+      (paper as any).directionMode = (paper as any).longOnly === true ? "long" : "both";
+    }
+    delete (paper as any).longOnly;
+  }
+
+  return patch;
 }
 
 function sameUniverse(a: RuntimeConfig["universe"], b: RuntimeConfig["universe"]) {
@@ -170,7 +190,7 @@ class ConfigStore extends EventEmitter {
   }
 
   update(patch: unknown): RuntimeConfig {
-    const p = patchSchema.parse(patch);
+    const p = patchSchema.parse(normalizeIncomingPatch(patch));
 
     const nextCandidate: RuntimeConfig = {
       universe: {
@@ -189,7 +209,7 @@ class ConfigStore extends EventEmitter {
       },
       paper: {
         enabled: p.paper?.enabled ?? this.cfg.paper.enabled,
-        longOnly: p.paper?.longOnly ?? this.cfg.paper.longOnly,
+        directionMode: p.paper?.directionMode ?? this.cfg.paper.directionMode,
 
         marginUSDT: p.paper?.marginUSDT ?? this.cfg.paper.marginUSDT,
         leverage: p.paper?.leverage ?? this.cfg.paper.leverage,

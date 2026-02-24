@@ -22,7 +22,7 @@ export type SignalConfig = {
     priceThresholdPct: number; // e.g. 0.3 means 0.3%
     oivThresholdPct: number;   // e.g. 0.3 means 0.3%
     requireFundingSign: boolean;
-    longOnly?: boolean;
+    directionMode?: "both" | "long" | "short";
 };
 
 export class SignalEngine {
@@ -58,8 +58,13 @@ export class SignalEngine {
             if (shortMatch && fundingRate >= 0) return { signal: null, reason: "funding_mismatch" };
         }
 
-        if (longMatch) return { signal: "LONG", reason: "ok_long" };
-        if (this.cfg.longOnly) return { signal: null, reason: "threshold_not_met" };
+        const directionMode = this.cfg.directionMode ?? "both";
+
+        if (longMatch) {
+            if (directionMode === "short") return { signal: null, reason: "threshold_not_met" };
+            return { signal: "LONG", reason: "ok_long" };
+        }
+        if (directionMode === "long") return { signal: null, reason: "threshold_not_met" };
         return { signal: "SHORT", reason: "ok_short" };
     }
 }

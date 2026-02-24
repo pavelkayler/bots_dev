@@ -400,7 +400,7 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
                 <hr />
                 <h6 className="mb-0">Paper</h6>
                 <div className="mt-2 d-flex align-items-center gap-3">
-                  <Form.Check type="switch" id="paperLongOnly" label="Long Only" checked={draft.paper.longOnly} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, longOnly: e.currentTarget.checked } })} />
+                  <Form.Group className="mb-0"><Form.Label className="mb-1">Direction</Form.Label><Form.Select id="paperDirectionMode" size="sm" value={draft.paper.directionMode} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, directionMode: e.currentTarget.value as "both" | "long" | "short" } })}><option value="both">Both directions</option><option value="long">Long only</option><option value="short">Short only</option></Form.Select></Form.Group>
                   <Form.Check type="switch" id="paperEnabled" label="enabled" checked={draft.paper.enabled} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, enabled: e.currentTarget.checked } })} />
                 </div>
                 <Row className="g-2 mt-1"><Col><Form.Label>marginUSDT</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperMarginUSDT} onChange={(e) => setNumericField("paperMarginUSDT", e.currentTarget.value)} /></Col><Col><Form.Label>leverage</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperLeverage} onChange={(e) => setNumericField("paperLeverage", e.currentTarget.value)} /></Col></Row>

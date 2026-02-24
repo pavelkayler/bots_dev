@@ -5,7 +5,7 @@ export type PaperSide = "LONG" | "SHORT";
 
 export type PaperBrokerConfig = {
     enabled: boolean;
-    longOnly: boolean;
+    directionMode: "both" | "long" | "short";
 
     marginUSDT: number;
     leverage: number;
@@ -501,12 +501,12 @@ export class PaperBroker {
             return;
         }
 
-        if (this.cfg.longOnly && signal === "SHORT") {
+        if ((this.cfg.directionMode === "long" && signal === "SHORT") || (this.cfg.directionMode === "short" && signal === "LONG")) {
             this.logger.log({
                 ts: nowMs,
                 type: "ORDER_SKIPPED",
                 symbol,
-                payload: { reason: "long_only", signal }
+                payload: { reason: "direction_blocked", signal, directionMode: this.cfg.directionMode }
             });
             this.map.set(symbol, st);
             return;
