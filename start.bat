@@ -1,4 +1,10 @@
+@echo off
+cd /d "%~dp0"
+
 cd backend
-start npm run dev
-cd ../frontend
-npm run dev
+call npm i
+start "backend" cmd /k "npm run dev"
+
+cd ..\frontend
+call npm i
+start "frontend" cmd /k "npm run dev"
