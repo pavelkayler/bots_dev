@@ -11,7 +11,6 @@ import { BotSummaryBar } from "./components/BotSummaryBar";
 import type { SymbolRow } from "../../shared/types/domain";
 import { ConfigPanel } from "../../features/config/components/ConfigPanel";
 import { SessionSummaryPanel } from "../../features/summary/components/SessionSummaryPanel";
-import { useRuntimeConfig } from "../../features/config/hooks/useRuntimeConfig";
 import { useTradeStatsBySymbol } from "../../features/stats/hooks/useTradeStatsBySymbol";
 import { TradeStatsBySymbolTable } from "../../features/stats/components/TradeStatsBySymbolTable";
 
@@ -35,11 +34,11 @@ export function DashboardPage() {
   } = useWsFeed();
 
   const { status, busy, error, start, stop, canStart, canStop } = useSessionRuntime();
-  const { config } = useRuntimeConfig();
 
   const [activeOnly, setActiveOnly] = useState(true);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [isRebooting, setIsRebooting] = useState(false);
+  const [draftKlineTfMin, setDraftKlineTfMin] = useState(1);
   const wsSessionStateRef = useRef(wsSessionState);
   const wsSessionIdRef = useRef(wsSessionId);
   const waitersRef = useRef<Array<{ predicate: () => boolean; resolve: () => void }>>([]);
@@ -96,7 +95,28 @@ export function DashboardPage() {
     });
   }, [rows, activeOnly]);
 
-  const klineTfMin = Number(config?.universe?.klineTfMin ?? 1);
+  function parseSessionStartTs(sessionId: string | null): number | null {
+    if (!sessionId) return null;
+    const maybeIso = sessionId.replace(/-/g, ":").replace(/:(\d{3})$/, ".$1");
+    const parsed = Date.parse(maybeIso);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function formatElapsed(ms: number): string {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const hh = Math.floor(totalSec / 3600);
+    const mm = Math.floor((totalSec % 3600) / 60);
+    const ss = totalSec % 60;
+    if (hh > 0) {
+      return `${hh.toString().padStart(2, "0")}:${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
+    }
+    return `${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
+  }
+
+  const sessionStartTs = useMemo(() => parseSessionStartTs(status.sessionId), [status.sessionId]);
+  const uptime = status.sessionState === "RUNNING" && sessionStartTs != null ? formatElapsed(nowMs - sessionStartTs) : null;
+
+  const klineTfMin = Number(draftKlineTfMin || 1);
   const tfMs = Math.max(1, klineTfMin) * 60_000;
   const remMs = tfMs - (nowMs % tfMs);
   const remMin = Math.floor(remMs / 60_000);
@@ -127,11 +147,11 @@ export function DashboardPage() {
           apiError={error}
         />
 
-        <BotSummaryBar sessionState={status.sessionState} botStats={botStats} />
+        <BotSummaryBar sessionState={status.sessionState} botStats={botStats} uptime={uptime} />
 
         <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} suppressStopRefresh={isRebooting} />
 
-        <ConfigPanel sessionState={status.sessionState} rebooting={isRebooting} onApplyAndReboot={onApplyAndReboot} />
+        <ConfigPanel sessionState={status.sessionState} rebooting={isRebooting} onApplyAndReboot={onApplyAndReboot} onDraftKlineTfMinChange={setDraftKlineTfMin} />
 
         <Card className="mb-3">
           <Card.Header className="d-flex align-items-center gap-2 flex-wrap">

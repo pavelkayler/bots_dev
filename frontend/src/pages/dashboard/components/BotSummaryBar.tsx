@@ -5,13 +5,14 @@ import type { BotStats } from "../../../shared/types/domain";
 type Props = {
   sessionState: "STOPPED" | "RUNNING" | "STOPPING";
   botStats: BotStats;
+  uptime: string | null;
 };
 
 function pct(v: number): string {
   return `${fmtNum(v)}%`;
 }
 
-export function BotSummaryBar({ sessionState, botStats }: Props) {
+export function BotSummaryBar({ sessionState, botStats, uptime }: Props) {
   const total = botStats.closedTrades;
   const winRate = total > 0 ? (botStats.wins / total) * 100 : 0;
 
@@ -25,6 +26,7 @@ export function BotSummaryBar({ sessionState, botStats }: Props) {
       <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
         <b>Bot stats</b>
         {stateBadge}
+        {sessionState === "RUNNING" && uptime ? <span style={{ fontSize: 12, opacity: 0.85 }}>uptime: {uptime}</span> : null}
       </Card.Header>
 
       <Card.Body style={{ fontSize: 13 }}>
