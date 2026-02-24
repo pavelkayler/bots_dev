@@ -38,6 +38,7 @@ const fundingCooldownSchema = z
 const paperSchema = z
   .object({
     enabled: z.boolean(),
+    longOnly: z.boolean(),
 
     marginUSDT: z.number().finite().min(0),
     leverage: z.number().finite().min(1).max(1000),
@@ -117,6 +118,12 @@ function migrateLoaded(raw: any): any {
     if (raw.universe.klineTfMin == null) raw.universe.klineTfMin = CONFIG.klineTfMin;
   }
 
+
+  if (!raw.paper || typeof raw.paper !== "object") {
+    raw.paper = { ...CONFIG.paper };
+  } else if (raw.paper.longOnly == null) {
+    raw.paper.longOnly = CONFIG.paper.longOnly;
+  }
   return raw;
 }
 
@@ -182,6 +189,7 @@ class ConfigStore extends EventEmitter {
       },
       paper: {
         enabled: p.paper?.enabled ?? this.cfg.paper.enabled,
+        longOnly: p.paper?.longOnly ?? this.cfg.paper.longOnly,
 
         marginUSDT: p.paper?.marginUSDT ?? this.cfg.paper.marginUSDT,
         leverage: p.paper?.leverage ?? this.cfg.paper.leverage,

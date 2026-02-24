@@ -10,6 +10,8 @@ import type { PresetMeta } from "../../presets/types";
 
 type Props = {
   sessionState?: SessionState;
+  rebooting?: boolean;
+  onApplyAndReboot?: () => Promise<void>;
 };
 
 type NumericDraft = {
@@ -44,6 +46,13 @@ function toNumericDraft(cfg: RuntimeConfig): NumericDraft {
   };
 }
 
+
+function preferredUniverseNameFromPreset(name: string): string | null {
+  const match = name.match(/\[([^\]]+)\]/);
+  const parsed = match?.[1]?.trim();
+  return parsed ? parsed : null;
+}
+
 function parseNumber(v: string, label: string): number {
   if (v.trim() === "") throw new Error(`${label} is required.`);
   const n = Number(v);
@@ -51,7 +60,7 @@ function parseNumber(v: string, label: string): number {
   return n;
 }
 
-export function ConfigPanel({ sessionState }: Props) {
+export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props) {
   const { draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save } = useRuntimeConfig();
   const [inputError, setInputError] = useState<string | null>(null);
   const [numericDraft, setNumericDraft] = useState<NumericDraft | null>(null);
@@ -67,6 +76,29 @@ export function ConfigPanel({ sessionState }: Props) {
 
   const disabled = !draft || !numericDraft;
   const universeLocked = sessionState === "RUNNING" || sessionState === "STOPPING";
+
+  const isDirty = useMemo(() => {
+    if (!draft || !numericDraft) return false;
+    try {
+      const parsed = buildConfigForApply();
+      return JSON.stringify(parsed) !== JSON.stringify(draft);
+    } catch {
+      return true;
+    }
+  }, [draft, numericDraft]);
+
+  const isValidForApply = useMemo(() => {
+    if (!draft || !numericDraft) return false;
+    if (!selectedUniverseId) return false;
+    try {
+      buildConfigForApply();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [draft, numericDraft, selectedUniverseId]);
+
+  const applyDisabled = disabled || saving || !isDirty || !isValidForApply;
 
   const badge = useMemo(() => {
     if (saving) return <Badge bg="warning">saving...</Badge>;
@@ -176,8 +208,27 @@ export function ConfigPanel({ sessionState }: Props) {
 
   async function onApply() {
     setInputError(null);
+    if (!selectedUniverseId) {
+      setInputError("Universe is required.");
+      return;
+    }
     try {
       await save(buildConfigForApply());
+    } catch (e: any) {
+      setInputError(String(e?.message ?? e));
+    }
+  }
+
+  async function onApplyAndRebootClick() {
+    if (!onApplyAndReboot) return;
+    setInputError(null);
+    if (!selectedUniverseId) {
+      setInputError("Universe is required.");
+      return;
+    }
+    try {
+      await save(buildConfigForApply());
+      await onApplyAndReboot();
     } catch (e: any) {
       setInputError(String(e?.message ?? e));
     }
@@ -190,7 +241,21 @@ export function ConfigPanel({ sessionState }: Props) {
     setInputError(null);
     try {
       const preset = await readPreset(id);
-      const merged = { ...preset.config, universe: { ...draft.universe, ...preset.config.universe } };
+      let merged = { ...preset.config, universe: { ...draft.universe, ...preset.config.universe } };
+      const preferredUniverseName = preferredUniverseNameFromPreset(preset.name);
+      const matchedUniverse = preferredUniverseName ? universeList.find((u) => u.name === preferredUniverseName) : undefined;
+      if (matchedUniverse) {
+        const uni = await readUniverse(matchedUniverse.id);
+        merged = {
+          ...merged,
+          universe: {
+            ...merged.universe,
+            selectedId: uni.meta.id,
+            symbols: [...uni.symbols],
+          },
+        };
+        setSelectedUniverseId(matchedUniverse.id);
+      }
       setDraft(merged);
       setNumericDraft(toNumericDraft(merged));
     } catch (e: any) {
@@ -251,7 +316,12 @@ export function ConfigPanel({ sessionState }: Props) {
         ) : null}
 
         <div className="ms-auto d-flex align-items-center gap-2">
-          <Button size="sm" variant="success" onClick={() => void onApply()} disabled={disabled || saving}>
+          {onApplyAndReboot ? (
+            <Button size="sm" variant="outline-success" onClick={() => void onApplyAndRebootClick()} disabled={applyDisabled || rebooting}>
+              Apply and Reboot
+            </Button>
+          ) : null}
+          <Button size="sm" variant="success" onClick={() => void onApply()} disabled={applyDisabled || rebooting}>
             Apply
           </Button>
         </div>
@@ -312,7 +382,10 @@ export function ConfigPanel({ sessionState }: Props) {
                 <Form.Group className="mb-2"><Form.Label>afterMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingAfterMin} onChange={(e) => setNumericField("fundingAfterMin", e.currentTarget.value)} /></Form.Group>
                 <hr />
                 <h6 className="mb-0">Paper</h6>
-                <Form.Check className="mt-2" type="switch" id="paperEnabled" label="enabled" checked={draft.paper.enabled} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, enabled: e.currentTarget.checked } })} />
+                <div className="mt-2 d-flex align-items-center gap-3">
+                  <Form.Check type="switch" id="paperLongOnly" label="Long Only" checked={draft.paper.longOnly} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, longOnly: e.currentTarget.checked } })} />
+                  <Form.Check type="switch" id="paperEnabled" label="enabled" checked={draft.paper.enabled} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, enabled: e.currentTarget.checked } })} />
+                </div>
                 <Row className="g-2 mt-1"><Col><Form.Label>marginUSDT</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperMarginUSDT} onChange={(e) => setNumericField("paperMarginUSDT", e.currentTarget.value)} /></Col><Col><Form.Label>leverage</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperLeverage} onChange={(e) => setNumericField("paperLeverage", e.currentTarget.value)} /></Col></Row>
                 <Row className="g-2 mt-1"><Col><Form.Label>entryOffsetPct</Form.Label><Form.Control type="number" step="0.01" value={numericDraft.paperEntryOffsetPct} onChange={(e) => setNumericField("paperEntryOffsetPct", e.currentTarget.value)} /></Col><Col><Form.Label>entryTimeoutSec</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperEntryTimeoutSec} onChange={(e) => setNumericField("paperEntryTimeoutSec", e.currentTarget.value)} /></Col></Row>
                 <Row className="g-2 mt-1"><Col><Form.Label>tpRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperTpRoiPct} onChange={(e) => setNumericField("paperTpRoiPct", e.currentTarget.value)} /></Col><Col><Form.Label>slRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperSlRoiPct} onChange={(e) => setNumericField("paperSlRoiPct", e.currentTarget.value)} /></Col></Row>

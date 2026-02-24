@@ -5,18 +5,13 @@ import { createUniverse, deleteUniverse, listUniverses, readUniverse } from "../
 import type { UniverseFile, UniverseMeta } from "../../features/universe/types";
 import { fmtNum, fmtTime } from "../../shared/utils/format";
 
-function num(v: any, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
 function joinSymbols(symbols: string[]) {
   return symbols.join("\n");
 }
 
 export function UniversePage() {
-  const [minTurnoverUsd, setMinTurnoverUsd] = useState<number>(10_000_000);
-  const [minVolPct, setMinVolPct] = useState<number>(10);
+  const [minTurnoverUsd, setMinTurnoverUsd] = useState<string>("10000000");
+  const [minVolPct, setMinVolPct] = useState<string>("10");
 
   const [items, setItems] = useState<UniverseMeta[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,9 +42,7 @@ export function UniversePage() {
     void refresh();
   }, [refresh]);
 
-  const canCreate = useMemo(() => {
-    return minTurnoverUsd >= 0 && minVolPct >= 0;
-  }, [minTurnoverUsd, minVolPct]);
+  const canCreate = useMemo(() => !creating, [creating]);
 
   async function onCreate() {
     setCreating(true);
@@ -57,7 +50,13 @@ export function UniversePage() {
     setLastCreated(null);
     setStats(null);
     try {
-      const res = await createUniverse(minTurnoverUsd, minVolPct);
+      const parsedTurnover = Number(minTurnoverUsd);
+      const parsedVol = Number(minVolPct);
+      if (minTurnoverUsd.trim() === "" || minVolPct.trim() === "" || !Number.isFinite(parsedTurnover) || !Number.isFinite(parsedVol)) {
+        setError("Both numeric fields are required.");
+        return;
+      }
+      const res = await createUniverse(parsedTurnover, parsedVol);
       setLastCreated(res.universe.meta);
       setStats(res.stats);
       await refresh();
@@ -124,7 +123,7 @@ export function UniversePage() {
                 <Form.Control
                   type="number"
                   value={minTurnoverUsd}
-                  onChange={(e) => setMinTurnoverUsd(num(e.currentTarget.value, 0))}
+                  onChange={(e) => setMinTurnoverUsd(e.currentTarget.value)}
                   min={0}
                 />
               </Form.Group>
@@ -134,7 +133,7 @@ export function UniversePage() {
                 <Form.Control
                   type="number"
                   value={minVolPct}
-                  onChange={(e) => setMinVolPct(num(e.currentTarget.value, 0))}
+                  onChange={(e) => setMinVolPct(e.currentTarget.value)}
                   min={0}
                 />
               </Form.Group>

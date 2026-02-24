@@ -5,6 +5,7 @@ export type PaperSide = "LONG" | "SHORT";
 
 export type PaperBrokerConfig = {
     enabled: boolean;
+    longOnly: boolean;
 
     marginUSDT: number;
     leverage: number;
@@ -496,6 +497,17 @@ export class PaperBroker {
         }
 
         if (!signal) {
+            this.map.set(symbol, st);
+            return;
+        }
+
+        if (this.cfg.longOnly && signal === "SHORT") {
+            this.logger.log({
+                ts: nowMs,
+                type: "ORDER_SKIPPED",
+                symbol,
+                payload: { reason: "long_only", signal }
+            });
             this.map.set(symbol, st);
             return;
         }

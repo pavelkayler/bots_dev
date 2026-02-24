@@ -31,14 +31,6 @@ function parseTs(v: unknown): number | null {
   return null;
 }
 
-function eventHoldMs(ev: LogEvent): number {
-  const payload = ev.payload ?? {};
-  const opened = parseTs(payload.openedAt ?? payload.openedTs ?? payload.opened);
-  const closed = parseTs(payload.closedAt ?? payload.closedTs ?? payload.closed ?? ev.ts);
-  if (opened == null || closed == null) return 0;
-  return Math.max(0, closed - opened);
-}
-
 function eventRealizedPnl(ev: LogEvent): number {
   const payload = ev.payload ?? {};
   if (Number.isFinite(Number(payload.realizedPnl))) {
@@ -55,11 +47,15 @@ export function useTradeStatsBySymbol(sessionState: SessionState, sessionId: str
   const [statsMap, setStatsMap] = useState<Record<string, TradeStatsBySymbol>>({});
   const lastProcessedIndexRef = useRef(0);
   const prevRunningSessionIdRef = useRef<string | null>(null);
+  const openByPositionIdRef = useRef<Map<string, number>>(new Map());
+  const openBySymbolRef = useRef<Map<string, number[]>>(new Map());
 
   useEffect(() => {
     if (sessionState === "RUNNING" && sessionId && prevRunningSessionIdRef.current !== sessionId) {
       prevRunningSessionIdRef.current = sessionId;
       lastProcessedIndexRef.current = events.length;
+      openByPositionIdRef.current.clear();
+      openBySymbolRef.current.clear();
       setStatsMap({});
       return;
     }
@@ -82,16 +78,46 @@ export function useTradeStatsBySymbol(sessionState: SessionState, sessionId: str
       const next: Record<string, TradeStatsBySymbol> = { ...prev };
 
       for (const ev of nextEvents) {
-        if (!ev?.type || !String(ev.type).startsWith("POSITION_CLOSE")) continue;
-
+        const eventType = String(ev?.type ?? "");
         const symbol = String(ev.symbol ?? "").trim();
         if (!symbol) continue;
 
+        if (eventType === "POSITION_OPEN") {
+          const openedTs = parseTs(ev.payload?.openedAt ?? ev.payload?.openedTs ?? ev.ts);
+          if (openedTs == null) continue;
+          const positionId = String(ev.payload?.positionId ?? "").trim();
+          if (positionId) {
+            openByPositionIdRef.current.set(positionId, openedTs);
+          } else {
+            const queue = openBySymbolRef.current.get(symbol) ?? [];
+            queue.push(openedTs);
+            openBySymbolRef.current.set(symbol, queue);
+          }
+          continue;
+        }
+
+        if (!eventType.startsWith("POSITION_CLOSE")) continue;
+
+        const closeTs = parseTs(ev.payload?.closedAt ?? ev.payload?.closedTs ?? ev.ts);
+        let openedTs: number | null = null;
+        const positionId = String(ev.payload?.positionId ?? "").trim();
+
+        if (positionId && openByPositionIdRef.current.has(positionId)) {
+          openedTs = openByPositionIdRef.current.get(positionId) ?? null;
+          openByPositionIdRef.current.delete(positionId);
+        } else {
+          const queue = openBySymbolRef.current.get(symbol) ?? [];
+          const fallback = queue.pop();
+          if (queue.length > 0) openBySymbolRef.current.set(symbol, queue);
+          else openBySymbolRef.current.delete(symbol);
+          openedTs = typeof fallback === "number" ? fallback : null;
+        }
+
+        const holdMs = openedTs != null && closeTs != null ? Math.max(0, closeTs - openedTs) : 0;
         const realizedPnl = eventRealizedPnl(ev);
         const feesPaid = toFiniteNumber(ev.payload?.feesPaid, 0);
         const fundingAccrued = toFiniteNumber(ev.payload?.fundingAccrued, 0);
-        const holdMs = eventHoldMs(ev);
-        const lastCloseTs = parseTs(ev.payload?.closedAt ?? ev.payload?.closedTs ?? ev.ts);
+        const lastCloseTs = closeTs;
 
         const cur =
           next[symbol] ??

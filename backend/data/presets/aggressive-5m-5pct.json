@@ -6,7 +6,9 @@
   "config": {
     "universe": {
       "selectedId": "",
-      "symbols": ["BTCUSDT"],
+      "symbols": [
+        "BTCUSDT"
+      ],
       "klineTfMin": 1
     },
     "signals": {
@@ -28,7 +30,8 @@
       "slRoiPct": 2,
       "makerFeeRate": 0.0002,
       "rearmDelayMs": 1500,
-      "applyFunding": false
+      "applyFunding": false,
+      "longOnly": false
     }
   }
 }
