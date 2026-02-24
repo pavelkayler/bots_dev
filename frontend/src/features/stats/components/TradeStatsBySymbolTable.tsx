@@ -12,16 +12,7 @@ type SortKey =
   | "netPnl"
   | "fees"
   | "funding"
-  | "avgHoldMs"
   | "lastCloseTs";
-
-function formatAvgHold(ms: number) {
-  const sec = Math.max(0, Math.floor(ms / 1000));
-  if (sec < 60) return `${sec}s`;
-  const mm = Math.floor(sec / 60);
-  const ss = sec % 60;
-  return `${mm}:${ss.toString().padStart(2, "0")}`;
-}
 
 export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[] }) {
   const [sortKey, setSortKey] = useState<SortKey>("netPnl");
@@ -84,7 +75,6 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
             <th style={thButton} onClick={() => onSort("netPnl")}>Net PnL (realized)</th>
             <th style={thButton} onClick={() => onSort("fees")}>Fees</th>
             <th style={thButton} onClick={() => onSort("funding")}>Funding</th>
-            <th style={thButton} onClick={() => onSort("avgHoldMs")}>Avg hold</th>
             <th style={thButton} onClick={() => onSort("lastCloseTs")}>Last close</th>
           </tr>
         </thead>
@@ -101,14 +91,13 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
                 <td style={td}>{fmtMoney(row.netPnl)}</td>
                 <td style={td}>{formatFee(row.fees)}</td>
                 <td style={td}>{fmtMoney(row.funding)}</td>
-                <td style={td}>{formatAvgHold(row.avgHoldMs)}</td>
                 <td style={td}>{fmtTime(row.lastCloseTs)}</td>
               </tr>
             );
           })}
           {sorted.length === 0 ? (
             <tr>
-              <td colSpan={10} style={{ opacity: 0.75 }}>
+              <td colSpan={9} style={{ opacity: 0.75 }}>
                 No closed trades yet.
               </td>
             </tr>

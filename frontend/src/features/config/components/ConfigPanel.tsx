@@ -12,6 +12,7 @@ type Props = {
   sessionState?: SessionState;
   rebooting?: boolean;
   onApplyAndReboot?: () => Promise<void>;
+  onDraftKlineTfMinChange?: (klineTfMin: number) => void;
 };
 
 type NumericDraft = {
@@ -95,7 +96,7 @@ function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft |
   }
 }
 
-export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props) {
+export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraftKlineTfMinChange }: Props) {
   const { draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save } = useRuntimeConfig();
   const [inputError, setInputError] = useState<string | null>(null);
   const [numericDraft, setNumericDraft] = useState<NumericDraft | null>(null);
@@ -106,6 +107,7 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props
   const [selectedUniverseId, setSelectedUniverseId] = useState<string>("");
 
   const [presets, setPresets] = useState<PresetMeta[]>([]);
+  const [presetTfById, setPresetTfById] = useState<Record<string, number>>({});
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [presetBusy, setPresetBusy] = useState(false);
 
@@ -155,7 +157,19 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props
   async function refreshPresets() {
     try {
       const res = await listPresets();
-      setPresets(res.presets ?? []);
+      const items = res.presets ?? [];
+      setPresets(items);
+      const tfEntries = await Promise.all(
+        items.map(async (preset) => {
+          try {
+            const fullPreset = await readPreset(preset.id);
+            return [preset.id, Number(fullPreset.config.universe.klineTfMin)] as const;
+          } catch {
+            return [preset.id, 1] as const;
+          }
+        })
+      );
+      setPresetTfById(Object.fromEntries(tfEntries));
     } catch (e: any) {
       setInputError(String(e?.message ?? e));
     }
@@ -171,7 +185,8 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props
     const id = String((draft as any).universe?.selectedId ?? "");
     setSelectedUniverseId(id);
     setNumericDraft(toNumericDraft(draft));
-  }, [draft]);
+    onDraftKlineTfMinChange?.(Number(draft.universe.klineTfMin));
+  }, [draft, onDraftKlineTfMinChange]);
 
   async function onUniverseSelect(id: string) {
     setSelectedUniverseId(id);
@@ -259,6 +274,7 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props
       }
       setDraft(merged);
       setNumericDraft(toNumericDraft(merged));
+      onDraftKlineTfMinChange?.(Number(merged.universe.klineTfMin));
     } catch (e: any) {
       setInputError(String(e?.message ?? e));
     } finally {
@@ -342,7 +358,7 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props
                 <Form.Select value={selectedPresetId} onChange={(e) => void onPresetSelect(e.currentTarget.value)} disabled={presetBusy}>
                   <option value="">Select preset…</option>
                   {presets.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                    <option key={p.id} value={p.id}>{p.name} [tf={presetTfById[p.id] ?? 1}m]</option>
                   ))}
                 </Form.Select>
               </Col>
@@ -364,7 +380,7 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot }: Props
                 </Form.Group>
                 <Form.Group className="mb-2">
                   <Form.Label>klineTfMin</Form.Label>
-                  <Form.Select value={draft.universe.klineTfMin} onChange={(e) => setDraft({ ...draft, universe: { ...draft.universe, klineTfMin: Number(e.currentTarget.value) } })}>
+                  <Form.Select value={String(draft.universe.klineTfMin)} onChange={(e) => setDraft({ ...draft, universe: { ...draft.universe, klineTfMin: Number(e.currentTarget.value) } })}>
                     <option value={1}>1</option><option value={3}>3</option><option value={5}>5</option><option value={15}>15</option><option value={30}>30</option><option value={60}>60</option>
                   </Form.Select>
                 </Form.Group>
