@@ -79,9 +79,17 @@ class TapeRecorder {
   recordTicker(
     ts: number,
     symbol: string,
-    payload: Partial<{ markPrice: number; openInterestValue: number; fundingRate: number; nextFundingTime: number }>
+    payload: { markPrice: number; openInterestValue: number; fundingRate: number; nextFundingTime: number }
   ) {
     if (!this.recording || !this.stream) return;
+    if (
+      !Number.isFinite(payload.markPrice) ||
+      !Number.isFinite(payload.openInterestValue) ||
+      !Number.isFinite(payload.fundingRate) ||
+      !Number.isFinite(payload.nextFundingTime)
+    ) {
+      return;
+    }
     this.stream.write(
       `${JSON.stringify({ type: "ticker", ts, symbol, payload })}\n`
     );

@@ -30,7 +30,42 @@ const RANGE_DEFAULTS: RangeState = {
 const pageSize = 50;
 const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 
-type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null };
+type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number };
+
+const TapeSizeCell = memo(function TapeSizeCell({
+  tapeId,
+  initialBytes,
+  pollActive,
+}: {
+  tapeId: string;
+  initialBytes: number;
+  pollActive: boolean;
+}) {
+  const [bytes, setBytes] = useState(initialBytes);
+
+  useEffect(() => {
+    setBytes(initialBytes);
+  }, [initialBytes]);
+
+  useEffect(() => {
+    if (!pollActive) return;
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        try {
+          const res = await listTapes();
+          const next = (res.tapes ?? []).find((t) => t.id === tapeId);
+          if (!next) return;
+          setBytes(Number(next.fileSizeBytes) || 0);
+        } catch {
+          return;
+        }
+      })();
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [pollActive, tapeId]);
+
+  return <>{formatSize(bytes)}</>;
+});
 
 const TapesTable = memo(function TapesTable({
   isRecording,
@@ -49,7 +84,6 @@ const TapesTable = memo(function TapesTable({
 }) {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<TapeRow[]>([]);
-  const [sizeById, setSizeById] = useState<Record<string, number>>({});
 
   async function fetchTapes() {
     setLoading(true);
@@ -64,17 +98,13 @@ const TapesTable = memo(function TapesTable({
             createdAt: t.createdAt,
             symbolsCount: Array.isArray(t.meta?.symbols) ? t.meta.symbols.length : 0,
             tf: t.meta?.klineTfMin ?? null,
+            initialBytes: Number(t.fileSizeBytes) || 0,
           };
           const old = prevById.get(t.id);
           if (!old) return next;
-          if (old.createdAt === next.createdAt && old.symbolsCount === next.symbolsCount && old.tf === next.tf) return old;
+          if (old.createdAt === next.createdAt && old.symbolsCount === next.symbolsCount && old.tf === next.tf && old.initialBytes === next.initialBytes) return old;
           return next;
         });
-      });
-      setSizeById(() => {
-        const next: Record<string, number> = {};
-        for (const t of nextTapes) next[t.id] = Number(t.fileSizeBytes) || 0;
-        return next;
       });
       if (!selectedTapeId && recordingTapeId) onSelectTape(recordingTapeId);
     } catch (e: any) {
@@ -87,14 +117,6 @@ const TapesTable = memo(function TapesTable({
   useEffect(() => {
     void fetchTapes();
   }, [refreshKey]);
-
-  useEffect(() => {
-    if (!isRecording) return;
-    const intervalId = window.setInterval(() => {
-      void fetchTapes();
-    }, 5000);
-    return () => window.clearInterval(intervalId);
-  }, [isRecording]);
 
   if (loading) {
     return (
@@ -131,7 +153,13 @@ const TapesTable = memo(function TapesTable({
             <td style={{ fontSize: 12 }}>{new Date(t.createdAt).toLocaleString()}</td>
             <td style={{ fontSize: 12 }}>{t.symbolsCount}</td>
             <td style={{ fontSize: 12 }}>{t.tf ?? "-"}</td>
-            <td style={{ fontSize: 12 }}>{formatSize(sizeById[t.id] ?? 0)}</td>
+            <td style={{ fontSize: 12 }}>
+              <TapeSizeCell
+                tapeId={t.id}
+                initialBytes={t.initialBytes}
+                pollActive={Boolean(isRecording && recordingTapeId === t.id)}
+              />
+            </td>
           </tr>
         ))}
         {!rows.length ? (
