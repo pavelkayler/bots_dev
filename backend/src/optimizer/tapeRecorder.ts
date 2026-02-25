@@ -55,9 +55,7 @@ class TapeRecorder {
     const filePath = getTapePath(tapeId);
     const stream = fs.createWriteStream(filePath, { encoding: "utf8", flags: "w" });
 
-    stream.write(
-      `${JSON.stringify({ type: "meta", ts: createdAt, payload: meta })}\n`
-    );
+    stream.write(`${JSON.stringify({ type: "meta", ts: createdAt, payload: meta })}\n`);
 
     this.lastTickerTsBySymbol.clear();
     this.recording = true;
@@ -79,35 +77,22 @@ class TapeRecorder {
     this.meta = null;
   }
 
-  recordTicker(
-    ts: number,
-    symbol: string,
-    payload: { markPrice: number; openInterestValue: number; fundingRate: number; nextFundingTime: number }
-  ) {
+  recordTicker(ts: number, symbol: string, payload: { markPrice: number; openInterestValue: number; fundingRate: number; nextFundingTime: number }) {
     if (!this.recording || !this.stream) return;
-    if (
-      !Number.isFinite(payload.markPrice) ||
-      !Number.isFinite(payload.openInterestValue) ||
-      !Number.isFinite(payload.fundingRate) ||
-      !Number.isFinite(payload.nextFundingTime)
-    ) {
+    if (!Number.isFinite(payload.markPrice) || !Number.isFinite(payload.openInterestValue) || !Number.isFinite(payload.fundingRate) || !Number.isFinite(payload.nextFundingTime)) {
       return;
     }
     const last = this.lastTickerTsBySymbol.get(symbol) ?? 0;
-    if (ts - last < 5000) {
+    if (ts - last < 1000) {
       return;
     }
-    this.stream.write(
-      `${JSON.stringify({ type: "ticker", ts, symbol, payload })}\n`
-    );
+    this.stream.write(`${JSON.stringify({ type: "ticker", ts, symbol, payload })}\n`);
     this.lastTickerTsBySymbol.set(symbol, ts);
   }
 
   recordKlineConfirm(ts: number, symbol: string, payload: { close: unknown }) {
     if (!this.recording || !this.stream) return;
-    this.stream.write(
-      `${JSON.stringify({ type: "kline_confirm", ts, symbol, payload })}\n`
-    );
+    this.stream.write(`${JSON.stringify({ type: "kline_confirm", ts, symbol, payload })}\n`);
   }
 }
 
