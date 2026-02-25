@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Container, Form, Modal, Spinner, Table } from "react-bootstrap";
 import { Link } from "react-router-dom";
+import { HeaderBar } from "../dashboard/components/HeaderBar";
+import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
+import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
 import { createUniverse, deleteUniverse, listUniverses, readUniverse } from "../../features/universe/api";
 import type { UniverseFile, UniverseMeta } from "../../features/universe/types";
 import { fmtNum, fmtTime } from "../../shared/utils/format";
@@ -10,6 +13,9 @@ function joinSymbols(symbols: string[]) {
 }
 
 export function UniversePage() {
+  const { conn, lastServerTime, wsUrl, streams } = useWsFeed();
+  const { status, busy, start, stop, canStart, canStop } = useSessionRuntime();
+
   const [minTurnoverUsd, setMinTurnoverUsd] = useState<string>("10000000");
   const [minVolPct, setMinVolPct] = useState<string>("10");
 
@@ -94,8 +100,22 @@ export function UniversePage() {
   }
 
   return (
-    <Container fluid className="py-2 px-2">
-      <Card className="mb-3">
+    <>
+      <HeaderBar
+        conn={conn}
+        sessionState={status.sessionState}
+        wsUrl={wsUrl}
+        lastServerTime={lastServerTime}
+        streams={streams}
+        canStart={canStart}
+        canStop={canStop}
+        busy={busy}
+        onStart={() => void start()}
+        onStop={() => void stop()}
+      />
+
+      <Container fluid className="py-2 px-2">
+        <Card className="mb-3">
         <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
           <b>Universe builder</b>
           <span style={{ opacity: 0.75, fontSize: 12 }}>
@@ -202,9 +222,9 @@ export function UniversePage() {
             </Table>
           )}
         </Card.Body>
-      </Card>
+        </Card>
 
-      <Modal show={showModal} onHide={() => setShowModal(false)} size="lg">
+        <Modal show={showModal} onHide={() => setShowModal(false)} size="lg">
         <Modal.Header closeButton>
           <Modal.Title>Universe symbols</Modal.Title>
         </Modal.Header>
@@ -229,7 +249,8 @@ export function UniversePage() {
             </>
           )}
         </Modal.Body>
-      </Modal>
-    </Container>
+        </Modal>
+      </Container>
+    </>
   );
 }

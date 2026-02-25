@@ -159,6 +159,21 @@ function finiteOr<T extends number | null>(value: T | undefined, fallback: numbe
   return fallback;
 }
 
+function finiteTickerPayload(data: any) {
+  const payload: Record<string, number> = {};
+  const append = (key: "markPrice" | "openInterestValue" | "fundingRate" | "nextFundingTime", raw: unknown) => {
+    const n = Number(raw);
+    if (Number.isFinite(n)) payload[key] = n;
+  };
+
+  append("markPrice", data?.markPrice);
+  append("openInterestValue", data?.openInterestValue);
+  append("fundingRate", data?.fundingRate);
+  append("nextFundingTime", data?.nextFundingTime);
+
+  return payload;
+}
+
 function readJsonlTail(filePath: string, limit: number): LogEvent[] {
   const max = Math.max(1, Math.min(100, Math.floor(limit)));
   const text = fs.readFileSync(filePath, "utf8");
@@ -499,12 +514,10 @@ export function createWsHub(app: FastifyInstance) {
       onTicker: (topic, _type, data) => {
         const symbol = topic.slice("tickers.".length);
         cache.upsertFromTicker(symbol, data);
-        tapeRecorder.recordTicker(Date.now(), symbol, {
-          markPrice: data?.markPrice,
-          openInterestValue: data?.openInterestValue,
-          fundingRate: data?.fundingRate,
-          nextFundingTime: data?.nextFundingTime,
-        });
+        const payload = finiteTickerPayload(data);
+        if (Object.keys(payload).length > 0) {
+          tapeRecorder.recordTicker(Date.now(), symbol, payload);
+        }
       },
       onKline: (topic, _type, data) => {
         const symbol = parseKlineSymbol(topic);

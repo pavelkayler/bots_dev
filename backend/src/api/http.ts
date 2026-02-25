@@ -37,36 +37,20 @@ function parseRanges(raw: any): OptimizerRanges | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const parsed: OptimizerRanges = {};
   const assignIfDefined = (key: keyof OptimizerRanges, value: unknown) => {
-    const n = toNumberOrUndefined(value);
-    if (n !== undefined) parsed[key] = n;
+    if (!value || typeof value !== "object") return;
+    const min = toNumberOrUndefined((value as any).min);
+    const max = toNumberOrUndefined((value as any).max);
+    if (min === undefined && max === undefined) return;
+    if (min === undefined || max === undefined) throw new Error(`invalid_range_${String(key)}`);
+    if (min > max) throw new Error(`invalid_range_${String(key)}`);
+    parsed[key] = { min, max };
   };
 
-  assignIfDefined("priceThresholdPctMin", raw.priceThresholdPctMin);
-  assignIfDefined("priceThresholdPctMax", raw.priceThresholdPctMax);
-  assignIfDefined("oivThresholdPctMin", raw.oivThresholdPctMin);
-  assignIfDefined("oivThresholdPctMax", raw.oivThresholdPctMax);
-  assignIfDefined("entryOffsetPctMin", raw.entryOffsetPctMin);
-  assignIfDefined("entryOffsetPctMax", raw.entryOffsetPctMax);
-  assignIfDefined("tpRoiPctMin", raw.tpRoiPctMin);
-  assignIfDefined("tpRoiPctMax", raw.tpRoiPctMax);
-  assignIfDefined("slRoiPctMin", raw.slRoiPctMin);
-  assignIfDefined("slRoiPctMax", raw.slRoiPctMax);
-
-  const pairs: Array<[keyof OptimizerRanges, keyof OptimizerRanges]> = [
-    ["priceThresholdPctMin", "priceThresholdPctMax"],
-    ["oivThresholdPctMin", "oivThresholdPctMax"],
-    ["entryOffsetPctMin", "entryOffsetPctMax"],
-    ["tpRoiPctMin", "tpRoiPctMax"],
-    ["slRoiPctMin", "slRoiPctMax"],
-  ];
-
-  for (const [minKey, maxKey] of pairs) {
-    const min = parsed[minKey];
-    const max = parsed[maxKey];
-    if (min !== undefined && max !== undefined && max < min) {
-      throw new Error(`invalid_range_${String(minKey)}_${String(maxKey)}`);
-    }
-  }
+  assignIfDefined("priceTh", raw.priceTh);
+  assignIfDefined("oivTh", raw.oivTh);
+  assignIfDefined("tp", raw.tp);
+  assignIfDefined("sl", raw.sl);
+  assignIfDefined("offset", raw.offset);
 
   return parsed;
 }
