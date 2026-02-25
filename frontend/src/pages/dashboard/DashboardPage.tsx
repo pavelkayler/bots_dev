@@ -97,8 +97,13 @@ export function DashboardPage() {
 
   function parseSessionStartTs(sessionId: string | null): number | null {
     if (!sessionId) return null;
-    const maybeIso = sessionId.replace(/-/g, ":").replace(/:(\d{3})$/, ".$1");
-    const parsed = Date.parse(maybeIso);
+    const match = sessionId.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/);
+    if (match) {
+      const [, date, hh, mm, ss, ms] = match;
+      const parsed = Date.parse(`${date}T${hh}:${mm}:${ss}.${ms}Z`);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    const parsed = Date.parse(sessionId);
     return Number.isFinite(parsed) ? parsed : null;
   }
 
