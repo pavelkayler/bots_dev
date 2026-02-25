@@ -68,6 +68,11 @@ export async function getJobStatus(jobId: string): Promise<{ status: "running" |
   return await getJson<{ status: "running" | "done" | "error"; total: number; done: number; message?: string }>(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/status`);
 }
 
+export async function getCurrentJob(): Promise<{ jobId: string | null }> {
+  const base = getApiBase();
+  return await getJson<{ jobId: string | null }>(`${base}/api/optimizer/jobs/current`);
+}
+
 export async function getJobResults(
   jobId: string,
   query: { page: number; sortKey: OptimizerSortKey; sortDir: OptimizerSortDir }

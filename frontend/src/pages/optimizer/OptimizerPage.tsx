@@ -1,11 +1,12 @@
-import { memo, type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Card, Container, Form, Pagination, ProgressBar, Spinner, Table } from "react-bootstrap";
+import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, Card, Container, Form, Pagination, ProgressBar, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
 import {
   getJobResults,
   getJobStatus,
+  getCurrentJob,
   getStatus,
   listTapes,
   runOptimizationJob,
@@ -68,6 +69,46 @@ const TapeSizeCell = memo(function TapeSizeCell({
   return <>{formatSize(bytes)}</>;
 });
 
+const TapeTableRow = memo(function TapeTableRow({
+  tape,
+  checked,
+  onToggleTape,
+  isRecording,
+  recordingTapeId,
+}: {
+  tape: TapeRow;
+  checked: boolean;
+  onToggleTape: (id: string, checked: boolean) => void;
+  isRecording: boolean;
+  recordingTapeId: string | null;
+}) {
+  const onCheckChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      onToggleTape(tape.id, e.currentTarget.checked);
+    },
+    [onToggleTape, tape.id]
+  );
+
+  return (
+    <tr>
+      <td>
+        <Form.Check type="checkbox" checked={checked} onChange={onCheckChange} />
+      </td>
+      <td style={{ fontSize: 12 }}>{tape.id}</td>
+      <td style={{ fontSize: 12 }}>{new Date(tape.createdAt).toLocaleString()}</td>
+      <td style={{ fontSize: 12 }}>{tape.symbolsCount}</td>
+      <td style={{ fontSize: 12 }}>{tape.tf ?? "-"}</td>
+      <td style={{ fontSize: 12 }}>
+        <TapeSizeCell
+          tapeId={tape.id}
+          initialBytes={tape.initialBytes}
+          pollActive={Boolean(isRecording && recordingTapeId === tape.id)}
+        />
+      </td>
+    </tr>
+  );
+});
+
 const TapesTable = memo(function TapesTable({
   isRecording,
   selectedTapeIds,
@@ -83,11 +124,9 @@ const TapesTable = memo(function TapesTable({
   recordingTapeId: string | null;
   onError: (message: string) => void;
 }) {
-  const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<TapeRow[]>([]);
 
-  async function fetchTapes() {
-    setLoading(true);
+  const fetchTapes = useCallback(async () => {
     try {
       const res = await listTapes();
       const nextTapes = res.tapes ?? [];
@@ -107,25 +146,14 @@ const TapesTable = memo(function TapesTable({
           return next;
         });
       });
-      if (recordingTapeId && !selectedTapeIds.includes(recordingTapeId)) onToggleTape(recordingTapeId, true);
     } catch (e: any) {
       onError(String(e?.message ?? e));
-    } finally {
-      setLoading(false);
     }
-  }
+  }, [onError]);
 
   useEffect(() => {
     void fetchTapes();
-  }, [onToggleTape, recordingTapeId, refreshKey, selectedTapeIds]);
-
-  if (loading) {
-    return (
-      <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
-        <Spinner animation="border" size="sm" /> loading...
-      </div>
-    );
-  }
+  }, [fetchTapes, refreshKey]);
 
   return (
     <Table striped bordered hover size="sm" className="mb-3">
@@ -141,26 +169,14 @@ const TapesTable = memo(function TapesTable({
       </thead>
       <tbody>
         {rows.map((t) => (
-          <tr key={t.id}>
-            <td>
-              <Form.Check
-                type="checkbox"
-                checked={selectedTapeIds.includes(t.id)}
-                onChange={(e) => onToggleTape(t.id, e.currentTarget.checked)}
-              />
-            </td>
-            <td style={{ fontSize: 12 }}>{t.id}</td>
-            <td style={{ fontSize: 12 }}>{new Date(t.createdAt).toLocaleString()}</td>
-            <td style={{ fontSize: 12 }}>{t.symbolsCount}</td>
-            <td style={{ fontSize: 12 }}>{t.tf ?? "-"}</td>
-            <td style={{ fontSize: 12 }}>
-              <TapeSizeCell
-                tapeId={t.id}
-                initialBytes={t.initialBytes}
-                pollActive={Boolean(isRecording && recordingTapeId === t.id)}
-              />
-            </td>
-          </tr>
+          <TapeTableRow
+            key={t.id}
+            tape={t}
+            checked={selectedTapeIds.includes(t.id)}
+            onToggleTape={onToggleTape}
+            isRecording={isRecording}
+            recordingTapeId={recordingTapeId}
+          />
         ))}
         {!rows.length ? (
           <tr>
@@ -254,6 +270,29 @@ export function OptimizerPage() {
     setRanges(loadSavedRanges());
     void refreshStatus();
     setTapesRefreshKey((prev) => prev + 1);
+    void (async () => {
+      try {
+        const current = await getCurrentJob();
+        if (!current.jobId) return;
+        setJobId(current.jobId);
+        const statusRes = await getJobStatus(current.jobId);
+        setDone(statusRes.done);
+        setTotal(statusRes.total);
+        if (statusRes.status === "running") {
+          setRunning(true);
+          return;
+        }
+        if (statusRes.status === "done") {
+          setRunning(false);
+          await fetchResults(1, sortKey, sortDir, current.jobId);
+          return;
+        }
+        setRunning(false);
+        setError(statusRes.message ?? "Optimization job failed.");
+      } catch (e: any) {
+        setError(String(e?.message ?? e));
+      }
+    })();
   }, []);
 
   async function onStartRecording() {
@@ -334,14 +373,14 @@ export function OptimizerPage() {
     };
   }, [rangeError, ranges]);
 
-  function onToggleTape(id: string, checked: boolean) {
+  const onToggleTape = useCallback((id: string, checked: boolean) => {
     setSelectedTapeIds((prev) => {
       if (checked) {
         return prev.includes(id) ? prev : [...prev, id];
       }
       return prev.filter((v) => v !== id);
     });
-  }
+  }, []);
 
   async function fetchResults(nextPage: number, nextSortKey: OptimizerSortKey, nextSortDir: OptimizerSortDir, activeJobId: string) {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
@@ -354,9 +393,6 @@ export function OptimizerPage() {
     if (!selectedTapeIds.length || rangeError) return;
     setRunning(true);
     setError(null);
-    setResults([]);
-    setPage(1);
-    setTotalRows(0);
     setDone(0);
     setTotal(0);
     try {
@@ -368,6 +404,9 @@ export function OptimizerPage() {
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
       });
       setJobId(runRes.jobId);
+      setResults([]);
+      setPage(1);
+      setTotalRows(0);
     } catch (e: any) {
       setError(String(e?.message ?? e));
       setRunning(false);

@@ -73,6 +73,7 @@ function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft |
           ...draft.signals,
           priceThresholdPct: parseNumber(numericDraft.signalsPriceThresholdPct, "priceThresholdPct"),
           oivThresholdPct: parseNumber(numericDraft.signalsOivThresholdPct, "oivThresholdPct"),
+          requireFundingSign: true,
         },
         fundingCooldown: {
           ...draft.fundingCooldown,
@@ -211,6 +212,7 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
           ...draft.signals,
           priceThresholdPct: Number(patch?.signals?.priceThresholdPct ?? draft.signals.priceThresholdPct),
           oivThresholdPct: Number(patch?.signals?.oivThresholdPct ?? draft.signals.oivThresholdPct),
+          requireFundingSign: true,
         },
         paper: {
           ...draft.paper,
@@ -257,9 +259,9 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
     setNumericDraft({ ...numericDraft, [key]: value });
   }
 
-  function buildConfigForApply(): RuntimeConfig {
+function buildConfigForApply(): RuntimeConfig {
     if (!validation.ok) throw new Error("Config is not loaded.");
-    return validation.parsed;
+    return { ...validation.parsed, signals: { ...validation.parsed.signals, requireFundingSign: true } };
   }
 
   async function onApply() {
@@ -310,7 +312,11 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
     setInputError(null);
     try {
       const preset = await readPreset(id);
-      let merged = { ...preset.config, universe: { ...draft.universe, ...preset.config.universe } };
+      let merged = {
+        ...preset.config,
+        universe: { ...draft.universe, ...preset.config.universe },
+        signals: { ...draft.signals, ...preset.config.signals, requireFundingSign: true },
+      };
       const preferredUniverseName = preferredUniverseNameFromPreset(preset.name);
       const matchedUniverse = preferredUniverseName ? universeList.find((u) => u.name === preferredUniverseName) : undefined;
       if (matchedUniverse) {
@@ -448,7 +454,6 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
                 <h6>Signals</h6>
                 <Form.Group className="mb-2"><Form.Label>priceThresholdPct</Form.Label><Form.Control type="number" step="0.001" value={numericDraft.signalsPriceThresholdPct} onChange={(e) => setNumericField("signalsPriceThresholdPct", e.currentTarget.value)} /></Form.Group>
                 <Form.Group className="mb-2"><Form.Label>oivThresholdPct</Form.Label><Form.Control type="number" step="0.001" value={numericDraft.signalsOivThresholdPct} onChange={(e) => setNumericField("signalsOivThresholdPct", e.currentTarget.value)} /></Form.Group>
-                <Form.Check type="switch" id="requireFundingSign" label="requireFundingSign" checked={draft.signals.requireFundingSign} onChange={(e) => setDraft({ ...draft, signals: { ...draft.signals, requireFundingSign: e.currentTarget.checked } })} />
               </Col>
 
               <Col md={4}>

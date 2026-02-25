@@ -127,6 +127,13 @@ function migrateLoaded(raw: any): any {
     }
     delete raw.paper.longOnly;
   }
+
+  if (!raw.signals || typeof raw.signals !== "object") {
+    raw.signals = { ...CONFIG.signals, requireFundingSign: true };
+  } else {
+    raw.signals.requireFundingSign = true;
+  }
+
   return raw;
 }
 
@@ -159,6 +166,11 @@ function normalizeIncomingPatch(rawPatch: unknown): unknown {
       (paper as any).directionMode = (paper as any).longOnly === true ? "long" : "both";
     }
     delete (paper as any).longOnly;
+  }
+
+  const signals = (patch as any).signals;
+  if (signals && typeof signals === "object") {
+    (signals as any).requireFundingSign = true;
   }
 
   return patch;
@@ -205,7 +217,7 @@ class ConfigStore extends EventEmitter {
       signals: {
         priceThresholdPct: p.signals?.priceThresholdPct ?? this.cfg.signals.priceThresholdPct,
         oivThresholdPct: p.signals?.oivThresholdPct ?? this.cfg.signals.oivThresholdPct,
-        requireFundingSign: p.signals?.requireFundingSign ?? this.cfg.signals.requireFundingSign,
+        requireFundingSign: true,
       },
       paper: {
         enabled: p.paper?.enabled ?? this.cfg.paper.enabled,
