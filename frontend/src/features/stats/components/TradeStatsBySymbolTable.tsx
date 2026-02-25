@@ -1,18 +1,25 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import { Table } from "react-bootstrap";
-import { fmtMoney, fmtTime, formatFee } from "../../../shared/utils/format";
+import { fmtMoney, fmtNum, fmtPct, fmtTime, formatFee } from "../../../shared/utils/format";
 import type { TradeStatsBySymbol } from "../hooks/useTradeStatsBySymbol";
 
 type SortKey =
   | "symbol"
+  | "turnover24hUsd"
+  | "volatility24hPct"
   | "trades"
-  | "wins"
-  | "losses"
+  | "longTrades"
+  | "shortTrades"
   | "winRate"
   | "netPnl"
   | "fees"
   | "funding"
   | "lastCloseTs";
+
+function finiteNum(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
 
 export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[] }) {
   const [sortKey, setSortKey] = useState<SortKey>("netPnl");
@@ -28,20 +35,28 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
         sortKey === "winRate"
           ? aWinRate
           : sortKey === "lastCloseTs"
-            ? a.row.lastCloseTs ?? 0
-            : (a.row as any)[sortKey];
+            ? finiteNum(a.row.lastCloseTs)
+            : sortKey === "longTrades"
+              ? finiteNum(a.row.longTrades)
+              : sortKey === "shortTrades"
+                ? finiteNum(a.row.shortTrades)
+                : finiteNum((a.row as any)[sortKey]);
       const bv =
         sortKey === "winRate"
           ? bWinRate
           : sortKey === "lastCloseTs"
-            ? b.row.lastCloseTs ?? 0
-            : (b.row as any)[sortKey];
+            ? finiteNum(b.row.lastCloseTs)
+            : sortKey === "longTrades"
+              ? finiteNum(b.row.longTrades)
+              : sortKey === "shortTrades"
+                ? finiteNum(b.row.shortTrades)
+                : finiteNum((b.row as any)[sortKey]);
 
       let cmp = 0;
-      if (typeof av === "string" || typeof bv === "string") {
-        cmp = String(av).localeCompare(String(bv));
+      if (sortKey === "symbol") {
+        cmp = String(a.row.symbol).localeCompare(String(b.row.symbol));
       } else {
-        cmp = Number(av) - Number(bv);
+        cmp = av - bv;
       }
 
       if (cmp === 0) return a.idx - b.idx;
@@ -59,6 +74,11 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
     setSortDir(nextKey === "netPnl" ? "desc" : "asc");
   }
 
+  function sideCell(count: number, wins: number) {
+    const winRate = count > 0 ? `${((wins / count) * 100).toFixed(2)}%` : "-";
+    return `${count} / ${winRate}`;
+  }
+
   const thButton: CSSProperties = { cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" };
   const td: CSSProperties = { whiteSpace: "nowrap", fontSize: 13 };
 
@@ -68,10 +88,12 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
         <thead>
           <tr>
             <th style={thButton} onClick={() => onSort("symbol")}>Symbol</th>
+            <th style={thButton} onClick={() => onSort("turnover24hUsd")}>Turnover 24h</th>
+            <th style={thButton} onClick={() => onSort("volatility24hPct")}>Volatility 24h</th>
             <th style={thButton} onClick={() => onSort("trades")}>Trades</th>
-            <th style={thButton} onClick={() => onSort("wins")}>Wins</th>
-            <th style={thButton} onClick={() => onSort("losses")}>Losses</th>
-            <th style={thButton} onClick={() => onSort("winRate")}>Win rate %</th>
+            <th style={thButton} onClick={() => onSort("longTrades")}>Longs</th>
+            <th style={thButton} onClick={() => onSort("shortTrades")}>Shorts</th>
+            <th style={thButton} onClick={() => onSort("winRate")}>W/L/WR</th>
             <th style={thButton} onClick={() => onSort("netPnl")}>Net PnL (realized)</th>
             <th style={thButton} onClick={() => onSort("fees")}>Fees</th>
             <th style={thButton} onClick={() => onSort("funding")}>Funding</th>
@@ -84,10 +106,12 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
             return (
               <tr key={row.symbol}>
                 <td style={td}>{row.symbol}</td>
+                <td style={td}>{fmtNum(row.turnover24hUsd ?? Number.NaN)}</td>
+                <td style={td}>{fmtPct(row.volatility24hPct)}</td>
                 <td style={td}>{row.trades}</td>
-                <td style={td}>{row.wins}</td>
-                <td style={td}>{row.losses}</td>
-                <td style={td}>{winRate.toFixed(2)}</td>
+                <td style={td}>{sideCell(row.longTrades, row.longWins)}</td>
+                <td style={td}>{sideCell(row.shortTrades, row.shortWins)}</td>
+                <td style={td}>{`${row.wins}/${row.losses}/${winRate.toFixed(2)}%`}</td>
                 <td style={td}>{fmtMoney(row.netPnl)}</td>
                 <td style={td}>{formatFee(row.fees)}</td>
                 <td style={td}>{fmtMoney(row.funding)}</td>
@@ -97,7 +121,7 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
           })}
           {sorted.length === 0 ? (
             <tr>
-              <td colSpan={9} style={{ opacity: 0.75 }}>
+              <td colSpan={11} style={{ opacity: 0.75 }}>
                 No closed trades yet.
               </td>
             </tr>

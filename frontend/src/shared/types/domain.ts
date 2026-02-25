@@ -74,6 +74,9 @@ export type SymbolRow = {
   fundingRate: number;
   nextFundingTime: number;
   fundingIntervalHour?: number | null;
+  turnover24hUsd?: number | null;
+  highPrice24h?: number | null;
+  lowPrice24h?: number | null;
   updatedAt: number;
 
   prevCandleClose?: number | null;

@@ -126,6 +126,27 @@ export function DashboardPage() {
 
   const tradeStats = useTradeStatsBySymbol(status.sessionState, status.sessionId, eventStream);
 
+  const enrichedTradeStats = useMemo(() => {
+    const marketBySymbol = new Map<string, { turnover24hUsd: number | null; volatility24hPct: number | null }>();
+
+    for (const row of rows) {
+      const turnover24hUsd = typeof row.turnover24hUsd === "number" && Number.isFinite(row.turnover24hUsd) ? row.turnover24hUsd : null;
+      const highPrice24h = typeof row.highPrice24h === "number" && Number.isFinite(row.highPrice24h) ? row.highPrice24h : null;
+      const lowPrice24h = typeof row.lowPrice24h === "number" && Number.isFinite(row.lowPrice24h) ? row.lowPrice24h : null;
+      const volatility24hPct =
+        highPrice24h != null && lowPrice24h != null && lowPrice24h > 0
+          ? ((highPrice24h - lowPrice24h) / lowPrice24h) * 100
+          : null;
+      marketBySymbol.set(row.symbol, { turnover24hUsd, volatility24hPct });
+    }
+
+    return tradeStats.map((stat) => ({
+      ...stat,
+      turnover24hUsd: marketBySymbol.get(stat.symbol)?.turnover24hUsd ?? null,
+      volatility24hPct: marketBySymbol.get(stat.symbol)?.volatility24hPct ?? null,
+    }));
+  }, [rows, tradeStats]);
+
   return (
     <>
       <HeaderBar
@@ -176,7 +197,7 @@ export function DashboardPage() {
             <b>Trade stats by symbol</b>
           </Card.Header>
           <Card.Body>
-            <TradeStatsBySymbolTable stats={tradeStats} />
+            <TradeStatsBySymbolTable stats={enrichedTradeStats} />
           </Card.Body>
         </Card>
 
