@@ -74,6 +74,15 @@ function pickRange(rnd: () => number, min: number, max: number): number {
   return min + rnd() * (max - min);
 }
 
+function quantize(value: number, step = 0.001): number {
+  return Math.round(value / step) * step;
+}
+
+function quantizeAndClamp(value: number, min: number, max: number): number {
+  const clamped = Math.min(max, Math.max(min, quantize(value, 0.001)));
+  return Number(clamped.toFixed(3));
+}
+
 function readRange(ranges: OptimizerRanges | undefined, keyMin: keyof OptimizerRanges, keyMax: keyof OptimizerRanges, fallbackMin: number, fallbackMax: number) {
   const min = toFiniteNumber(ranges?.[keyMin], fallbackMin);
   const max = toFiniteNumber(ranges?.[keyMax], fallbackMax);
@@ -140,11 +149,11 @@ function generateCandidate(rnd: () => number, ranges: OptimizerRanges | undefine
   const sl = readRange(ranges, "slRoiPctMin", "slRoiPctMax", 1.5, Math.max(1.5, base.paper.slRoiPct * 3 || 6));
 
   return {
-    priceThresholdPct: pickRange(rnd, price.min, price.max),
-    oivThresholdPct: pickRange(rnd, oiv.min, oiv.max),
-    entryOffsetPct: pickRange(rnd, offset.min, offset.max),
-    tpRoiPct: Math.max(1.5, pickRange(rnd, tp.min, tp.max)),
-    slRoiPct: Math.max(1.5, pickRange(rnd, sl.min, sl.max)),
+    priceThresholdPct: quantizeAndClamp(pickRange(rnd, price.min, price.max), price.min, price.max),
+    oivThresholdPct: quantizeAndClamp(pickRange(rnd, oiv.min, oiv.max), oiv.min, oiv.max),
+    entryOffsetPct: quantizeAndClamp(pickRange(rnd, offset.min, offset.max), offset.min, offset.max),
+    tpRoiPct: Math.max(1.5, quantizeAndClamp(pickRange(rnd, tp.min, tp.max), tp.min, tp.max)),
+    slRoiPct: Math.max(1.5, quantizeAndClamp(pickRange(rnd, sl.min, sl.max), sl.min, sl.max)),
   };
 }
 
@@ -269,7 +278,7 @@ export function runOptimization(args: {
       params,
     });
 
-    if (args.onProgress && (i % 5 === 0 || i === args.candidates - 1)) {
+    if (args.onProgress) {
       args.onProgress(i + 1, args.candidates);
     }
   }

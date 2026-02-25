@@ -7,6 +7,7 @@ import { listUniverses, readUniverse } from "../../universe/api";
 import type { UniverseMeta } from "../../universe/types";
 import { deletePreset, listPresets, readPreset, savePreset } from "../../presets/api";
 import type { PresetMeta } from "../../presets/types";
+import { startTape } from "../../optimizer/api/optimizerApi";
 
 type Props = {
   sessionState?: SessionState;
@@ -274,16 +275,29 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
     }
   }
 
-  async function onApplyAndRebootClick() {
+  async function runApplyAndStartFlow() {
     if (!onApplyAndReboot) return;
     setInputError(null);
     if (!selectedUniverseId) {
       setInputError("Universe is required.");
       return;
     }
+    await save(buildConfigForApply());
+    await onApplyAndReboot();
+  }
+
+  async function onApplyAndRebootClick() {
     try {
-      await save(buildConfigForApply());
-      await onApplyAndReboot();
+      await runApplyAndStartFlow();
+    } catch (e: any) {
+      setInputError(String(e?.message ?? e));
+    }
+  }
+
+  async function onStartAndRecordClick() {
+    try {
+      await runApplyAndStartFlow();
+      await startTape();
     } catch (e: any) {
       setInputError(String(e?.message ?? e));
     }
@@ -373,9 +387,14 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
 
         <div className="ms-auto d-flex align-items-center gap-2">
           {onApplyAndReboot ? (
-            <Button size="sm" variant="outline-success" onClick={() => void onApplyAndRebootClick()} disabled={applyDisabled || rebooting}>
-              Apply and Reboot
-            </Button>
+            <>
+              <Button size="sm" variant="outline-success" onClick={() => void onApplyAndRebootClick()} disabled={applyDisabled || rebooting}>
+                Apply and Run
+              </Button>
+              <Button size="sm" variant="outline-primary" onClick={() => void onStartAndRecordClick()} disabled={applyDisabled || rebooting}>
+                Start and Record
+              </Button>
+            </>
           ) : null}
           <Button size="sm" variant="success" onClick={() => void onApply()} disabled={applyDisabled || rebooting}>
             Apply
