@@ -344,7 +344,8 @@ const now = Date.now();
 
   app.post("/api/optimizer/run", async (req, reply) => {
     const body = safeBody((req as any).body) as any;
-    const tapeId = String(body?.tapeId ?? "");
+    const tapeIdsRaw = Array.isArray(body?.tapeIds) ? body.tapeIds : undefined;
+    const tapeIds = (tapeIdsRaw ?? [body?.tapeId]).map((v: unknown) => String(v ?? "").trim()).filter(Boolean);
     const candidates = Number(body?.candidates);
     const seed = Number(body?.seed ?? 1);
 
@@ -353,8 +354,13 @@ const now = Date.now();
       return { error: "invalid_candidates" };
     }
 
+    if (!tapeIds.length) {
+      reply.code(400);
+      return { error: "invalid_tape_id", message: "No tape IDs provided" };
+    }
+
     try {
-      safeId(tapeId);
+      tapeIds.forEach((id: string) => safeId(id));
     } catch (e: any) {
       reply.code(400);
       return { error: "invalid_tape_id", message: String(e?.message ?? e) };
@@ -383,7 +389,7 @@ const now = Date.now();
       void (async () => {
         try {
           const output = await runOptimization({
-            tapeId,
+            tapeIds,
             candidates: total,
             seed: Number.isFinite(seed) ? seed : 1,
             ...(ranges ? { ranges } : {}),

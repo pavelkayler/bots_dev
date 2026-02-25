@@ -157,15 +157,20 @@ function generateCandidate(rnd: () => number, ranges: OptimizerRanges | undefine
 }
 
 export async function runOptimization(args: {
-  tapeId: string;
+  tapeId?: string;
+  tapeIds?: string[];
   candidates: number;
   seed: number;
   ranges?: OptimizerRanges;
   onProgress?: (done: number, total: number) => void;
-}): Promise<{ tapeId: string; meta: TapeMeta | null; results: OptimizerResult[] }> {
-  const tapeId = safeId(args.tapeId);
-  const tapePath = getTapePath(tapeId);
-  const { meta, events } = readTapeLines(tapePath);
+}): Promise<{ tapeIds: string[]; metaByTapeId: Record<string, TapeMeta | null>; results: OptimizerResult[] }> {
+  const requestedTapeIds = (args.tapeIds && args.tapeIds.length ? args.tapeIds : [args.tapeId]).filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+  const tapeIds = requestedTapeIds.map((id) => safeId(id));
+  const tapes = tapeIds.map((id) => {
+    const tapePath = getTapePath(id);
+    const parsed = readTapeLines(tapePath);
+    return { tapeId: id, meta: parsed.meta, events: parsed.events };
+  });
 
   const baseConfig = configStore.get();
   const rnd = buildRng(args.seed);
@@ -197,84 +202,92 @@ export async function runOptimization(args: {
       fundingCooldown: baseConfig.fundingCooldown,
     };
 
-    const cache = new BybitMarketCache();
-    const candles = new CandleTracker(cache);
-    const fundingGate = new FundingCooldownGate(candidateConfig.fundingCooldown.beforeMin, candidateConfig.fundingCooldown.afterMin);
-    const signalEngine = new SignalEngine({
-      priceThresholdPct: candidateConfig.signals.priceThresholdPct,
-      oivThresholdPct: candidateConfig.signals.oivThresholdPct,
-      requireFundingSign: candidateConfig.signals.requireFundingSign,
-      directionMode: candidateConfig.paper.directionMode,
-    });
+    let netPnlTotal = 0;
+    let tradesTotal = 0;
+    let winsTotal = 0;
 
-    const logger = {
-      sessionId: `optimizer-${tapeId}`,
-      filePath: "",
-      log(_ev: any) {
-        return;
-      },
-    };
+    for (const tape of tapes) {
+      const cache = new BybitMarketCache();
+      const candles = new CandleTracker(cache);
+      const fundingGate = new FundingCooldownGate(candidateConfig.fundingCooldown.beforeMin, candidateConfig.fundingCooldown.afterMin);
+      const signalEngine = new SignalEngine({
+        priceThresholdPct: candidateConfig.signals.priceThresholdPct,
+        oivThresholdPct: candidateConfig.signals.oivThresholdPct,
+        requireFundingSign: candidateConfig.signals.requireFundingSign,
+        directionMode: candidateConfig.paper.directionMode,
+      });
 
-    const paper = new PaperBroker(candidateConfig.paper, logger as any);
+      const logger = {
+        sessionId: `optimizer-${tape.tapeId}`,
+        filePath: "",
+        log(_ev: any) {
+          return;
+        },
+      };
 
-    let lastEventTs = 0;
+      const paper = new PaperBroker(candidateConfig.paper, logger as any);
+      let lastEventTs = 0;
 
-    for (const event of events) {
-      const ts = Number(event.ts) || 0;
-      if (ts > lastEventTs) lastEventTs = ts;
+      for (const event of tape.events) {
+        const ts = Number(event.ts) || 0;
+        if (ts > lastEventTs) lastEventTs = ts;
 
-      if (event.type === "ticker") {
-        cache.upsertFromTicker(event.symbol, event.payload ?? {});
+        if (event.type === "ticker") {
+          cache.upsertFromTicker(event.symbol, event.payload ?? {});
 
-        const row = cache.getRawRow(event.symbol);
-        const markPrice = Number(row?.markPrice ?? 0);
-        const openInterestValue = Number(row?.openInterestValue ?? 0);
-        const fundingRate = Number(row?.fundingRate ?? 0);
-        const nextFundingTime = Number(row?.nextFundingTime ?? 0);
+          const row = cache.getRawRow(event.symbol);
+          const markPrice = Number(row?.markPrice ?? 0);
+          const openInterestValue = Number(row?.openInterestValue ?? 0);
+          const fundingRate = Number(row?.fundingRate ?? 0);
+          const nextFundingTime = Number(row?.nextFundingTime ?? 0);
 
-        const refs = candles.getRefs(event.symbol);
-        const priceMovePct = refs.prevCandleClose == null || markPrice <= 0 ? null : pctChange(markPrice, refs.prevCandleClose);
-        const oivMovePct = refs.prevCandleOivClose == null || openInterestValue <= 0 ? null : pctChange(openInterestValue, refs.prevCandleOivClose);
+          const refs = candles.getRefs(event.symbol);
+          const priceMovePct = refs.prevCandleClose == null || markPrice <= 0 ? null : pctChange(markPrice, refs.prevCandleClose);
+          const oivMovePct = refs.prevCandleOivClose == null || openInterestValue <= 0 ? null : pctChange(openInterestValue, refs.prevCandleOivClose);
 
-        const cooldownState = fundingGate.state(nextFundingTime || null, ts);
-        const decision = signalEngine.decide({
-          priceMovePct,
-          oivMovePct,
-          fundingRate,
-          cooldownActive: cooldownState?.active ?? false,
-        });
+          const cooldownState = fundingGate.state(nextFundingTime || null, ts);
+          const decision = signalEngine.decide({
+            priceMovePct,
+            oivMovePct,
+            fundingRate,
+            cooldownActive: cooldownState?.active ?? false,
+          });
 
-        paper.tick({
-          symbol: event.symbol,
-          nowMs: ts,
-          markPrice,
-          fundingRate,
-          nextFundingTime,
-          signal: decision.signal,
-          signalReason: decision.reason,
-          cooldownActive: cooldownState?.active ?? false,
-        });
+          paper.tick({
+            symbol: event.symbol,
+            nowMs: ts,
+            markPrice,
+            fundingRate,
+            nextFundingTime,
+            signal: decision.signal,
+            signalReason: decision.reason,
+            cooldownActive: cooldownState?.active ?? false,
+          });
+        }
+
+        if (event.type === "kline_confirm") {
+          candles.ingestKline(event.symbol, { confirm: true, close: event.payload?.close });
+        }
       }
 
-      if (event.type === "kline_confirm") {
-        candles.ingestKline(event.symbol, { confirm: true, close: event.payload?.close });
-      }
+      const symbols = Array.isArray(tape.meta?.symbols) ? tape.meta.symbols : [];
+      paper.stopAll({
+        nowMs: lastEventTs || Date.now(),
+        symbols,
+        getMarkPrice: (symbol: string) => cache.getMarkPrice(symbol),
+      });
+
+      const stats = paper.getStats();
+      netPnlTotal += stats.netRealized;
+      tradesTotal += stats.closedTrades;
+      winsTotal += stats.wins;
     }
 
-    const symbols = Array.isArray(meta?.symbols) ? meta.symbols : [];
-    paper.stopAll({
-      nowMs: lastEventTs || Date.now(),
-      symbols,
-      getMarkPrice: (symbol: string) => cache.getMarkPrice(symbol),
-    });
-
-    const stats = paper.getStats();
-    const trades = stats.closedTrades;
-    const winRatePct = trades > 0 ? (stats.wins / trades) * 100 : 0;
+    const winRatePct = tradesTotal > 0 ? (winsTotal / tradesTotal) * 100 : 0;
 
     results.push({
-      netPnl: stats.netRealized,
-      trades,
+      netPnl: netPnlTotal,
+      trades: tradesTotal,
       winRatePct,
       params,
     });
@@ -291,8 +304,8 @@ export async function runOptimization(args: {
   }
 
   return {
-    tapeId,
-    meta,
-    results,
+    tapeIds,
+    metaByTapeId: Object.fromEntries(tapes.map((t) => [t.tapeId, t.meta])),
+    results: sortOptimizationResults(results, "netPnl", "desc"),
   };
 }

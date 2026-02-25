@@ -1,4 +1,4 @@
-import { memo, type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { memo, type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Card, Container, Form, Pagination, ProgressBar, Spinner, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
@@ -29,6 +29,7 @@ const RANGE_DEFAULTS: RangeState = {
 
 const pageSize = 50;
 const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
+const RANGES_SAVE_DEBOUNCE_MS = 400;
 
 type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number };
 
@@ -69,15 +70,15 @@ const TapeSizeCell = memo(function TapeSizeCell({
 
 const TapesTable = memo(function TapesTable({
   isRecording,
-  selectedTapeId,
-  onSelectTape,
+  selectedTapeIds,
+  onToggleTape,
   refreshKey,
   recordingTapeId,
   onError,
 }: {
   isRecording: boolean;
-  selectedTapeId: string;
-  onSelectTape: (id: string) => void;
+  selectedTapeIds: string[];
+  onToggleTape: (id: string, checked: boolean) => void;
   refreshKey: number;
   recordingTapeId: string | null;
   onError: (message: string) => void;
@@ -106,7 +107,7 @@ const TapesTable = memo(function TapesTable({
           return next;
         });
       });
-      if (!selectedTapeId && recordingTapeId) onSelectTape(recordingTapeId);
+      if (recordingTapeId && !selectedTapeIds.includes(recordingTapeId)) onToggleTape(recordingTapeId, true);
     } catch (e: any) {
       onError(String(e?.message ?? e));
     } finally {
@@ -116,7 +117,7 @@ const TapesTable = memo(function TapesTable({
 
   useEffect(() => {
     void fetchTapes();
-  }, [refreshKey]);
+  }, [onToggleTape, recordingTapeId, refreshKey, selectedTapeIds]);
 
   if (loading) {
     return (
@@ -143,10 +144,9 @@ const TapesTable = memo(function TapesTable({
           <tr key={t.id}>
             <td>
               <Form.Check
-                type="radio"
-                name="selectedTape"
-                checked={selectedTapeId === t.id}
-                onChange={() => onSelectTape(t.id)}
+                type="checkbox"
+                checked={selectedTapeIds.includes(t.id)}
+                onChange={(e) => onToggleTape(t.id, e.currentTarget.checked)}
               />
             </td>
             <td style={{ fontSize: 12 }}>{t.id}</td>
@@ -215,7 +215,7 @@ export function OptimizerPage() {
   const { conn, lastServerTime, wsUrl, streams } = useWsFeed();
   const { status, busy, start, stop, canStart, canStop } = useSessionRuntime();
 
-  const [selectedTapeId, setSelectedTapeId] = useState<string>("");
+  const [selectedTapeIds, setSelectedTapeIds] = useState<string[]>([]);
   const [recordingTapeId, setRecordingTapeId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [tapesRefreshKey, setTapesRefreshKey] = useState(0);
@@ -235,14 +235,16 @@ export function OptimizerPage() {
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
 
   const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
-  const [rangesSaved, setRangesSaved] = useState(false);
+  const rangesSaveTimerRef = useRef<number | null>(null);
 
   async function refreshStatus() {
     try {
       const statusRes = await getStatus();
       setIsRecording(Boolean(statusRes.isRecording));
       setRecordingTapeId(statusRes.tapeId ?? null);
-      if (statusRes.tapeId) setSelectedTapeId((prev) => prev || statusRes.tapeId || "");
+      if (statusRes.tapeId) {
+        setSelectedTapeIds((prev) => (prev.includes(statusRes.tapeId as string) ? prev : [...prev, statusRes.tapeId as string]));
+      }
     } catch (e: any) {
       setError(String(e?.message ?? e));
     }
@@ -260,7 +262,7 @@ export function OptimizerPage() {
       const res = await startTape();
       setIsRecording(true);
       setRecordingTapeId(res.tapeId);
-      setSelectedTapeId(res.tapeId);
+      setSelectedTapeIds((prev) => (prev.includes(res.tapeId) ? prev : [...prev, res.tapeId]));
       setTapesRefreshKey((prev) => prev + 1);
     } catch (e: any) {
       setError(String(e?.message ?? e));
@@ -309,17 +311,36 @@ export function OptimizerPage() {
   const onRangeChange =
     (key: RangeKey, bound: "min" | "max") => (e: ChangeEvent<HTMLInputElement>) => {
       const nextValue = e.currentTarget.value;
-      setRangesSaved(false);
       setRanges((prev) => ({
         ...prev,
         [key]: { ...prev[key], [bound]: nextValue },
       }));
     };
 
-  function onSaveRanges() {
+  useEffect(() => {
     if (rangeError) return;
-    localStorage.setItem(RANGES_STORAGE_KEY, JSON.stringify(ranges));
-    setRangesSaved(true);
+    if (rangesSaveTimerRef.current != null) {
+      window.clearTimeout(rangesSaveTimerRef.current);
+    }
+    rangesSaveTimerRef.current = window.setTimeout(() => {
+      localStorage.setItem(RANGES_STORAGE_KEY, JSON.stringify(ranges));
+      rangesSaveTimerRef.current = null;
+    }, RANGES_SAVE_DEBOUNCE_MS);
+    return () => {
+      if (rangesSaveTimerRef.current != null) {
+        window.clearTimeout(rangesSaveTimerRef.current);
+        rangesSaveTimerRef.current = null;
+      }
+    };
+  }, [rangeError, ranges]);
+
+  function onToggleTape(id: string, checked: boolean) {
+    setSelectedTapeIds((prev) => {
+      if (checked) {
+        return prev.includes(id) ? prev : [...prev, id];
+      }
+      return prev.filter((v) => v !== id);
+    });
   }
 
   async function fetchResults(nextPage: number, nextSortKey: OptimizerSortKey, nextSortDir: OptimizerSortDir, activeJobId: string) {
@@ -330,7 +351,7 @@ export function OptimizerPage() {
   }
 
   async function onRunOptimization() {
-    if (!selectedTapeId || rangeError) return;
+    if (!selectedTapeIds.length || rangeError) return;
     setRunning(true);
     setError(null);
     setResults([]);
@@ -341,7 +362,7 @@ export function OptimizerPage() {
     try {
       const rangePayload = buildRangesPayload();
       const runRes = await runOptimizationJob({
-        tapeId: selectedTapeId,
+        tapeIds: selectedTapeIds,
         candidates: Number(candidates),
         seed: Number(seed),
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
@@ -395,7 +416,7 @@ export function OptimizerPage() {
     const patch = {
       source: "optimizer",
       ts: Date.now(),
-      tapeId: selectedTapeId,
+      tapeId: selectedTapeIds[0] ?? null,
       jobId,
       rank: row.rank,
       patch: {
@@ -454,8 +475,8 @@ export function OptimizerPage() {
 
             <TapesTable
               isRecording={isRecording}
-              selectedTapeId={selectedTapeId}
-              onSelectTape={setSelectedTapeId}
+              selectedTapeIds={selectedTapeIds}
+              onToggleTape={onToggleTape}
               refreshKey={tapesRefreshKey}
               recordingTapeId={recordingTapeId}
               onError={setError}
@@ -471,7 +492,7 @@ export function OptimizerPage() {
                 <Form.Label style={{ fontSize: 12 }}>seed</Form.Label>
                 <Form.Control value={seed} onChange={(e) => setSeed(e.currentTarget.value)} type="number" />
               </Form.Group>
-              <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeId || running || Boolean(rangeError)}>
+              <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || running || Boolean(rangeError)}>
                 Run optimization
               </Button>
             </div>
@@ -508,12 +529,11 @@ export function OptimizerPage() {
               </tbody>
             </Table>
             {rangeError ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>{rangeError}</div> : null}
-            <div className="d-flex align-items-center gap-2 mb-2">
-              <Button size="sm" variant="outline-secondary" onClick={onSaveRanges} disabled={Boolean(rangeError)}>Save</Button>
-              {rangesSaved ? <span style={{ fontSize: 12, opacity: 0.8 }}>Saved</span> : null}
-            </div>
 
-            {selectedTapeId ? <div style={{ fontSize: 12, marginBottom: 8 }}>selected tape: <b>{selectedTapeId}</b></div> : null}
+            <div style={{ fontSize: 12, marginBottom: 8 }}>
+              selected tapes: <b>{selectedTapeIds.length}</b>
+              {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
+            </div>
 
             {jobId ? <ProgressBar now={running ? progressPct : 100} label={`${running ? done : 100}/${total || 100}`} className="mb-2" /> : null}
 

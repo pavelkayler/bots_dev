@@ -17,6 +17,7 @@ class TapeRecorder {
   private currentTape: string | null = null;
   private stream: WriteStream | null = null;
   private meta: RecorderMeta | null = null;
+  private lastTickerTsBySymbol = new Map<string, number>();
 
   getState() {
     return {
@@ -58,6 +59,7 @@ class TapeRecorder {
       `${JSON.stringify({ type: "meta", ts: createdAt, payload: meta })}\n`
     );
 
+    this.lastTickerTsBySymbol.clear();
     this.recording = true;
     this.currentTape = tapeId;
     this.stream = stream;
@@ -70,6 +72,7 @@ class TapeRecorder {
     if (this.stream) {
       this.stream.end();
     }
+    this.lastTickerTsBySymbol.clear();
     this.recording = false;
     this.currentTape = null;
     this.stream = null;
@@ -90,9 +93,14 @@ class TapeRecorder {
     ) {
       return;
     }
+    const last = this.lastTickerTsBySymbol.get(symbol) ?? 0;
+    if (ts - last < 5000) {
+      return;
+    }
     this.stream.write(
       `${JSON.stringify({ type: "ticker", ts, symbol, payload })}\n`
     );
+    this.lastTickerTsBySymbol.set(symbol, ts);
   }
 
   recordKlineConfirm(ts: number, symbol: string, payload: { close: unknown }) {

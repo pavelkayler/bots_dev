@@ -53,7 +53,8 @@ export async function getStatus(): Promise<{ isRecording: boolean; tapeId: strin
 }
 
 export async function runOptimizationJob(payload: {
-  tapeId: string;
+  tapeId?: string;
+  tapeIds?: string[];
   candidates: number;
   seed: number;
   ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset", { min: number; max: number }>>;
