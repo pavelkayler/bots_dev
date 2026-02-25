@@ -380,30 +380,32 @@ const now = Date.now();
     optimizerJobs.set(jobId, job);
 
     setTimeout(() => {
-      try {
-        const output = runOptimization({
-          tapeId,
-          candidates: total,
-          seed: Number.isFinite(seed) ? seed : 1,
-          ...(ranges ? { ranges } : {}),
-          onProgress: (done, totalDone) => {
-            const pct = totalDone > 0 ? Math.floor((done / totalDone) * 100) : 0;
-            if (pct > job.lastPct) {
-              job.lastPct = pct;
-              job.done = pct;
-              job.total = 100;
-            }
-          },
-        });
-        job.results = output.results ?? [];
-        job.lastPct = 100;
-        job.done = 100;
-        job.total = 100;
-        job.status = "done";
-      } catch (e: any) {
-        job.status = "error";
-        job.message = String(e?.message ?? e);
-      }
+      void (async () => {
+        try {
+          const output = await runOptimization({
+            tapeId,
+            candidates: total,
+            seed: Number.isFinite(seed) ? seed : 1,
+            ...(ranges ? { ranges } : {}),
+            onProgress: (done, totalDone) => {
+              const pct = totalDone > 0 ? Math.floor((done / totalDone) * 100) : 0;
+              if (pct > job.lastPct) {
+                job.lastPct = pct;
+                job.done = pct;
+                job.total = 100;
+              }
+            },
+          });
+          job.results = output.results ?? [];
+          job.lastPct = 100;
+          job.done = 100;
+          job.total = 100;
+          job.status = "done";
+        } catch (e: any) {
+          job.status = "error";
+          job.message = String(e?.message ?? e);
+        }
+      })();
     }, 0);
 
     return { jobId };

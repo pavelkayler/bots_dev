@@ -156,13 +156,13 @@ function generateCandidate(rnd: () => number, ranges: OptimizerRanges | undefine
   };
 }
 
-export function runOptimization(args: {
+export async function runOptimization(args: {
   tapeId: string;
   candidates: number;
   seed: number;
   ranges?: OptimizerRanges;
   onProgress?: (done: number, total: number) => void;
-}) {
+}): Promise<{ tapeId: string; meta: TapeMeta | null; results: OptimizerResult[] }> {
   const tapeId = safeId(args.tapeId);
   const tapePath = getTapePath(tapeId);
   const { meta, events } = readTapeLines(tapePath);
@@ -170,6 +170,8 @@ export function runOptimization(args: {
   const baseConfig = configStore.get();
   const rnd = buildRng(args.seed);
   const results: OptimizerResult[] = [];
+
+  let lastPctLocal = 0;
 
   for (let i = 0; i < args.candidates; i += 1) {
     const params = generateCandidate(rnd, args.ranges, baseConfig);
@@ -277,8 +279,14 @@ export function runOptimization(args: {
       params,
     });
 
+    const done = i + 1;
+    const pct = args.candidates > 0 ? Math.floor((done / args.candidates) * 100) : 0;
     if (args.onProgress) {
-      args.onProgress(i + 1, args.candidates);
+      args.onProgress(done, args.candidates);
+    }
+    if (pct > lastPctLocal) {
+      lastPctLocal = pct;
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
   }
 
