@@ -38,17 +38,14 @@ export type OptimizerResult = {
 export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
 export type OptimizerSortDir = "asc" | "desc";
 
+type OptimizerRangeBound = { min: number; max: number };
+
 export type OptimizerRanges = Partial<{
-  priceThresholdPctMin: number;
-  priceThresholdPctMax: number;
-  oivThresholdPctMin: number;
-  oivThresholdPctMax: number;
-  entryOffsetPctMin: number;
-  entryOffsetPctMax: number;
-  tpRoiPctMin: number;
-  tpRoiPctMax: number;
-  slRoiPctMin: number;
-  slRoiPctMax: number;
+  priceTh: OptimizerRangeBound;
+  oivTh: OptimizerRangeBound;
+  tp: OptimizerRangeBound;
+  sl: OptimizerRangeBound;
+  offset: OptimizerRangeBound;
 }>;
 
 function pctChange(now: number, ref: number): number | null {
@@ -79,13 +76,15 @@ function quantize(value: number, step = 0.001): number {
 }
 
 function quantizeAndClamp(value: number, min: number, max: number): number {
-  const clamped = Math.min(max, Math.max(min, quantize(value, 0.001)));
-  return Number(clamped.toFixed(3));
+  const quantized = quantize(value, 0.001);
+  const clamped = Math.min(max, Math.max(min, quantized));
+  const fixed = Number(clamped.toFixed(3));
+  return Math.min(max, Math.max(min, fixed));
 }
 
-function readRange(ranges: OptimizerRanges | undefined, keyMin: keyof OptimizerRanges, keyMax: keyof OptimizerRanges, fallbackMin: number, fallbackMax: number) {
-  const min = toFiniteNumber(ranges?.[keyMin], fallbackMin);
-  const max = toFiniteNumber(ranges?.[keyMax], fallbackMax);
+function readRange(bound: { min?: unknown; max?: unknown } | undefined, fallbackMin: number, fallbackMax: number) {
+  const min = toFiniteNumber(bound?.min, fallbackMin);
+  const max = toFiniteNumber(bound?.max, fallbackMax);
   if (max < min) return { min: max, max: min };
   return { min, max };
 }
@@ -142,18 +141,18 @@ export function sortOptimizationResults(results: OptimizerResult[], key: Optimiz
 }
 
 function generateCandidate(rnd: () => number, ranges: OptimizerRanges | undefined, base: ReturnType<typeof configStore.get>): RandomizedParams {
-  const price = readRange(ranges, "priceThresholdPctMin", "priceThresholdPctMax", 0.1, Math.max(0.1, base.signals.priceThresholdPct * 3 || 1));
-  const oiv = readRange(ranges, "oivThresholdPctMin", "oivThresholdPctMax", 0.1, Math.max(0.1, base.signals.oivThresholdPct * 3 || 1));
-  const offset = readRange(ranges, "entryOffsetPctMin", "entryOffsetPctMax", 0, Math.max(0.01, base.paper.entryOffsetPct * 3 || 0.5));
-  const tp = readRange(ranges, "tpRoiPctMin", "tpRoiPctMax", 1.5, Math.max(1.5, base.paper.tpRoiPct * 3 || 6));
-  const sl = readRange(ranges, "slRoiPctMin", "slRoiPctMax", 1.5, Math.max(1.5, base.paper.slRoiPct * 3 || 6));
+  const price = readRange(ranges?.priceTh, 0.1, Math.max(0.1, base.signals.priceThresholdPct * 3 || 1));
+  const oiv = readRange(ranges?.oivTh, 0.1, Math.max(0.1, base.signals.oivThresholdPct * 3 || 1));
+  const offset = readRange(ranges?.offset, 0, Math.max(0.01, base.paper.entryOffsetPct * 3 || 0.5));
+  const tp = readRange(ranges?.tp, 1.5, Math.max(1.5, base.paper.tpRoiPct * 3 || 6));
+  const sl = readRange(ranges?.sl, 1.5, Math.max(1.5, base.paper.slRoiPct * 3 || 6));
 
   return {
     priceThresholdPct: quantizeAndClamp(pickRange(rnd, price.min, price.max), price.min, price.max),
     oivThresholdPct: quantizeAndClamp(pickRange(rnd, oiv.min, oiv.max), oiv.min, oiv.max),
     entryOffsetPct: quantizeAndClamp(pickRange(rnd, offset.min, offset.max), offset.min, offset.max),
-    tpRoiPct: Math.max(1.5, quantizeAndClamp(pickRange(rnd, tp.min, tp.max), tp.min, tp.max)),
-    slRoiPct: Math.max(1.5, quantizeAndClamp(pickRange(rnd, sl.min, sl.max), sl.min, sl.max)),
+    tpRoiPct: quantizeAndClamp(pickRange(rnd, tp.min, tp.max), tp.min, tp.max),
+    slRoiPct: quantizeAndClamp(pickRange(rnd, sl.min, sl.max), sl.min, sl.max),
   };
 }
 

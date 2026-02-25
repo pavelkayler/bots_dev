@@ -79,7 +79,7 @@ class TapeRecorder {
   recordTicker(
     ts: number,
     symbol: string,
-    payload: { markPrice: unknown; openInterestValue: unknown; fundingRate: unknown; nextFundingTime: unknown }
+    payload: Partial<{ markPrice: number; openInterestValue: number; fundingRate: number; nextFundingTime: number }>
   ) {
     if (!this.recording || !this.stream) return;
     this.stream.write(

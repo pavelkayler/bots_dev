@@ -56,7 +56,7 @@ export async function runOptimizationJob(payload: {
   tapeId: string;
   candidates: number;
   seed: number;
-  ranges?: Record<string, number | undefined>;
+  ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset", { min: number; max: number }>>;
 }): Promise<{ jobId: string }> {
   const base = getApiBase();
   return await postJson<{ jobId: string }>(`${base}/api/optimizer/run`, payload);

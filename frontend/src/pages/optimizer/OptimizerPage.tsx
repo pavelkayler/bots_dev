@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { memo, type ChangeEvent, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Card, Container, Form, Pagination, ProgressBar, Spinner, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
@@ -14,7 +14,6 @@ import {
   type OptimizationResult,
   type OptimizerSortDir,
   type OptimizerSortKey,
-  type OptimizerTape,
 } from "../../features/optimizer/api/optimizerApi";
 
 type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset";
@@ -30,6 +29,120 @@ const RANGE_DEFAULTS: RangeState = {
 
 const pageSize = 50;
 const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
+
+type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null };
+
+const TapesTable = memo(function TapesTable({
+  isRecording,
+  selectedTapeId,
+  onSelectTape,
+  refreshKey,
+  recordingTapeId,
+  onError,
+}: {
+  isRecording: boolean;
+  selectedTapeId: string;
+  onSelectTape: (id: string) => void;
+  refreshKey: number;
+  recordingTapeId: string | null;
+  onError: (message: string) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<TapeRow[]>([]);
+  const [sizeById, setSizeById] = useState<Record<string, number>>({});
+
+  async function fetchTapes() {
+    setLoading(true);
+    try {
+      const res = await listTapes();
+      const nextTapes = res.tapes ?? [];
+      setRows((prev) => {
+        const prevById = new Map(prev.map((r) => [r.id, r]));
+        return nextTapes.map((t) => {
+          const next: TapeRow = {
+            id: t.id,
+            createdAt: t.createdAt,
+            symbolsCount: Array.isArray(t.meta?.symbols) ? t.meta.symbols.length : 0,
+            tf: t.meta?.klineTfMin ?? null,
+          };
+          const old = prevById.get(t.id);
+          if (!old) return next;
+          if (old.createdAt === next.createdAt && old.symbolsCount === next.symbolsCount && old.tf === next.tf) return old;
+          return next;
+        });
+      });
+      setSizeById(() => {
+        const next: Record<string, number> = {};
+        for (const t of nextTapes) next[t.id] = Number(t.fileSizeBytes) || 0;
+        return next;
+      });
+      if (!selectedTapeId && recordingTapeId) onSelectTape(recordingTapeId);
+    } catch (e: any) {
+      onError(String(e?.message ?? e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void fetchTapes();
+  }, [refreshKey]);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const intervalId = window.setInterval(() => {
+      void fetchTapes();
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [isRecording]);
+
+  if (loading) {
+    return (
+      <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
+        <Spinner animation="border" size="sm" /> loading...
+      </div>
+    );
+  }
+
+  return (
+    <Table striped bordered hover size="sm" className="mb-3">
+      <thead>
+        <tr>
+          <th style={{ width: 50 }}>Use</th>
+          <th>id</th>
+          <th>createdAt</th>
+          <th>symbolsCount</th>
+          <th>tf</th>
+          <th>size</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((t) => (
+          <tr key={t.id}>
+            <td>
+              <Form.Check
+                type="radio"
+                name="selectedTape"
+                checked={selectedTapeId === t.id}
+                onChange={() => onSelectTape(t.id)}
+              />
+            </td>
+            <td style={{ fontSize: 12 }}>{t.id}</td>
+            <td style={{ fontSize: 12 }}>{new Date(t.createdAt).toLocaleString()}</td>
+            <td style={{ fontSize: 12 }}>{t.symbolsCount}</td>
+            <td style={{ fontSize: 12 }}>{t.tf ?? "-"}</td>
+            <td style={{ fontSize: 12 }}>{formatSize(sizeById[t.id] ?? 0)}</td>
+          </tr>
+        ))}
+        {!rows.length ? (
+          <tr>
+            <td colSpan={6} style={{ fontSize: 12, opacity: 0.75 }}>No tapes</td>
+          </tr>
+        ) : null}
+      </tbody>
+    </Table>
+  );
+});
 
 function formatSize(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -74,11 +187,10 @@ export function OptimizerPage() {
   const { conn, lastServerTime, wsUrl, streams } = useWsFeed();
   const { status, busy, start, stop, canStart, canStop } = useSessionRuntime();
 
-  const [tapes, setTapes] = useState<OptimizerTape[]>([]);
-  const [loadingTapes, setLoadingTapes] = useState(false);
   const [selectedTapeId, setSelectedTapeId] = useState<string>("");
   const [recordingTapeId, setRecordingTapeId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [tapesRefreshKey, setTapesRefreshKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const [candidates, setCandidates] = useState("200");
@@ -97,33 +209,22 @@ export function OptimizerPage() {
   const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
   const [rangesSaved, setRangesSaved] = useState(false);
 
-  async function refreshTapes() {
-    setLoadingTapes(true);
+  async function refreshStatus() {
     try {
-      const [res, statusRes] = await Promise.all([listTapes(), getStatus()]);
-      setTapes(res.tapes ?? []);
+      const statusRes = await getStatus();
       setIsRecording(Boolean(statusRes.isRecording));
       setRecordingTapeId(statusRes.tapeId ?? null);
-      if (statusRes.tapeId) {
-        setSelectedTapeId((prev) => prev || statusRes.tapeId || "");
-      }
+      if (statusRes.tapeId) setSelectedTapeId((prev) => prev || statusRes.tapeId || "");
     } catch (e: any) {
       setError(String(e?.message ?? e));
-    } finally {
-      setLoadingTapes(false);
     }
   }
 
   useEffect(() => {
     setRanges(loadSavedRanges());
-    void refreshTapes();
-    const intervalId = window.setInterval(() => {
-      void refreshTapes();
-    }, 5000);
-    return () => window.clearInterval(intervalId);
+    void refreshStatus();
+    setTapesRefreshKey((prev) => prev + 1);
   }, []);
-
-  const selectedTape = useMemo(() => tapes.find((t) => t.id === selectedTapeId) ?? null, [tapes, selectedTapeId]);
 
   async function onStartRecording() {
     setError(null);
@@ -132,7 +233,7 @@ export function OptimizerPage() {
       setIsRecording(true);
       setRecordingTapeId(res.tapeId);
       setSelectedTapeId(res.tapeId);
-      await refreshTapes();
+      setTapesRefreshKey((prev) => prev + 1);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     }
@@ -144,7 +245,7 @@ export function OptimizerPage() {
       await stopTape();
       setIsRecording(false);
       setRecordingTapeId(null);
-      await refreshTapes();
+      setTapesRefreshKey((prev) => prev + 1);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     }
@@ -215,7 +316,7 @@ export function OptimizerPage() {
         tapeId: selectedTapeId,
         candidates: Number(candidates),
         seed: Number(seed),
-        ranges: (Object.keys(rangePayload).length ? rangePayload : undefined) as unknown as Record<string, number | undefined>,
+        ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
       });
       setJobId(runRes.jobId);
     } catch (e: any) {
@@ -306,7 +407,7 @@ export function OptimizerPage() {
         <Card>
           <Card.Header className="d-flex align-items-center justify-content-between">
             <b>Optimizer</b>
-            <Button size="sm" variant="outline-secondary" onClick={() => void refreshTapes()} disabled={loadingTapes}>
+            <Button size="sm" variant="outline-secondary" onClick={() => setTapesRefreshKey((prev) => prev + 1)}>
               Refresh tapes
             </Button>
           </Card.Header>
@@ -323,48 +424,14 @@ export function OptimizerPage() {
               </span>
             </div>
 
-            {loadingTapes ? (
-              <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
-                <Spinner animation="border" size="sm" /> loading...
-              </div>
-            ) : (
-              <Table striped bordered hover size="sm" className="mb-3">
-                <thead>
-                  <tr>
-                    <th style={{ width: 50 }}>Use</th>
-                    <th>id</th>
-                    <th>createdAt</th>
-                    <th>symbolsCount</th>
-                    <th>tf</th>
-                    <th>size</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tapes.map((t) => (
-                    <tr key={t.id}>
-                      <td>
-                        <Form.Check
-                          type="radio"
-                          name="selectedTape"
-                          checked={selectedTapeId === t.id}
-                          onChange={() => setSelectedTapeId(t.id)}
-                        />
-                      </td>
-                      <td style={{ fontSize: 12 }}>{t.id}</td>
-                      <td style={{ fontSize: 12 }}>{new Date(t.createdAt).toLocaleString()}</td>
-                      <td style={{ fontSize: 12 }}>{Array.isArray(t.meta?.symbols) ? t.meta?.symbols.length : 0}</td>
-                      <td style={{ fontSize: 12 }}>{t.meta?.klineTfMin ?? "-"}</td>
-                      <td style={{ fontSize: 12 }}>{formatSize(t.fileSizeBytes)}</td>
-                    </tr>
-                  ))}
-                  {!tapes.length ? (
-                    <tr>
-                      <td colSpan={6} style={{ fontSize: 12, opacity: 0.75 }}>No tapes</td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </Table>
-            )}
+            <TapesTable
+              isRecording={isRecording}
+              selectedTapeId={selectedTapeId}
+              onSelectTape={setSelectedTapeId}
+              refreshKey={tapesRefreshKey}
+              recordingTapeId={recordingTapeId}
+              onError={setError}
+            />
 
             <h6>Optimization</h6>
             <div className="d-flex gap-2 align-items-end mb-2 flex-wrap">
@@ -418,7 +485,7 @@ export function OptimizerPage() {
               {rangesSaved ? <span style={{ fontSize: 12, opacity: 0.8 }}>Saved</span> : null}
             </div>
 
-            {selectedTape ? <div style={{ fontSize: 12, marginBottom: 8 }}>selected tape: <b>{selectedTape.id}</b></div> : null}
+            {selectedTapeId ? <div style={{ fontSize: 12, marginBottom: 8 }}>selected tape: <b>{selectedTapeId}</b></div> : null}
 
             {jobId ? <ProgressBar now={running ? progressPct : 100} label={`${running ? done : 100}/${total || 100}`} className="mb-2" /> : null}
 

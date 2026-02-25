@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getWsUrl } from "../../../shared/config/env";
 import type {
   BotStats,
@@ -7,7 +7,7 @@ import type {
   SessionState,
   StreamsState,
   SymbolRow,
-  WsMessage
+  WsMessage,
 } from "../../../shared/types/domain";
 
 type ClientWsMessage =
@@ -25,210 +25,217 @@ const EMPTY_BOT_STATS: BotStats = {
   losses: 0,
   netRealized: 0,
   feesPaid: 0,
-  fundingAccrued: 0
+  fundingAccrued: 0,
 };
 
-export function useWsFeed() {
-  const wsUrl = getWsUrl();
+type WsFeedState = {
+  conn: ConnStatus;
+  rows: SymbolRow[];
+  lastServerTime: number | null;
+  lastMsg: string;
+  wsSessionState: SessionState;
+  wsSessionId: string | null;
+  streams: StreamsState;
+  universeSelectedId: string;
+  universeSymbolsCount: number;
+  botStats: BotStats;
+  events: LogEvent[];
+  eventStream: LogEvent[];
+};
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<number | null>(null);
+const wsUrl = getWsUrl();
+const listeners = new Set<(state: WsFeedState) => void>();
+let ws: WebSocket | null = null;
+let reconnectTimer: number | null = null;
+let started = false;
+let eventsLimit = 5;
 
-  const [conn, setConn] = useState<ConnStatus>("CONNECTING");
-  const [rows, setRows] = useState<SymbolRow[]>([]);
-  const [lastServerTime, setLastServerTime] = useState<number | null>(null);
-  const [lastMsg, setLastMsg] = useState<string>("");
+let state: WsFeedState = {
+  conn: "CONNECTING",
+  rows: [],
+  lastServerTime: null,
+  lastMsg: "",
+  wsSessionState: "STOPPED",
+  wsSessionId: null,
+  streams: { streamsEnabled: true, bybitConnected: false },
+  universeSelectedId: "",
+  universeSymbolsCount: 0,
+  botStats: EMPTY_BOT_STATS,
+  events: [],
+  eventStream: [],
+};
 
-  const [wsSessionState, setWsSessionState] = useState<SessionState>("STOPPED");
-  const [wsSessionId, setWsSessionId] = useState<string | null>(null);
+function emit() {
+  for (const listener of listeners) listener(state);
+}
 
-  const [streams, setStreams] = useState<StreamsState>({ streamsEnabled: true, bybitConnected: false });
-  const [universeSelectedId, setUniverseSelectedId] = useState<string>("");
-  const [universeSymbolsCount, setUniverseSymbolsCount] = useState<number>(0);
+function patchState(patch: Partial<WsFeedState>) {
+  state = { ...state, ...patch };
+  emit();
+}
 
-  const [botStats, setBotStats] = useState<BotStats>(EMPTY_BOT_STATS);
+function send(msg: ClientWsMessage) {
+  try {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify(msg));
+  } catch {
+    return;
+  }
+}
 
-  // events (via WS)
-  const [events, setEvents] = useState<LogEvent[]>([]);
-  const [eventStream, setEventStream] = useState<LogEvent[]>([]);
-  const eventsLimitRef = useRef<number>(5);
+function connect(kind: "CONNECTING" | "RECONNECTING") {
+  patchState({ conn: kind });
+  const nextWs = new WebSocket(wsUrl);
+  ws = nextWs;
 
-  const send = useCallback((msg: ClientWsMessage) => {
+  nextWs.onopen = () => {
+    patchState({ conn: "CONNECTED" });
+    send({ type: "rows_refresh_request", payload: { mode: "snapshot" } });
+    send({ type: "events_tail_request", payload: { limit: eventsLimit } });
+  };
+
+  nextWs.onmessage = (e) => {
+    const raw = String(e.data);
+    patchState({ lastMsg: raw });
+
     try {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify(msg));
+      const msg = JSON.parse(raw) as WsMessage;
+
+      if (msg.type === "hello") {
+        patchState({ lastServerTime: msg.serverTime });
+        return;
+      }
+
+      if (msg.type === "snapshot") {
+        const snapshotRows = (msg as any)?.payload?.rows;
+        patchState({
+          wsSessionState: msg.payload.sessionState,
+          wsSessionId: msg.payload.sessionId ?? null,
+          rows: Array.isArray(snapshotRows) ? snapshotRows : [],
+          streams: {
+            streamsEnabled: msg.payload.streamsEnabled,
+            bybitConnected: msg.payload.bybitConnected,
+          },
+          universeSelectedId: (msg.payload as any).universeSelectedId ?? "",
+          universeSymbolsCount: Number((msg.payload as any).universeSymbolsCount ?? 0),
+          botStats: ((msg.payload as any).botStats as BotStats) ?? EMPTY_BOT_STATS,
+        });
+        return;
+      }
+
+      if (msg.type === "tick") {
+        const tickRows = (msg as any)?.payload?.rows;
+        patchState({
+          lastServerTime: msg.payload.serverTime,
+          rows: Array.isArray(tickRows) ? tickRows : [],
+          universeSelectedId: (msg.payload as any).universeSelectedId ?? "",
+          universeSymbolsCount: Number((msg.payload as any).universeSymbolsCount ?? 0),
+          botStats: ((msg.payload as any).botStats as BotStats) ?? EMPTY_BOT_STATS,
+        });
+        return;
+      }
+
+      if (msg.type === "streams_state") {
+        patchState({ streams: msg.payload });
+        return;
+      }
+
+      if (msg.type === "events_tail") {
+        patchState({ events: msg.payload.events ?? [] });
+        return;
+      }
+
+      if (msg.type === "events_append") {
+        const ev = msg.payload.event;
+        const nextEvents = [...state.events, ev];
+        const trimmedEvents = nextEvents.length > eventsLimit ? nextEvents.slice(nextEvents.length - eventsLimit) : nextEvents;
+        patchState({
+          events: trimmedEvents,
+          eventStream: [...state.eventStream, ev],
+        });
+        return;
+      }
+
+      if (msg.type === "error") {
+        console.error("WS error:", msg.message);
+      }
     } catch {
-      // ignore
+      return;
     }
+  };
+
+  nextWs.onclose = () => {
+    patchState({ conn: "DISCONNECTED" });
+    if (reconnectTimer) window.clearTimeout(reconnectTimer);
+    reconnectTimer = window.setTimeout(() => connect("RECONNECTING"), 1500);
+  };
+
+  nextWs.onerror = () => {
+    try {
+      nextWs.close();
+    } catch {
+      return;
+    }
+  };
+}
+
+function ensureStarted() {
+  if (started) return;
+  started = true;
+  connect("CONNECTING");
+}
+
+export function useWsFeed() {
+  const [localState, setLocalState] = useState<WsFeedState>(state);
+
+  useEffect(() => {
+    ensureStarted();
+    listeners.add(setLocalState);
+    setLocalState(state);
+    return () => {
+      listeners.delete(setLocalState);
+    };
   }, []);
 
-  const requestEventsTail = useCallback(
-    (limit: number) => {
-      const lim = Math.max(1, Math.min(100, Math.floor(limit)));
-      eventsLimitRef.current = lim;
-      send({ type: "events_tail_request", payload: { limit: lim } });
-    },
-    [send]
-  );
+  const requestEventsTail = useCallback((limit: number) => {
+    const lim = Math.max(1, Math.min(100, Math.floor(limit)));
+    eventsLimit = lim;
+    send({ type: "events_tail_request", payload: { limit: lim } });
+  }, []);
 
-  const requestRowsRefresh = useCallback(
-    (mode: "tick" | "snapshot" = "tick") => {
-      send({ type: "rows_refresh_request", payload: { mode } });
-    },
-    [send]
-  );
+  const requestRowsRefresh = useCallback((mode: "tick" | "snapshot" = "tick") => {
+    send({ type: "rows_refresh_request", payload: { mode } });
+  }, []);
 
   const toggleStreams = useCallback(() => {
     send({ type: "streams_toggle_request" });
-  }, [send]);
+  }, []);
 
   const applySubscriptions = useCallback(() => {
     send({ type: "streams_apply_subscriptions_request" });
-  }, [send]);
-
-  useEffect(() => {
-    let stopped = false;
-
-    function connect(kind: "CONNECTING" | "RECONNECTING") {
-      if (stopped) return;
-
-      setConn(kind);
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (stopped) return;
-        setConn("CONNECTED");
-
-        // initial sync
-        send({ type: "rows_refresh_request", payload: { mode: "snapshot" } });
-        send({ type: "events_tail_request", payload: { limit: eventsLimitRef.current } });
-      };
-
-      ws.onmessage = (e) => {
-        if (stopped) return;
-        setLastMsg(String(e.data));
-
-        try {
-          const msg = JSON.parse(String(e.data)) as WsMessage;
-
-          if (msg.type === "hello") {
-            setLastServerTime(msg.serverTime);
-            return;
-          }
-
-          if (msg.type === "snapshot") {
-            setWsSessionState(msg.payload.sessionState);
-            setWsSessionId(msg.payload.sessionId ?? null);
-            const snapshotRows = (msg as any)?.payload?.rows;
-            setRows(Array.isArray(snapshotRows) ? snapshotRows : []);
-
-            setStreams({
-              streamsEnabled: msg.payload.streamsEnabled,
-              bybitConnected: msg.payload.bybitConnected
-            });
-
-            setUniverseSelectedId((msg.payload as any).universeSelectedId ?? "");
-            setUniverseSymbolsCount(Number((msg.payload as any).universeSymbolsCount ?? 0));
-
-            setBotStats(((msg.payload as any).botStats as BotStats) ?? EMPTY_BOT_STATS);
-            return;
-          }
-
-          if (msg.type === "tick") {
-            setLastServerTime(msg.payload.serverTime);
-            const tickRows = (msg as any)?.payload?.rows;
-            setRows(Array.isArray(tickRows) ? tickRows : []);
-
-            setUniverseSelectedId((msg.payload as any).universeSelectedId ?? "");
-            setUniverseSymbolsCount(Number((msg.payload as any).universeSymbolsCount ?? 0));
-
-            setBotStats(((msg.payload as any).botStats as BotStats) ?? EMPTY_BOT_STATS);
-            return;
-          }
-
-          if (msg.type === "streams_state") {
-            setStreams(msg.payload);
-            return;
-          }
-
-          if (msg.type === "events_tail") {
-            setEvents(msg.payload.events ?? []);
-            return;
-          }
-
-          if (msg.type === "events_append") {
-            const ev = msg.payload.event;
-            setEvents((prev) => {
-              const next = [...prev, ev];
-              const lim = eventsLimitRef.current;
-              return next.length > lim ? next.slice(next.length - lim) : next;
-            });
-            setEventStream((prev) => [...prev, ev]);
-            return;
-          }
-
-          if (msg.type === "error") {
-            // eslint-disable-next-line no-console
-            console.error("WS error:", msg.message);
-          }
-        } catch {
-          // ignore
-        }
-      };
-
-      ws.onclose = () => {
-        if (stopped) return;
-        setConn("DISCONNECTED");
-
-        if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = window.setTimeout(() => connect("RECONNECTING"), 1500);
-      };
-
-      ws.onerror = () => {
-        try {
-          ws.close();
-        } catch {
-          // ignore
-        }
-      };
-    }
-
-    connect("CONNECTING");
-
-    return () => {
-      stopped = true;
-      if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
-      try {
-        wsRef.current?.close();
-      } catch {
-        // ignore
-      }
-    };
-  }, [wsUrl]);
+  }, []);
 
   return {
-    conn,
-    rows,
-    lastServerTime,
-    lastMsg,
-    wsSessionState,
-    wsSessionId,
+    conn: localState.conn,
+    rows: localState.rows,
+    lastServerTime: localState.lastServerTime,
+    lastMsg: localState.lastMsg,
+    wsSessionState: localState.wsSessionState,
+    wsSessionId: localState.wsSessionId,
     wsUrl,
 
-    streams,
+    streams: localState.streams,
     toggleStreams,
     applySubscriptions,
 
-    universeSelectedId,
-    universeSymbolsCount,
+    universeSelectedId: localState.universeSelectedId,
+    universeSymbolsCount: localState.universeSymbolsCount,
 
-    botStats,
+    botStats: localState.botStats,
 
-    events,
-    eventStream,
+    events: localState.events,
+    eventStream: localState.eventStream,
     requestEventsTail,
-    requestRowsRefresh
+    requestRowsRefresh,
   };
 }
