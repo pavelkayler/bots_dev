@@ -10,6 +10,9 @@ import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
 import type { SessionSummaryResponse } from "../paper/summary.js";
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
+import { listTapes, safeId } from "../optimizer/tapeStore.js";
+import { tapeRecorder } from "../optimizer/tapeRecorder.js";
+import { runOptimization } from "../optimizer/runner.js";
 
 function safeBody(reqBody: any) {
   if (reqBody == null) return {};
@@ -267,6 +270,60 @@ const now = Date.now();
     } catch (e: any) {
       reply.code(404);
       return { error: "preset_not_found", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.get("/api/optimizer/tapes", async () => {
+    return { tapes: listTapes() };
+  });
+
+  app.post("/api/optimizer/tapes/start", async (_req, reply) => {
+    try {
+      const { tapeId } = tapeRecorder.startRecording();
+      return { tapeId };
+    } catch (e: any) {
+      if (String(e?.message ?? e) === "session_not_running") {
+        reply.code(409);
+        return { error: "session_not_running", message: "Session must be RUNNING to start tape recording." };
+      }
+      reply.code(400);
+      return { error: "tape_start_failed", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.post("/api/optimizer/tapes/stop", async () => {
+    tapeRecorder.stopRecording();
+    return { ok: true as const };
+  });
+
+  app.post("/api/optimizer/run", async (req, reply) => {
+    const body = safeBody((req as any).body) as any;
+    const tapeId = String(body?.tapeId ?? "");
+    const candidates = Number(body?.candidates);
+    const seed = Number(body?.seed ?? 1);
+
+    if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
+      reply.code(400);
+      return { error: "invalid_candidates" };
+    }
+
+    try {
+      safeId(tapeId);
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "invalid_tape_id", message: String(e?.message ?? e) };
+    }
+
+    try {
+      return runOptimization({
+        tapeId,
+        candidates: Math.floor(candidates),
+        seed: Number.isFinite(seed) ? seed : 1,
+        ranges: body?.ranges,
+      });
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "optimizer_run_failed", message: String(e?.message ?? e) };
     }
   });
 

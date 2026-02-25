@@ -56,6 +56,7 @@ export function HeaderBar(props: Props) {
         <Nav className="me-2">
           <Nav.Link as={Link} to="/">Dashboard</Nav.Link>
           <Nav.Link as={Link} to="/universe">Universe</Nav.Link>
+          <Nav.Link as={Link} to="/optimizer">Optimizer</Nav.Link>
         </Nav>
 
         <div className="d-flex align-items-center gap-2 flex-wrap" style={{ width: "100%" }}>

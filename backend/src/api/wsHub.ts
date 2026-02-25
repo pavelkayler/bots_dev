@@ -10,6 +10,7 @@ import { SignalEngine, type SignalSide } from "../engine/SignalEngine.js";
 import { runtime } from "../runtime/runtime.js";
 import type { LogEvent } from "../logging/EventLogger.js";
 import { configStore, type RuntimeConfig } from "../runtime/configStore.js";
+import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 
 type SymbolRowBase = {
   symbol: string;
@@ -498,10 +499,21 @@ export function createWsHub(app: FastifyInstance) {
       onTicker: (topic, _type, data) => {
         const symbol = topic.slice("tickers.".length);
         cache.upsertFromTicker(symbol, data);
+        tapeRecorder.recordTicker(Date.now(), symbol, {
+          markPrice: data?.markPrice,
+          openInterestValue: data?.openInterestValue,
+          fundingRate: data?.fundingRate,
+          nextFundingTime: data?.nextFundingTime,
+        });
       },
       onKline: (topic, _type, data) => {
         const symbol = parseKlineSymbol(topic);
         if (!symbol) return;
+        const confirmRaw = data?.confirm;
+        const isConfirm = confirmRaw === true || confirmRaw === "true" || confirmRaw === 1 || confirmRaw === "1";
+        if (isConfirm) {
+          tapeRecorder.recordKlineConfirm(Date.now(), symbol, { close: data?.close ?? data?.c ?? data?.closePrice });
+        }
         candles.ingestKline(symbol, data);
       },
     });
