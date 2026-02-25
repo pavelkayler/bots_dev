@@ -1,16 +1,40 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Container, Form, Spinner, Table } from "react-bootstrap";
+import { Alert, Button, Card, Container, Form, Pagination, ProgressBar, Spinner, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
-import { listTapes, runOptimization, startTape, stopTape, type OptimizationResult, type OptimizerTape } from "../../features/optimizer/api/optimizerApi";
-import { CopyButton } from "../../shared/components/CopyButton";
+import {
+  getJobResults,
+  getJobStatus,
+  getStatus,
+  listTapes,
+  runOptimizationJob,
+  startTape,
+  stopTape,
+  type OptimizationResult,
+  type OptimizerSortDir,
+  type OptimizerSortKey,
+  type OptimizerTape,
+} from "../../features/optimizer/api/optimizerApi";
+
+type RangeState = {
+  min: string;
+  max: string;
+};
+
+const pageSize = 50;
 
 function formatSize(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   if (bytes < 1024) return `${bytes.toFixed(0)} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function parseMaybeNumber(value: string): number | undefined {
+  if (!value.trim()) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 export function OptimizerPage() {
@@ -21,18 +45,40 @@ export function OptimizerPage() {
   const [loadingTapes, setLoadingTapes] = useState(false);
   const [selectedTapeId, setSelectedTapeId] = useState<string>("");
   const [recordingTapeId, setRecordingTapeId] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
   const [running, setRunning] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [done, setDone] = useState(0);
+  const [total, setTotal] = useState(0);
+
   const [results, setResults] = useState<OptimizationResult[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalRows, setTotalRows] = useState(0);
+  const [sortKey, setSortKey] = useState<OptimizerSortKey>("netPnl");
+  const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
+
+  const [ranges, setRanges] = useState<Record<string, RangeState>>({
+    priceThresholdPct: { min: "", max: "" },
+    oivThresholdPct: { min: "", max: "" },
+    tpRoiPct: { min: "", max: "" },
+    slRoiPct: { min: "", max: "" },
+    entryOffsetPct: { min: "", max: "" },
+  });
 
   async function refreshTapes() {
     setLoadingTapes(true);
     try {
-      const res = await listTapes();
+      const [res, statusRes] = await Promise.all([listTapes(), getStatus()]);
       setTapes(res.tapes ?? []);
+      setIsRecording(Boolean(statusRes.isRecording));
+      setRecordingTapeId(statusRes.tapeId ?? null);
+      if (statusRes.tapeId) {
+        setSelectedTapeId((prev) => prev || statusRes.tapeId || "");
+      }
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -50,6 +96,7 @@ export function OptimizerPage() {
     setError(null);
     try {
       const res = await startTape();
+      setIsRecording(true);
       setRecordingTapeId(res.tapeId);
       setSelectedTapeId(res.tapeId);
       await refreshTapes();
@@ -62,6 +109,7 @@ export function OptimizerPage() {
     setError(null);
     try {
       await stopTape();
+      setIsRecording(false);
       setRecordingTapeId(null);
       await refreshTapes();
     } catch (e: any) {
@@ -69,24 +117,129 @@ export function OptimizerPage() {
     }
   }
 
+  const rangeError = useMemo(() => {
+    const labels: Record<string, string> = {
+      priceThresholdPct: "priceTh",
+      oivThresholdPct: "oivTh",
+      tpRoiPct: "tp",
+      slRoiPct: "sl",
+      entryOffsetPct: "offset",
+    };
+    for (const key of Object.keys(ranges)) {
+      const min = parseMaybeNumber(ranges[key].min);
+      const max = parseMaybeNumber(ranges[key].max);
+      if (min !== undefined && max !== undefined && min > max) return `${labels[key]} min must be less than or equal to max`;
+    }
+    return null;
+  }, [ranges]);
+
+  function buildRangesPayload() {
+    return {
+      priceThresholdPctMin: parseMaybeNumber(ranges.priceThresholdPct.min),
+      priceThresholdPctMax: parseMaybeNumber(ranges.priceThresholdPct.max),
+      oivThresholdPctMin: parseMaybeNumber(ranges.oivThresholdPct.min),
+      oivThresholdPctMax: parseMaybeNumber(ranges.oivThresholdPct.max),
+      tpRoiPctMin: parseMaybeNumber(ranges.tpRoiPct.min),
+      tpRoiPctMax: parseMaybeNumber(ranges.tpRoiPct.max),
+      slRoiPctMin: parseMaybeNumber(ranges.slRoiPct.min),
+      slRoiPctMax: parseMaybeNumber(ranges.slRoiPct.max),
+      entryOffsetPctMin: parseMaybeNumber(ranges.entryOffsetPct.min),
+      entryOffsetPctMax: parseMaybeNumber(ranges.entryOffsetPct.max),
+    };
+  }
+
+  async function fetchResults(nextPage: number, nextSortKey: OptimizerSortKey, nextSortDir: OptimizerSortDir, activeJobId: string) {
+    const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
+    setResults(res.results ?? []);
+    setPage(res.page);
+    setTotalRows(res.totalRows);
+  }
+
   async function onRunOptimization() {
-    if (!selectedTapeId) return;
+    if (!selectedTapeId || rangeError) return;
     setRunning(true);
     setError(null);
+    setResults([]);
+    setPage(1);
+    setTotalRows(0);
+    setDone(0);
+    setTotal(0);
     try {
-      const res = await runOptimization({
+      const runRes = await runOptimizationJob({
         tapeId: selectedTapeId,
         candidates: Number(candidates),
         seed: Number(seed),
+        ranges: buildRangesPayload(),
       });
-      setResults(res.results ?? []);
+      setJobId(runRes.jobId);
     } catch (e: any) {
       setError(String(e?.message ?? e));
-      setResults([]);
-    } finally {
       setRunning(false);
     }
   }
+
+  useEffect(() => {
+    if (!jobId || !running) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const res = await getJobStatus(jobId);
+        setDone(res.done);
+        setTotal(res.total);
+        if (res.status === "error") {
+          setRunning(false);
+          setError(res.message ?? "Optimization job failed.");
+        }
+        if (res.status === "done") {
+          window.clearInterval(timer);
+          setRunning(false);
+          await fetchResults(1, sortKey, sortDir, jobId);
+        }
+      } catch (e: any) {
+        setRunning(false);
+        setError(String(e?.message ?? e));
+      }
+    }, 500);
+
+    return () => window.clearInterval(timer);
+  }, [jobId, running, sortDir, sortKey]);
+
+  async function onSort(nextSortKey: OptimizerSortKey) {
+    if (!jobId) return;
+    const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
+    setSortKey(nextSortKey);
+    setSortDir(nextSortDir);
+    await fetchResults(1, nextSortKey, nextSortDir, jobId);
+  }
+
+  async function onPageChange(nextPage: number) {
+    if (!jobId) return;
+    await fetchResults(nextPage, sortKey, sortDir, jobId);
+  }
+
+  function copyToSettings(row: OptimizationResult) {
+    const patch = {
+      source: "optimizer",
+      ts: Date.now(),
+      tapeId: selectedTapeId,
+      jobId,
+      rank: row.rank,
+      patch: {
+        signals: {
+          priceThresholdPct: row.params.priceThresholdPct,
+          oivThresholdPct: row.params.oivThresholdPct,
+        },
+        paper: {
+          tpRoiPct: row.params.tpRoiPct,
+          slRoiPct: row.params.slRoiPct,
+          entryOffsetPct: row.params.entryOffsetPct,
+        },
+      },
+    };
+    localStorage.setItem("bots_dev.pendingConfigPatch", JSON.stringify(patch));
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const progressPct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
 
   return (
     <>
@@ -116,10 +269,10 @@ export function OptimizerPage() {
 
             <h6>Tape recording</h6>
             <div className="d-flex align-items-center gap-2 mb-2">
-              <Button size="sm" onClick={() => void onStartRecording()} disabled={Boolean(recordingTapeId)}>Start recording</Button>
-              <Button size="sm" variant="outline-danger" onClick={() => void onStopRecording()} disabled={!recordingTapeId}>Stop recording</Button>
+              <Button size="sm" onClick={() => void onStartRecording()} disabled={isRecording}>Start recording</Button>
+              <Button size="sm" variant="outline-danger" onClick={() => void onStopRecording()} disabled={!isRecording}>Stop recording</Button>
               <span style={{ fontSize: 12 }}>
-                recording: <b>{recordingTapeId ? "ON" : "OFF"}</b>
+                recording: <b>{isRecording ? "ON" : "OFF"}</b>
                 {recordingTapeId ? ` · ${recordingTapeId}` : ""}
               </span>
             </div>
@@ -177,19 +330,61 @@ export function OptimizerPage() {
                 <Form.Label style={{ fontSize: 12 }}>seed</Form.Label>
                 <Form.Control value={seed} onChange={(e) => setSeed(e.currentTarget.value)} type="number" />
               </Form.Group>
-              <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeId || running}>
-                {running ? <Spinner animation="border" size="sm" /> : "Run optimization"}
+              <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeId || running || Boolean(rangeError)}>
+                Run optimization
               </Button>
             </div>
+
+            <h6>Ranges</h6>
+            <Table bordered size="sm" className="mb-2" style={{ maxWidth: 620 }}>
+              <thead>
+                <tr>
+                  <th>Param</th>
+                  <th>Min</th>
+                  <th>Max</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["priceThresholdPct", "priceTh"],
+                  ["oivThresholdPct", "oivTh"],
+                  ["tpRoiPct", "tp"],
+                  ["slRoiPct", "sl"],
+                  ["entryOffsetPct", "offset"],
+                ].map(([key, label]) => (
+                  <tr key={key}>
+                    <td>{label}</td>
+                    <td>
+                      <Form.Control
+                        size="sm"
+                        value={ranges[key].min}
+                        onChange={(e) => setRanges((prev) => ({ ...prev, [key]: { ...prev[key], min: e.currentTarget.value } }))}
+                      />
+                    </td>
+                    <td>
+                      <Form.Control
+                        size="sm"
+                        value={ranges[key].max}
+                        onChange={(e) => setRanges((prev) => ({ ...prev, [key]: { ...prev[key], max: e.currentTarget.value } }))}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            {rangeError ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>{rangeError}</div> : null}
+
             {selectedTape ? <div style={{ fontSize: 12, marginBottom: 8 }}>selected tape: <b>{selectedTape.id}</b></div> : null}
+
+            {running ? <ProgressBar now={progressPct} label={`${done}/${total || 0}`} className="mb-2" /> : null}
 
             <Table striped bordered hover size="sm">
               <thead>
                 <tr>
                   <th>Rank</th>
-                  <th>netPnl</th>
-                  <th>trades</th>
-                  <th>winRate</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("netPnl")}>netPnl</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("trades")}>trades</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("winRatePct")}>winRate</th>
                   <th>params</th>
                 </tr>
               </thead>
@@ -205,7 +400,7 @@ export function OptimizerPage() {
                       <td>
                         <div className="d-flex align-items-center gap-2">
                           <span style={{ fontSize: 12 }}>{paramsText}</span>
-                          <CopyButton value={JSON.stringify(r.params)} />
+                          <Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button>
                         </div>
                       </td>
                     </tr>
@@ -218,6 +413,13 @@ export function OptimizerPage() {
                 ) : null}
               </tbody>
             </Table>
+            {results.length ? (
+              <Pagination>
+                <Pagination.Prev onClick={() => void onPageChange(Math.max(1, page - 1))} disabled={page <= 1} />
+                <Pagination.Item active>{page}</Pagination.Item>
+                <Pagination.Next onClick={() => void onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} />
+              </Pagination>
+            ) : null}
           </Card.Body>
         </Card>
       </Container>

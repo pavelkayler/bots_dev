@@ -29,6 +29,9 @@ export type OptimizationResult = {
   };
 };
 
+export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
+export type OptimizerSortDir = "asc" | "desc";
+
 export async function listTapes(): Promise<{ tapes: OptimizerTape[] }> {
   const base = getApiBase();
   return await getJson<{ tapes: OptimizerTape[] }>(`${base}/api/optimizer/tapes`);
@@ -44,12 +47,43 @@ export async function stopTape(): Promise<{ ok: true }> {
   return await postJson<{ ok: true }>(`${base}/api/optimizer/tapes/stop`, {});
 }
 
-export async function runOptimization(payload: {
+export async function getStatus(): Promise<{ isRecording: boolean; tapeId: string | null }> {
+  const base = getApiBase();
+  return await getJson<{ isRecording: boolean; tapeId: string | null }>(`${base}/api/optimizer/status`);
+}
+
+export async function runOptimizationJob(payload: {
   tapeId: string;
   candidates: number;
   seed: number;
-  ranges?: Record<string, number>;
-}): Promise<{ tapeId: string; meta: any; results: OptimizationResult[] }> {
+  ranges?: Record<string, number | undefined>;
+}): Promise<{ jobId: string }> {
   const base = getApiBase();
-  return await postJson<{ tapeId: string; meta: any; results: OptimizationResult[] }>(`${base}/api/optimizer/run`, payload);
+  return await postJson<{ jobId: string }>(`${base}/api/optimizer/run`, payload);
+}
+
+export async function getJobStatus(jobId: string): Promise<{ status: "running" | "done" | "error"; total: number; done: number; message?: string }> {
+  const base = getApiBase();
+  return await getJson<{ status: "running" | "done" | "error"; total: number; done: number; message?: string }>(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/status`);
+}
+
+export async function getJobResults(
+  jobId: string,
+  query: { page: number; sortKey: OptimizerSortKey; sortDir: OptimizerSortDir }
+): Promise<{
+  status: "running" | "done" | "error";
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  sortKey: OptimizerSortKey;
+  sortDir: OptimizerSortDir;
+  results: OptimizationResult[];
+}> {
+  const base = getApiBase();
+  const params = new URLSearchParams({
+    page: String(query.page),
+    sortKey: query.sortKey,
+    sortDir: query.sortDir,
+  });
+  return await getJson(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/results?${params.toString()}`);
 }

@@ -110,6 +110,7 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
   const [presetTfById, setPresetTfById] = useState<Record<string, number>>({});
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [presetBusy, setPresetBusy] = useState(false);
+  const [pendingPatchApplied, setPendingPatchApplied] = useState(false);
 
   const disabled = !draft || !numericDraft;
   const universeLocked = sessionState === "RUNNING" || sessionState === "STOPPING";
@@ -191,6 +192,40 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
     if (!draft) return;
     onDraftKlineTfMinChange?.(Number(draft.universe.klineTfMin));
   }, [draft?.universe.klineTfMin, onDraftKlineTfMinChange]);
+
+  useEffect(() => {
+    if (!draft || !numericDraft || pendingPatchApplied) return;
+    const raw = localStorage.getItem("bots_dev.pendingConfigPatch");
+    if (!raw) {
+      setPendingPatchApplied(true);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as any;
+      const patch = parsed?.patch ?? {};
+      const nextDraft: RuntimeConfig = {
+        ...draft,
+        signals: {
+          ...draft.signals,
+          priceThresholdPct: Number(patch?.signals?.priceThresholdPct ?? draft.signals.priceThresholdPct),
+          oivThresholdPct: Number(patch?.signals?.oivThresholdPct ?? draft.signals.oivThresholdPct),
+        },
+        paper: {
+          ...draft.paper,
+          tpRoiPct: Number(patch?.paper?.tpRoiPct ?? draft.paper.tpRoiPct),
+          slRoiPct: Number(patch?.paper?.slRoiPct ?? draft.paper.slRoiPct),
+          entryOffsetPct: Number(patch?.paper?.entryOffsetPct ?? draft.paper.entryOffsetPct),
+        },
+      };
+      setDraft(nextDraft);
+      setNumericDraft(toNumericDraft(nextDraft));
+    } catch {
+    } finally {
+      localStorage.removeItem("bots_dev.pendingConfigPatch");
+      setPendingPatchApplied(true);
+    }
+  }, [draft, numericDraft, pendingPatchApplied, setDraft]);
 
   async function onUniverseSelect(id: string) {
     setSelectedUniverseId(id);

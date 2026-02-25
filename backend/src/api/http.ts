@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { runtime } from "../runtime/runtime.js";
@@ -12,7 +13,62 @@ import type { SessionSummaryResponse } from "../paper/summary.js";
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
 import { listTapes, safeId } from "../optimizer/tapeStore.js";
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
-import { runOptimization } from "../optimizer/runner.js";
+import { runOptimization, sortOptimizationResults, type OptimizerRanges, type OptimizerResult, type OptimizerSortDir, type OptimizerSortKey } from "../optimizer/runner.js";
+
+type OptimizerJob = {
+  status: "running" | "done" | "error";
+  total: number;
+  done: number;
+  message?: string;
+  results: OptimizerResult[];
+};
+
+const optimizerJobs = new Map<string, OptimizerJob>();
+
+function toNumberOrUndefined(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error("invalid_numeric_range");
+  return n;
+}
+
+function parseRanges(raw: any): OptimizerRanges | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const parsed: OptimizerRanges = {};
+  const assignIfDefined = (key: keyof OptimizerRanges, value: unknown) => {
+    const n = toNumberOrUndefined(value);
+    if (n !== undefined) parsed[key] = n;
+  };
+
+  assignIfDefined("priceThresholdPctMin", raw.priceThresholdPctMin);
+  assignIfDefined("priceThresholdPctMax", raw.priceThresholdPctMax);
+  assignIfDefined("oivThresholdPctMin", raw.oivThresholdPctMin);
+  assignIfDefined("oivThresholdPctMax", raw.oivThresholdPctMax);
+  assignIfDefined("entryOffsetPctMin", raw.entryOffsetPctMin);
+  assignIfDefined("entryOffsetPctMax", raw.entryOffsetPctMax);
+  assignIfDefined("tpRoiPctMin", raw.tpRoiPctMin);
+  assignIfDefined("tpRoiPctMax", raw.tpRoiPctMax);
+  assignIfDefined("slRoiPctMin", raw.slRoiPctMin);
+  assignIfDefined("slRoiPctMax", raw.slRoiPctMax);
+
+  const pairs: Array<[keyof OptimizerRanges, keyof OptimizerRanges]> = [
+    ["priceThresholdPctMin", "priceThresholdPctMax"],
+    ["oivThresholdPctMin", "oivThresholdPctMax"],
+    ["entryOffsetPctMin", "entryOffsetPctMax"],
+    ["tpRoiPctMin", "tpRoiPctMax"],
+    ["slRoiPctMin", "slRoiPctMax"],
+  ];
+
+  for (const [minKey, maxKey] of pairs) {
+    const min = parsed[minKey];
+    const max = parsed[maxKey];
+    if (min !== undefined && max !== undefined && max < min) {
+      throw new Error(`invalid_range_${String(minKey)}_${String(maxKey)}`);
+    }
+  }
+
+  return parsed;
+}
 
 function safeBody(reqBody: any) {
   if (reqBody == null) return {};
@@ -296,6 +352,11 @@ const now = Date.now();
     return { ok: true as const };
   });
 
+  app.get("/api/optimizer/status", async () => {
+    const state = tapeRecorder.getState();
+    return { isRecording: state.isRecording, tapeId: state.currentTapeId };
+  });
+
   app.post("/api/optimizer/run", async (req, reply) => {
     const body = safeBody((req as any).body) as any;
     const tapeId = String(body?.tapeId ?? "");
@@ -314,17 +375,96 @@ const now = Date.now();
       return { error: "invalid_tape_id", message: String(e?.message ?? e) };
     }
 
+    let ranges: OptimizerRanges | undefined;
     try {
-      return runOptimization({
-        tapeId,
-        candidates: Math.floor(candidates),
-        seed: Number.isFinite(seed) ? seed : 1,
-        ranges: body?.ranges,
-      });
+      ranges = parseRanges(body?.ranges);
     } catch (e: any) {
       reply.code(400);
-      return { error: "optimizer_run_failed", message: String(e?.message ?? e) };
+      return { error: "invalid_ranges", message: String(e?.message ?? e) };
     }
+
+    const jobId = randomUUID();
+    const total = Math.floor(candidates);
+    const job: OptimizerJob = {
+      status: "running",
+      total,
+      done: 0,
+      results: [],
+    };
+    optimizerJobs.set(jobId, job);
+
+    setTimeout(() => {
+      try {
+        const output = runOptimization({
+          tapeId,
+          candidates: total,
+          seed: Number.isFinite(seed) ? seed : 1,
+          ...(ranges ? { ranges } : {}),
+          onProgress: (done, totalDone) => {
+            job.done = done;
+            job.total = totalDone;
+          },
+        });
+        job.results = output.results ?? [];
+        job.done = job.total;
+        job.status = "done";
+      } catch (e: any) {
+        job.status = "error";
+        job.message = String(e?.message ?? e);
+      }
+    }, 0);
+
+    return { jobId };
+  });
+
+  app.get("/api/optimizer/jobs/:jobId/status", async (req, reply) => {
+    const jobId = String((req.params as any).jobId ?? "");
+    const job = optimizerJobs.get(jobId);
+    if (!job) {
+      reply.code(404);
+      return { error: "optimizer_job_not_found" };
+    }
+
+    return {
+      status: job.status,
+      total: job.total,
+      done: job.done,
+      ...(job.message ? { message: job.message } : {}),
+    };
+  });
+
+  app.get("/api/optimizer/jobs/:jobId/results", async (req, reply) => {
+    const jobId = String((req.params as any).jobId ?? "");
+    const query = (req.query ?? {}) as any;
+    const job = optimizerJobs.get(jobId);
+    if (!job) {
+      reply.code(404);
+      return { error: "optimizer_job_not_found" };
+    }
+
+    const page = Math.max(1, Math.floor(Number(query.page) || 1));
+    const pageSize = 50;
+    const sortKey = ["netPnl", "trades", "winRatePct"].includes(String(query.sortKey))
+      ? (String(query.sortKey) as OptimizerSortKey)
+      : "netPnl";
+    const sortDir = String(query.sortDir) === "asc" ? "asc" : "desc";
+
+    const sorted = sortOptimizationResults(job.results, sortKey, sortDir as OptimizerSortDir);
+    const start = (page - 1) * pageSize;
+    const pageRows = sorted.slice(start, start + pageSize).map((result, index) => ({
+      rank: start + index + 1,
+      ...result,
+    }));
+
+    return {
+      status: job.status,
+      page,
+      pageSize,
+      totalRows: sorted.length,
+      sortKey,
+      sortDir,
+      results: pageRows,
+    };
   });
 
   // paper summary

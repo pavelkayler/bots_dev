@@ -29,12 +29,14 @@ type RandomizedParams = {
 };
 
 export type OptimizerResult = {
-  rank: number;
   netPnl: number;
   trades: number;
   winRatePct: number;
   params: RandomizedParams;
 };
+
+export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
+export type OptimizerSortDir = "asc" | "desc";
 
 export type OptimizerRanges = Partial<{
   priceThresholdPctMin: number;
@@ -121,6 +123,15 @@ export function readTapeLines(tapePath: string): { meta: TapeMeta | null; events
   return { meta, events };
 }
 
+export function sortOptimizationResults(results: OptimizerResult[], key: OptimizerSortKey, dir: OptimizerSortDir): OptimizerResult[] {
+  const direction = dir === "asc" ? 1 : -1;
+  const toComparable = (value: unknown) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return [...results].sort((a, b) => (toComparable(a[key]) - toComparable(b[key])) * direction);
+}
+
 function generateCandidate(rnd: () => number, ranges: OptimizerRanges | undefined, base: ReturnType<typeof configStore.get>): RandomizedParams {
   const price = readRange(ranges, "priceThresholdPctMin", "priceThresholdPctMax", 0.1, Math.max(0.1, base.signals.priceThresholdPct * 3 || 1));
   const oiv = readRange(ranges, "oivThresholdPctMin", "oivThresholdPctMax", 0.1, Math.max(0.1, base.signals.oivThresholdPct * 3 || 1));
@@ -137,14 +148,20 @@ function generateCandidate(rnd: () => number, ranges: OptimizerRanges | undefine
   };
 }
 
-export function runOptimization(args: { tapeId: string; candidates: number; seed: number; ranges?: OptimizerRanges }) {
+export function runOptimization(args: {
+  tapeId: string;
+  candidates: number;
+  seed: number;
+  ranges?: OptimizerRanges;
+  onProgress?: (done: number, total: number) => void;
+}) {
   const tapeId = safeId(args.tapeId);
   const tapePath = getTapePath(tapeId);
   const { meta, events } = readTapeLines(tapePath);
 
   const baseConfig = configStore.get();
   const rnd = buildRng(args.seed);
-  const results: Array<Omit<OptimizerResult, "rank">> = [];
+  const results: OptimizerResult[] = [];
 
   for (let i = 0; i < args.candidates; i += 1) {
     const params = generateCandidate(rnd, args.ranges, baseConfig);
@@ -251,16 +268,15 @@ export function runOptimization(args: { tapeId: string; candidates: number; seed
       winRatePct,
       params,
     });
-  }
 
-  const ranked = results
-    .sort((a, b) => b.netPnl - a.netPnl)
-    .slice(0, 50)
-    .map((result, index) => ({ rank: index + 1, ...result }));
+    if (args.onProgress && (i % 5 === 0 || i === args.candidates - 1)) {
+      args.onProgress(i + 1, args.candidates);
+    }
+  }
 
   return {
     tapeId,
     meta,
-    results: ranked,
+    results,
   };
 }
