@@ -1,5 +1,5 @@
 import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Card, Container, Form, Pagination, ProgressBar, Table } from "react-bootstrap";
+import { Alert, Button, Card, Container, Form, Modal, Pagination, ProgressBar, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -7,14 +7,17 @@ import {
   getJobResults,
   getJobStatus,
   getCurrentJob,
+  getSettings,
   getStatus,
   listTapes,
   runOptimizationJob,
+  setSettings,
   startTape,
   stopTape,
   type OptimizationResult,
+  type OptimizerPrecision,
   type OptimizerSortDir,
-  type OptimizerSortKey,
+  type OptimizerSortKeyExtended,
 } from "../../features/optimizer/api/optimizerApi";
 
 type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset";
@@ -30,7 +33,10 @@ const RANGE_DEFAULTS: RangeState = {
 
 const pageSize = 50;
 const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
+const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
+const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
+const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3 };
 
 type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number };
 
@@ -223,8 +229,27 @@ function loadSavedRanges(): RangeState {
   }
 }
 
-function quantizeTo3(value: number): number {
-  return Number((Math.round(value / 0.001) * 0.001).toFixed(3));
+function countDecimals(value: string): number {
+  const text = value.trim();
+  if (!text.includes(".")) return 0;
+  return text.split(".")[1]?.length ?? 0;
+}
+
+function quantizeByPrecision(value: number, precision: number): number {
+  const step = 10 ** (-precision);
+  return Number((Math.round(value / step) * step).toFixed(precision));
+}
+
+function loadStoredPositiveInt(key: string, fallback: string, min: number): string {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const n = Math.floor(Number(raw));
+    if (Number.isFinite(n) && n >= min) return String(n);
+    return fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export function OptimizerPage() {
@@ -247,8 +272,12 @@ export function OptimizerPage() {
   const [results, setResults] = useState<OptimizationResult[]>([]);
   const [page, setPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
-  const [sortKey, setSortKey] = useState<OptimizerSortKey>("netPnl");
+  const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
+  const [jobPrecisionById, setJobPrecisionById] = useState<Record<string, OptimizerPrecision>>({});
+  const [tapesDir, setTapesDir] = useState("");
+  const [showTapesDirModal, setShowTapesDirModal] = useState(false);
+  const [tapesDirDraft, setTapesDirDraft] = useState("");
 
   const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
   const rangesSaveTimerRef = useRef<number | null>(null);
@@ -268,8 +297,18 @@ export function OptimizerPage() {
 
   useEffect(() => {
     setRanges(loadSavedRanges());
+    setCandidates(loadStoredPositiveInt(CANDIDATES_STORAGE_KEY, "200", 1));
+    setSeed(loadStoredPositiveInt(SEED_STORAGE_KEY, "1", 0));
     void refreshStatus();
     setTapesRefreshKey((prev) => prev + 1);
+    void (async () => {
+      try {
+        const settings = await getSettings();
+        setTapesDir(settings.tapesDir);
+      } catch (e: any) {
+        setError(String(e?.message ?? e));
+      }
+    })();
     void (async () => {
       try {
         const current = await getCurrentJob();
@@ -294,6 +333,18 @@ export function OptimizerPage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    const n = Math.floor(Number(candidates));
+    if (!Number.isFinite(n) || n < 1) return;
+    localStorage.setItem(CANDIDATES_STORAGE_KEY, String(n));
+  }, [candidates]);
+
+  useEffect(() => {
+    const n = Math.floor(Number(seed));
+    if (!Number.isFinite(n) || n < 0) return;
+    localStorage.setItem(SEED_STORAGE_KEY, String(n));
+  }, [seed]);
 
   async function onStartRecording() {
     setError(null);
@@ -382,7 +433,7 @@ export function OptimizerPage() {
     });
   }, []);
 
-  async function fetchResults(nextPage: number, nextSortKey: OptimizerSortKey, nextSortDir: OptimizerSortDir, activeJobId: string) {
+  async function fetchResults(nextPage: number, nextSortKey: OptimizerSortKeyExtended, nextSortDir: OptimizerSortDir, activeJobId: string) {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
     setResults(res.results ?? []);
     setPage(res.page);
@@ -397,13 +448,22 @@ export function OptimizerPage() {
     setTotal(0);
     try {
       const rangePayload = buildRangesPayload();
+      const precision: OptimizerPrecision = {
+        priceTh: Math.max(countDecimals(ranges.priceTh.min), countDecimals(ranges.priceTh.max)),
+        oivTh: Math.max(countDecimals(ranges.oivTh.min), countDecimals(ranges.oivTh.max)),
+        tp: Math.max(countDecimals(ranges.tp.min), countDecimals(ranges.tp.max)),
+        sl: Math.max(countDecimals(ranges.sl.min), countDecimals(ranges.sl.max)),
+        offset: Math.max(countDecimals(ranges.offset.min), countDecimals(ranges.offset.max)),
+      };
       const runRes = await runOptimizationJob({
         tapeIds: selectedTapeIds,
         candidates: Number(candidates),
         seed: Number(seed),
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
+        precision,
       });
       setJobId(runRes.jobId);
+      setJobPrecisionById((prev) => ({ ...prev, [runRes.jobId]: precision }));
       setResults([]);
       setPage(1);
       setTotalRows(0);
@@ -438,7 +498,7 @@ export function OptimizerPage() {
     return () => window.clearInterval(timer);
   }, [jobId, running, sortDir, sortKey]);
 
-  async function onSort(nextSortKey: OptimizerSortKey) {
+  async function onSort(nextSortKey: OptimizerSortKeyExtended) {
     if (!jobId) return;
     const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
     setSortKey(nextSortKey);
@@ -451,6 +511,8 @@ export function OptimizerPage() {
     await fetchResults(nextPage, sortKey, sortDir, jobId);
   }
 
+  const activePrecision = (jobId ? jobPrecisionById[jobId] : undefined) ?? DEFAULT_PRECISION;
+
   function copyToSettings(row: OptimizationResult) {
     const patch = {
       source: "optimizer",
@@ -460,17 +522,30 @@ export function OptimizerPage() {
       rank: row.rank,
       patch: {
         signals: {
-          priceThresholdPct: quantizeTo3(row.params.priceThresholdPct),
-          oivThresholdPct: quantizeTo3(row.params.oivThresholdPct),
+          priceThresholdPct: quantizeByPrecision(row.params.priceThresholdPct, activePrecision.priceTh),
+          oivThresholdPct: quantizeByPrecision(row.params.oivThresholdPct, activePrecision.oivTh),
         },
         paper: {
-          tpRoiPct: quantizeTo3(row.params.tpRoiPct),
-          slRoiPct: quantizeTo3(row.params.slRoiPct),
-          entryOffsetPct: quantizeTo3(row.params.entryOffsetPct),
+          tpRoiPct: quantizeByPrecision(row.params.tpRoiPct, activePrecision.tp),
+          slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
+          entryOffsetPct: quantizeByPrecision(row.params.entryOffsetPct, activePrecision.offset),
         },
       },
     };
     localStorage.setItem("bots_dev.pendingConfigPatch", JSON.stringify(patch));
+  }
+
+  async function onApplyTapesDir() {
+    setError(null);
+    try {
+      const next = await setSettings({ tapesDir: tapesDirDraft });
+      setTapesDir(next.tapesDir);
+      setShowTapesDirModal(false);
+      setSelectedTapeIds([]);
+      setTapesRefreshKey((prev) => prev + 1);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
   }
 
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -506,11 +581,15 @@ export function OptimizerPage() {
             <div className="d-flex align-items-center gap-2 mb-2">
               <Button size="sm" onClick={() => void onStartRecording()} disabled={isRecording}>Start recording</Button>
               <Button size="sm" variant="outline-danger" onClick={() => void onStopRecording()} disabled={!isRecording}>Stop recording</Button>
+              <Button size="sm" variant="outline-secondary" onClick={() => { setTapesDirDraft(tapesDir); setShowTapesDirModal(true); }}>
+                Tapes directory
+              </Button>
               <span style={{ fontSize: 12 }}>
                 recording: <b>{isRecording ? "ON" : "OFF"}</b>
                 {recordingTapeId ? ` · ${recordingTapeId}` : ""}
               </span>
             </div>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>tapesDir: <b>{tapesDir || "-"}</b></div>
 
             <TapesTable
               isRecording={isRecording}
@@ -583,30 +662,36 @@ export function OptimizerPage() {
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("netPnl")}>netPnl</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("trades")}>trades</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("winRatePct")}>winRate</th>
-                  <th>params</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("priceTh")}>priceTh</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("oivTh")}>oivTh</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("tp")}>tp</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("sl")}>sl</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("offset")}>offset</th>
+                  <th>action</th>
                 </tr>
               </thead>
               <tbody>
                 {results.map((r) => {
-                  const paramsText = `priceTh=${r.params.priceThresholdPct.toFixed(3)} oivTh=${r.params.oivThresholdPct.toFixed(3)} tp=${r.params.tpRoiPct.toFixed(3)} sl=${r.params.slRoiPct.toFixed(3)} offset=${r.params.entryOffsetPct.toFixed(3)}`;
                   return (
                     <tr key={`${r.rank}-${r.netPnl}`}>
                       <td>{r.rank}</td>
                       <td>{r.netPnl.toFixed(4)}</td>
                       <td>{r.trades}</td>
                       <td>{r.winRatePct.toFixed(2)}%</td>
+                      <td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td>
+                      <td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td>
+                      <td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td>
+                      <td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td>
+                      <td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td>
                       <td>
-                        <div className="d-flex align-items-center gap-2">
-                          <span style={{ fontSize: 12 }}>{paramsText}</span>
-                          <Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button>
-                        </div>
+                        <Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button>
                       </td>
                     </tr>
                   );
                 })}
                 {!results.length ? (
                   <tr>
-                    <td colSpan={5} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
+                    <td colSpan={10} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -621,6 +706,22 @@ export function OptimizerPage() {
           </Card.Body>
         </Card>
       </Container>
+
+      <Modal show={showTapesDirModal} onHide={() => setShowTapesDirModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>Tapes directory</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form.Group>
+            <Form.Label>Directory path</Form.Label>
+            <Form.Control value={tapesDirDraft} onChange={(e) => setTapesDirDraft(e.currentTarget.value)} />
+          </Form.Group>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowTapesDirModal(false)}>Cancel</Button>
+          <Button onClick={() => void onApplyTapesDir()}>Apply</Button>
+        </Modal.Footer>
+      </Modal>
     </>
   );
 }

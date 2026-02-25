@@ -31,10 +31,24 @@ export type OptimizationResult = {
 
 export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
 export type OptimizerSortDir = "asc" | "desc";
+export type OptimizerPrecision = Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset", number>;
+export type OptimizerSettings = { tapesDir: string };
+
+export type OptimizerSortKeyExtended = OptimizerSortKey | "priceTh" | "oivTh" | "tp" | "sl" | "offset";
 
 export async function listTapes(): Promise<{ tapes: OptimizerTape[] }> {
   const base = getApiBase();
   return await getJson<{ tapes: OptimizerTape[] }>(`${base}/api/optimizer/tapes`);
+}
+
+export async function getSettings(): Promise<OptimizerSettings> {
+  const base = getApiBase();
+  return await getJson<OptimizerSettings>(`${base}/api/optimizer/settings`);
+}
+
+export async function setSettings(payload: OptimizerSettings): Promise<OptimizerSettings> {
+  const base = getApiBase();
+  return await postJson<OptimizerSettings>(`${base}/api/optimizer/settings`, payload);
 }
 
 export async function startTape(): Promise<{ tapeId: string }> {
@@ -58,6 +72,7 @@ export async function runOptimizationJob(payload: {
   candidates: number;
   seed: number;
   ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset", { min: number; max: number }>>;
+  precision?: Partial<OptimizerPrecision>;
 }): Promise<{ jobId: string }> {
   const base = getApiBase();
   return await postJson<{ jobId: string }>(`${base}/api/optimizer/run`, payload);
@@ -75,13 +90,13 @@ export async function getCurrentJob(): Promise<{ jobId: string | null }> {
 
 export async function getJobResults(
   jobId: string,
-  query: { page: number; sortKey: OptimizerSortKey; sortDir: OptimizerSortDir }
+  query: { page: number; sortKey: OptimizerSortKeyExtended; sortDir: OptimizerSortDir }
 ): Promise<{
   status: "running" | "done" | "error";
   page: number;
   pageSize: number;
   totalRows: number;
-  sortKey: OptimizerSortKey;
+  sortKey: OptimizerSortKeyExtended;
   sortDir: OptimizerSortDir;
   results: OptimizationResult[];
 }> {

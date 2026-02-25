@@ -11,9 +11,18 @@ import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
 import type { SessionSummaryResponse } from "../paper/summary.js";
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
-import { listTapes, safeId } from "../optimizer/tapeStore.js";
+import { getOptimizerSettings, listTapes, safeId, setOptimizerSettings } from "../optimizer/tapeStore.js";
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
-import { runOptimization, sortOptimizationResults, type OptimizerRanges, type OptimizerResult, type OptimizerSortDir, type OptimizerSortKey } from "../optimizer/runner.js";
+import {
+  DEFAULT_OPTIMIZER_PRECISION,
+  runOptimization,
+  sortOptimizationResults,
+  type OptimizerPrecision,
+  type OptimizerRanges,
+  type OptimizerResult,
+  type OptimizerSortDir,
+  type OptimizerSortKey,
+} from "../optimizer/runner.js";
 
 type OptimizerJob = {
   status: "running" | "done" | "error";
@@ -70,6 +79,21 @@ function parseRanges(raw: any): OptimizerRanges | undefined {
   assignIfDefined("offset", raw.offset);
 
   return parsed;
+}
+
+function parsePrecision(raw: any): Partial<OptimizerPrecision> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const keys: Array<keyof OptimizerPrecision> = ["priceTh", "oivTh", "tp", "sl", "offset"];
+  const parsed: Partial<OptimizerPrecision> = {};
+  for (const key of keys) {
+    if ((raw as any)[key] === undefined) continue;
+    const value = Number((raw as any)[key]);
+    if (!Number.isInteger(value) || value < 0 || value > 6) {
+      throw new Error(`invalid_precision_${String(key)}`);
+    }
+    parsed[key] = value;
+  }
+  return Object.keys(parsed).length ? parsed : undefined;
 }
 
 function safeBody(reqBody: any) {
@@ -335,6 +359,20 @@ const now = Date.now();
     return { tapes: listTapes() };
   });
 
+  app.get("/api/optimizer/settings", async () => {
+    return getOptimizerSettings();
+  });
+
+  app.post("/api/optimizer/settings", async (req, reply) => {
+    const body = safeBody((req as any).body) as any;
+    try {
+      return setOptimizerSettings({ tapesDir: String(body?.tapesDir ?? "") });
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "invalid_optimizer_settings", message: String(e?.message ?? e) };
+    }
+  });
+
   app.post("/api/optimizer/tapes/start", async (_req, reply) => {
     try {
       const { tapeId } = tapeRecorder.startRecording();
@@ -384,11 +422,13 @@ const now = Date.now();
     }
 
     let ranges: OptimizerRanges | undefined;
+    let precision: Partial<OptimizerPrecision> | undefined;
     try {
       ranges = parseRanges(body?.ranges);
+      precision = parsePrecision(body?.precision);
     } catch (e: any) {
       reply.code(400);
-      return { error: "invalid_ranges", message: String(e?.message ?? e) };
+      return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
 
     const jobId = randomUUID();
@@ -411,6 +451,7 @@ const now = Date.now();
             candidates: total,
             seed: Number.isFinite(seed) ? seed : 1,
             ...(ranges ? { ranges } : {}),
+            ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
             onProgress: (done, totalDone) => {
               const pct = totalDone > 0 ? Math.floor((done / totalDone) * 100) : 0;
               if (pct > job.lastPct) {
@@ -467,7 +508,7 @@ const now = Date.now();
 
     const page = Math.max(1, Math.floor(Number(query.page) || 1));
     const pageSize = 50;
-    const sortKey = ["netPnl", "trades", "winRatePct"].includes(String(query.sortKey))
+    const sortKey = ["netPnl", "trades", "winRatePct", "priceTh", "oivTh", "tp", "sl", "offset"].includes(String(query.sortKey))
       ? (String(query.sortKey) as OptimizerSortKey)
       : "netPnl";
     const sortDir = String(query.sortDir) === "asc" ? "asc" : "desc";
