@@ -35,7 +35,9 @@ export type OptimizerResult = {
   params: RandomizedParams;
 };
 
-export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
+export type OptimizerParamKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset";
+export type OptimizerPrecision = Record<OptimizerParamKey, number>;
+export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct" | OptimizerParamKey;
 export type OptimizerSortDir = "asc" | "desc";
 
 type OptimizerRangeBound = { min: number; max: number };
@@ -75,11 +77,30 @@ function quantize(value: number, step = 0.001): number {
   return Math.round(value / step) * step;
 }
 
-function quantizeAndClamp(value: number, min: number, max: number): number {
-  const quantized = quantize(value, 0.001);
+function quantizeAndClamp(value: number, min: number, max: number, precision = 3): number {
+  const step = 10 ** (-precision);
+  const quantized = quantize(value, step);
   const clamped = Math.min(max, Math.max(min, quantized));
-  const fixed = Number(clamped.toFixed(3));
+  const fixed = Number(clamped.toFixed(precision));
   return Math.min(max, Math.max(min, fixed));
+}
+
+export const DEFAULT_OPTIMIZER_PRECISION: OptimizerPrecision = {
+  priceTh: 3,
+  oivTh: 3,
+  tp: 3,
+  sl: 3,
+  offset: 3,
+};
+
+function withDefaultPrecision(precision?: Partial<OptimizerPrecision>): OptimizerPrecision {
+  return {
+    priceTh: precision?.priceTh ?? DEFAULT_OPTIMIZER_PRECISION.priceTh,
+    oivTh: precision?.oivTh ?? DEFAULT_OPTIMIZER_PRECISION.oivTh,
+    tp: precision?.tp ?? DEFAULT_OPTIMIZER_PRECISION.tp,
+    sl: precision?.sl ?? DEFAULT_OPTIMIZER_PRECISION.sl,
+    offset: precision?.offset ?? DEFAULT_OPTIMIZER_PRECISION.offset,
+  };
 }
 
 function readRange(bound: { min?: unknown; max?: unknown } | undefined, fallbackMin: number, fallbackMax: number) {
@@ -137,10 +158,23 @@ export function sortOptimizationResults(results: OptimizerResult[], key: Optimiz
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
   };
-  return [...results].sort((a, b) => (toComparable(a[key]) - toComparable(b[key])) * direction);
+  const readValue = (result: OptimizerResult): number => {
+    if (key === "priceTh") return result.params.priceThresholdPct;
+    if (key === "oivTh") return result.params.oivThresholdPct;
+    if (key === "tp") return result.params.tpRoiPct;
+    if (key === "sl") return result.params.slRoiPct;
+    if (key === "offset") return result.params.entryOffsetPct;
+    return toComparable(result[key]);
+  };
+  return [...results].sort((a, b) => (readValue(a) - readValue(b)) * direction);
 }
 
-function generateCandidate(rnd: () => number, ranges: OptimizerRanges | undefined, base: ReturnType<typeof configStore.get>): RandomizedParams {
+function generateCandidate(
+  rnd: () => number,
+  ranges: OptimizerRanges | undefined,
+  base: ReturnType<typeof configStore.get>,
+  precision: OptimizerPrecision
+): RandomizedParams {
   const price = readRange(ranges?.priceTh, 0.1, Math.max(0.1, base.signals.priceThresholdPct * 3 || 1));
   const oiv = readRange(ranges?.oivTh, 0.1, Math.max(0.1, base.signals.oivThresholdPct * 3 || 1));
   const offset = readRange(ranges?.offset, 0, Math.max(0.01, base.paper.entryOffsetPct * 3 || 0.5));
@@ -148,11 +182,11 @@ function generateCandidate(rnd: () => number, ranges: OptimizerRanges | undefine
   const sl = readRange(ranges?.sl, 1.5, Math.max(1.5, base.paper.slRoiPct * 3 || 6));
 
   return {
-    priceThresholdPct: quantizeAndClamp(pickRange(rnd, price.min, price.max), price.min, price.max),
-    oivThresholdPct: quantizeAndClamp(pickRange(rnd, oiv.min, oiv.max), oiv.min, oiv.max),
-    entryOffsetPct: quantizeAndClamp(pickRange(rnd, offset.min, offset.max), offset.min, offset.max),
-    tpRoiPct: quantizeAndClamp(pickRange(rnd, tp.min, tp.max), tp.min, tp.max),
-    slRoiPct: quantizeAndClamp(pickRange(rnd, sl.min, sl.max), sl.min, sl.max),
+    priceThresholdPct: quantizeAndClamp(pickRange(rnd, price.min, price.max), price.min, price.max, precision.priceTh),
+    oivThresholdPct: quantizeAndClamp(pickRange(rnd, oiv.min, oiv.max), oiv.min, oiv.max, precision.oivTh),
+    entryOffsetPct: quantizeAndClamp(pickRange(rnd, offset.min, offset.max), offset.min, offset.max, precision.offset),
+    tpRoiPct: quantizeAndClamp(pickRange(rnd, tp.min, tp.max), tp.min, tp.max, precision.tp),
+    slRoiPct: quantizeAndClamp(pickRange(rnd, sl.min, sl.max), sl.min, sl.max, precision.sl),
   };
 }
 
@@ -162,6 +196,7 @@ export async function runOptimization(args: {
   candidates: number;
   seed: number;
   ranges?: OptimizerRanges;
+  precision?: Partial<OptimizerPrecision>;
   onProgress?: (done: number, total: number) => void;
 }): Promise<{ tapeIds: string[]; metaByTapeId: Record<string, TapeMeta | null>; results: OptimizerResult[] }> {
   const requestedTapeIds = (args.tapeIds && args.tapeIds.length ? args.tapeIds : [args.tapeId]).filter((v): v is string => typeof v === "string" && v.trim().length > 0);
@@ -173,13 +208,14 @@ export async function runOptimization(args: {
   });
 
   const baseConfig = configStore.get();
+  const precision = withDefaultPrecision(args.precision);
   const rnd = buildRng(args.seed);
   const results: OptimizerResult[] = [];
 
   let lastPctLocal = 0;
 
   for (let i = 0; i < args.candidates; i += 1) {
-    const params = generateCandidate(rnd, args.ranges, baseConfig);
+    const params = generateCandidate(rnd, args.ranges, baseConfig, precision);
     const candidateConfig = {
       signals: {
         priceThresholdPct: params.priceThresholdPct,
