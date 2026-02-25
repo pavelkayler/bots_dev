@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 import { Alert, Button, Card, Container, Form, Pagination, ProgressBar, Spinner, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
@@ -17,9 +17,15 @@ import {
   type OptimizerTape,
 } from "../../features/optimizer/api/optimizerApi";
 
-type RangeState = {
-  min: string;
-  max: string;
+type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset";
+type RangeState = Record<RangeKey, { min: string; max: string }>;
+
+const RANGE_DEFAULTS: RangeState = {
+  priceTh: { min: "0.5", max: "6" },
+  oivTh: { min: "0.5", max: "15" },
+  tp: { min: "2", max: "12" },
+  sl: { min: "2", max: "12" },
+  offset: { min: "0", max: "1" },
 };
 
 const pageSize = 50;
@@ -61,13 +67,7 @@ export function OptimizerPage() {
   const [sortKey, setSortKey] = useState<OptimizerSortKey>("netPnl");
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
 
-  const [ranges, setRanges] = useState<Record<string, RangeState>>({
-    priceThresholdPct: { min: "", max: "" },
-    oivThresholdPct: { min: "", max: "" },
-    tpRoiPct: { min: "", max: "" },
-    slRoiPct: { min: "", max: "" },
-    entryOffsetPct: { min: "", max: "" },
-  });
+  const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
 
   async function refreshTapes() {
     setLoadingTapes(true);
@@ -118,35 +118,40 @@ export function OptimizerPage() {
   }
 
   const rangeError = useMemo(() => {
-    const labels: Record<string, string> = {
-      priceThresholdPct: "priceTh",
-      oivThresholdPct: "oivTh",
-      tpRoiPct: "tp",
-      slRoiPct: "sl",
-      entryOffsetPct: "offset",
-    };
-    for (const key of Object.keys(ranges)) {
-      const min = parseMaybeNumber(ranges[key].min);
-      const max = parseMaybeNumber(ranges[key].max);
-      if (min !== undefined && max !== undefined && min > max) return `${labels[key]} min must be less than or equal to max`;
+    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset"];
+    for (const key of keys) {
+      const minText = ranges[key].min;
+      const maxText = ranges[key].max;
+      const min = parseMaybeNumber(minText);
+      const max = parseMaybeNumber(maxText);
+      if (minText.trim() && min === undefined) return `${key} min must be a valid number`;
+      if (maxText.trim() && max === undefined) return `${key} max must be a valid number`;
+      if (min !== undefined && max !== undefined && min > max) return `${key} min must be less than or equal to max`;
     }
     return null;
   }, [ranges]);
 
   function buildRangesPayload() {
-    return {
-      priceThresholdPctMin: parseMaybeNumber(ranges.priceThresholdPct.min),
-      priceThresholdPctMax: parseMaybeNumber(ranges.priceThresholdPct.max),
-      oivThresholdPctMin: parseMaybeNumber(ranges.oivThresholdPct.min),
-      oivThresholdPctMax: parseMaybeNumber(ranges.oivThresholdPct.max),
-      tpRoiPctMin: parseMaybeNumber(ranges.tpRoiPct.min),
-      tpRoiPctMax: parseMaybeNumber(ranges.tpRoiPct.max),
-      slRoiPctMin: parseMaybeNumber(ranges.slRoiPct.min),
-      slRoiPctMax: parseMaybeNumber(ranges.slRoiPct.max),
-      entryOffsetPctMin: parseMaybeNumber(ranges.entryOffsetPct.min),
-      entryOffsetPctMax: parseMaybeNumber(ranges.entryOffsetPct.max),
-    };
+    const payload: Partial<Record<RangeKey, { min: number; max: number }>> = {};
+    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset"];
+    for (const key of keys) {
+      const min = parseMaybeNumber(ranges[key].min);
+      const max = parseMaybeNumber(ranges[key].max);
+      if (min !== undefined && max !== undefined) {
+        payload[key] = { min, max };
+      }
+    }
+    return payload;
   }
+
+  const onRangeChange =
+    (key: RangeKey, bound: "min" | "max") => (e: ChangeEvent<HTMLInputElement>) => {
+      const nextValue = e.currentTarget.value;
+      setRanges((prev) => ({
+        ...prev,
+        [key]: { ...prev[key], [bound]: nextValue },
+      }));
+    };
 
   async function fetchResults(nextPage: number, nextSortKey: OptimizerSortKey, nextSortDir: OptimizerSortDir, activeJobId: string) {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
@@ -165,11 +170,12 @@ export function OptimizerPage() {
     setDone(0);
     setTotal(0);
     try {
+      const rangePayload = buildRangesPayload();
       const runRes = await runOptimizationJob({
         tapeId: selectedTapeId,
         candidates: Number(candidates),
         seed: Number(seed),
-        ranges: buildRangesPayload(),
+        ranges: (Object.keys(rangePayload).length ? rangePayload : undefined) as unknown as Record<string, number | undefined>,
       });
       setJobId(runRes.jobId);
     } catch (e: any) {
@@ -345,27 +351,21 @@ export function OptimizerPage() {
                 </tr>
               </thead>
               <tbody>
-                {[
-                  ["priceThresholdPct", "priceTh"],
-                  ["oivThresholdPct", "oivTh"],
-                  ["tpRoiPct", "tp"],
-                  ["slRoiPct", "sl"],
-                  ["entryOffsetPct", "offset"],
-                ].map(([key, label]) => (
+                {(["priceTh", "oivTh", "tp", "sl", "offset"] as RangeKey[]).map((key) => (
                   <tr key={key}>
-                    <td>{label}</td>
+                    <td>{key}</td>
                     <td>
                       <Form.Control
                         size="sm"
                         value={ranges[key].min}
-                        onChange={(e) => setRanges((prev) => ({ ...prev, [key]: { ...prev[key], min: e.currentTarget.value } }))}
+                        onChange={onRangeChange(key, "min")}
                       />
                     </td>
                     <td>
                       <Form.Control
                         size="sm"
                         value={ranges[key].max}
-                        onChange={(e) => setRanges((prev) => ({ ...prev, [key]: { ...prev[key], max: e.currentTarget.value } }))}
+                        onChange={onRangeChange(key, "max")}
                       />
                     </td>
                   </tr>
