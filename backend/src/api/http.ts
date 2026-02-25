@@ -25,6 +25,23 @@ type OptimizerJob = {
 };
 
 const optimizerJobs = new Map<string, OptimizerJob>();
+const optimizerJobStartedAt = new Map<string, number>();
+let latestOptimizerJobId: string | null = null;
+
+function rememberOptimizerJob(jobId: string) {
+  optimizerJobStartedAt.set(jobId, Date.now());
+  latestOptimizerJobId = jobId;
+}
+
+function resolveCurrentOptimizerJobId(): string | null {
+  const entries = Array.from(optimizerJobStartedAt.entries()).filter(([jobId]) => optimizerJobs.has(jobId));
+  if (!entries.length) return null;
+  entries.sort((a, b) => b[1] - a[1]);
+  const running = entries.find(([jobId]) => optimizerJobs.get(jobId)?.status === "running");
+  if (running) return running[0];
+  if (latestOptimizerJobId && optimizerJobs.has(latestOptimizerJobId)) return latestOptimizerJobId;
+  return entries.at(0)?.[0] ?? null;
+}
 
 function toNumberOrUndefined(value: unknown): number | undefined {
   if (value === undefined || value === null || value === "") return undefined;
@@ -384,6 +401,7 @@ const now = Date.now();
       results: [],
     };
     optimizerJobs.set(jobId, job);
+    rememberOptimizerJob(jobId);
 
     setTimeout(() => {
       void (async () => {
@@ -414,6 +432,11 @@ const now = Date.now();
       })();
     }, 0);
 
+    return { jobId };
+  });
+
+  app.get("/api/optimizer/jobs/current", async () => {
+    const jobId = resolveCurrentOptimizerJobId();
     return { jobId };
   });
 
