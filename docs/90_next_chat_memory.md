@@ -46,12 +46,20 @@ Global constraints:
   - Fees shown as negative in UI
 - Config:
   - Apply gating (dirty+valid+universe selected)
-  - Apply & Reboot restarts session and suppresses intermediate stop-summary flash
+  - Apply-and-Run (label): restarts session and suppresses intermediate stop-summary flash
+  - Start and Record: apply-and-run then start optimizer tape recording
   - Presets select/save/remove; labels include TF; best-effort universe auto-select by bracket token
   - Paper direction mode: both/long/short (default both)
+- Funding sign gating:
+  - signals.requireFundingSign must always be true (UI toggle removed; backend enforces true via migrate/normalize/update).
 - Universe Builder:
   - build universes from WS tickers; save to `data/universes`
   - delete protected when in use (409)
+- Optimizer:
+  - Tape recording RUNNING-only, full ticker payload only, per-symbol throttle 5s.
+  - Multi-tape optimization with job model; job persists across UI navigation/reload.
+  - Results table server-sorted/paginated; params as separate columns.
+  - Operator inputs persisted in localStorage (ranges, candidates, seed).
 
 ## 4) What the user wants next
-Improvements/optimizations and functional expansion; keep the same workflow.
+Iterative improvements via queued `правка:` items; keep the same workflow.

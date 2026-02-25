@@ -45,6 +45,13 @@ Last update: 2026-02-25
 - **Upd**
   - last update time for the underlying row
 
+## Optional 24h fields (not necessarily displayed)
+SymbolRow may include 24h market fields derived from tickers:
+- `turnover24hUsd`
+- `highPrice24h`
+- `lowPrice24h`
+These are used for enriching Trade Stats (turnover/volatility) and Universe Builder filtering.
+
 ## ActiveOnly rule (UI)
 ActiveOnly shows a row if:
 - paper status is OPEN or ENTRY_PENDING, OR

@@ -37,7 +37,7 @@ Response:
 ### GET /api/config
 Response:
 ```json
-{ "config": { ...runtimeConfig } }
+{ "config": { "...": "runtimeConfig" } }
 ```
 
 ### POST /api/config
@@ -46,11 +46,12 @@ Patch update (validated/normalized on backend). Paper parameters apply on next S
 Notable config fields:
 - `klineTfMin: 1|3|5|15|30|60`
 - `paper.directionMode: "both"|"long"|"short"` (default `"both"`)
+- `signals.requireFundingSign` is **forced true** by backend normalization (UI does not expose toggle).
 
 Response:
 ```json
 {
-  "config": { ...runtimeConfig },
+  "config": { "...": "runtimeConfig" },
   "applied": { "universe": "no_change|streams_reconnect", "signals": true, "fundingCooldown": true, "paper": "next_session" }
 }
 ```
@@ -76,6 +77,130 @@ Downloads `summary.json`.
 - `GET /api/presets/:id` → preset file (name + config)
 - `PUT /api/presets/:id` → overwrite preset
 - `DELETE /api/presets/:id` → delete preset
+
+### Optimizer
+See `docs/17_optimizer.md` for semantics.
+
+#### GET /api/optimizer/status
+Reports tape recorder status.
+Response:
+```json
+{ "isRecording": true, "tapeId": "tape-2026-02-25T11-15-26-635Z" }
+```
+
+#### GET /api/optimizer/settings
+Response:
+```json
+{ "tapesDir": "...server filesystem path..." }
+```
+
+#### POST /api/optimizer/settings
+Body:
+```json
+{ "tapesDir": "...server filesystem path..." }
+```
+Response:
+```json
+{ "tapesDir": "..." }
+```
+
+#### GET /api/optimizer/tapes
+Response:
+```json
+{
+  "tapes": [
+    {
+      "id": "tape-...",
+      "createdAt": "2026-02-25T...Z",
+      "fileSizeBytes": 12345,
+      "meta": { "klineTfMin": 1, "symbolsCount": 337 }
+    }
+  ]
+}
+```
+
+#### POST /api/optimizer/tapes/start
+Starts tape recording (RUNNING only).
+- Returns `409` if session is not RUNNING.
+
+Response:
+```json
+{ "tapeId": "tape-..." }
+```
+
+#### POST /api/optimizer/tapes/stop
+Response:
+```json
+{ "ok": true }
+```
+
+#### POST /api/optimizer/run
+Starts an optimization job.
+Body (preferred multi-tape):
+```json
+{
+  "tapeIds": ["tape-...", "tape-..."],
+  "candidates": 200,
+  "seed": 1,
+  "ranges": {
+    "tp": { "min": 2, "max": 12 },
+    "sl": { "min": 2, "max": 12 }
+  },
+  "precision": { "tp": 0, "sl": 0, "offset": 3 }
+}
+```
+Legacy (single tape):
+```json
+{ "tapeId": "tape-...", "candidates": 200, "seed": 1 }
+```
+Response:
+```json
+{ "jobId": "job-..." }
+```
+
+#### GET /api/optimizer/jobs/current
+Returns the newest running job if any, else the latest finished job, else null.
+Response:
+```json
+{ "jobId": "job-..." }
+```
+
+#### GET /api/optimizer/jobs/:jobId/status
+Response:
+```json
+{ "status": "running|done|error", "total": 100, "done": 37, "message": "...optional..." }
+```
+
+#### GET /api/optimizer/jobs/:jobId/results
+Query:
+- `page` (1-based)
+- `sortKey`: `netPnl|trades|winRatePct|priceTh|oivTh|tp|sl|offset`
+- `sortDir`: `asc|desc`
+
+Response:
+```json
+{
+  "status": "done",
+  "page": 1,
+  "pageSize": 50,
+  "totalRows": 50,
+  "sortKey": "netPnl",
+  "sortDir": "desc",
+  "results": [
+    {
+      "rank": 1,
+      "netPnl": 5.38,
+      "trades": 18,
+      "winRatePct": 22.22,
+      "priceTh": 0.5,
+      "oivTh": 1.0,
+      "tp": 9,
+      "sl": 10,
+      "offset": 0.001
+    }
+  ]
+}
+```
 
 CORS note:
 - API must allow DELETE from dev frontend origin (preflight OPTIONS).

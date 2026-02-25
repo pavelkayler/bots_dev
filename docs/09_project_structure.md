@@ -10,9 +10,13 @@ Last update: 2026-02-25
 
 ## Frontend architecture
 - `src/app` providers and routing
-- `src/pages` route pages (`/` dashboard, `/universe` builder)
-- `src/features` feature modules (ws, session, market, events, config, universe, summary, stats, presets)
+- `src/pages` route pages (`/` dashboard, `/universe` builder, `/optimizer` optimizer)
+- `src/features` feature modules (ws, session, market, events, config, universe, summary, stats, presets, optimizer)
 - `src/shared` shared types, utils, http, formatters
+
+### WS client (frontend)
+- The frontend WS connection to backend is implemented as a module-scope singleton.
+- Route navigation should not create/destroy the socket; pages subscribe/unsubscribe to updates.
 
 ## Backend architecture (high level)
 - `src/api` http routes, wsHub
@@ -20,7 +24,15 @@ Last update: 2026-02-25
 - `src/engine` market cache, candle refs, signal engine
 - `src/paper` paper broker and summary builder
 - `src/runtime` runtime session orchestrator + config store
-- `data/`
+- `src/optimizer`
+  - tape store + recorder
+  - runner (replay + random search)
+  - optimizer settings (tapesDir)
+
+## Data folders
+- `backend/data/`
   - `sessions/` per-run events + summary
   - `universes/` saved symbol sets
   - `presets/` saved config presets
+  - `tapes/` default tape directory (when optimizer `tapesDir` is not changed)
+  - `optimizer_settings.json` persisted optimizer settings (tapesDir)
