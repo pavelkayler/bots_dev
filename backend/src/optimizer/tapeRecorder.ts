@@ -83,7 +83,7 @@ class TapeRecorder {
       return;
     }
     const last = this.lastTickerTsBySymbol.get(symbol) ?? 0;
-    if (ts - last < 1000) {
+    if (ts - last < 5000) {
       return;
     }
     this.stream.write(`${JSON.stringify({ type: "ticker", ts, symbol, payload })}\n`);
