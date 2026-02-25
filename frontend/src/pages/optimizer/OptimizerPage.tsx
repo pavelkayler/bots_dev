@@ -29,6 +29,7 @@ const RANGE_DEFAULTS: RangeState = {
 };
 
 const pageSize = 50;
+const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 
 function formatSize(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -41,6 +42,32 @@ function parseMaybeNumber(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
+}
+
+function isValidRangeState(value: unknown): value is RangeState {
+  if (!value || typeof value !== "object") return false;
+  const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset"];
+  for (const key of keys) {
+    const row = (value as Record<string, any>)[key];
+    if (!row || typeof row !== "object") return false;
+    if (typeof row.min !== "string" || typeof row.max !== "string") return false;
+  }
+  return true;
+}
+
+function loadSavedRanges(): RangeState {
+  try {
+    const raw = localStorage.getItem(RANGES_STORAGE_KEY);
+    if (!raw) return RANGE_DEFAULTS;
+    const parsed = JSON.parse(raw) as unknown;
+    return isValidRangeState(parsed) ? parsed : RANGE_DEFAULTS;
+  } catch {
+    return RANGE_DEFAULTS;
+  }
+}
+
+function quantizeTo3(value: number): number {
+  return Number((Math.round(value / 0.001) * 0.001).toFixed(3));
 }
 
 export function OptimizerPage() {
@@ -68,6 +95,7 @@ export function OptimizerPage() {
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
 
   const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
+  const [rangesSaved, setRangesSaved] = useState(false);
 
   async function refreshTapes() {
     setLoadingTapes(true);
@@ -87,7 +115,12 @@ export function OptimizerPage() {
   }
 
   useEffect(() => {
+    setRanges(loadSavedRanges());
     void refreshTapes();
+    const intervalId = window.setInterval(() => {
+      void refreshTapes();
+    }, 5000);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   const selectedTape = useMemo(() => tapes.find((t) => t.id === selectedTapeId) ?? null, [tapes, selectedTapeId]);
@@ -147,11 +180,18 @@ export function OptimizerPage() {
   const onRangeChange =
     (key: RangeKey, bound: "min" | "max") => (e: ChangeEvent<HTMLInputElement>) => {
       const nextValue = e.currentTarget.value;
+      setRangesSaved(false);
       setRanges((prev) => ({
         ...prev,
         [key]: { ...prev[key], [bound]: nextValue },
       }));
     };
+
+  function onSaveRanges() {
+    if (rangeError) return;
+    localStorage.setItem(RANGES_STORAGE_KEY, JSON.stringify(ranges));
+    setRangesSaved(true);
+  }
 
   async function fetchResults(nextPage: number, nextSortKey: OptimizerSortKey, nextSortDir: OptimizerSortDir, activeJobId: string) {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
@@ -231,13 +271,13 @@ export function OptimizerPage() {
       rank: row.rank,
       patch: {
         signals: {
-          priceThresholdPct: row.params.priceThresholdPct,
-          oivThresholdPct: row.params.oivThresholdPct,
+          priceThresholdPct: quantizeTo3(row.params.priceThresholdPct),
+          oivThresholdPct: quantizeTo3(row.params.oivThresholdPct),
         },
         paper: {
-          tpRoiPct: row.params.tpRoiPct,
-          slRoiPct: row.params.slRoiPct,
-          entryOffsetPct: row.params.entryOffsetPct,
+          tpRoiPct: quantizeTo3(row.params.tpRoiPct),
+          slRoiPct: quantizeTo3(row.params.slRoiPct),
+          entryOffsetPct: quantizeTo3(row.params.entryOffsetPct),
         },
       },
     };
@@ -373,10 +413,14 @@ export function OptimizerPage() {
               </tbody>
             </Table>
             {rangeError ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>{rangeError}</div> : null}
+            <div className="d-flex align-items-center gap-2 mb-2">
+              <Button size="sm" variant="outline-secondary" onClick={onSaveRanges} disabled={Boolean(rangeError)}>Save</Button>
+              {rangesSaved ? <span style={{ fontSize: 12, opacity: 0.8 }}>Saved</span> : null}
+            </div>
 
             {selectedTape ? <div style={{ fontSize: 12, marginBottom: 8 }}>selected tape: <b>{selectedTape.id}</b></div> : null}
 
-            {running ? <ProgressBar now={progressPct} label={`${done}/${total || 0}`} className="mb-2" /> : null}
+            {jobId ? <ProgressBar now={running ? progressPct : 100} label={`${running ? done : 100}/${total || 100}`} className="mb-2" /> : null}
 
             <Table striped bordered hover size="sm">
               <thead>

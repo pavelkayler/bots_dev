@@ -19,6 +19,7 @@ type OptimizerJob = {
   status: "running" | "done" | "error";
   total: number;
   done: number;
+  lastPct: number;
   message?: string;
   results: OptimizerResult[];
 };
@@ -387,8 +388,9 @@ const now = Date.now();
     const total = Math.floor(candidates);
     const job: OptimizerJob = {
       status: "running",
-      total,
+      total: 100,
       done: 0,
+      lastPct: 0,
       results: [],
     };
     optimizerJobs.set(jobId, job);
@@ -401,12 +403,18 @@ const now = Date.now();
           seed: Number.isFinite(seed) ? seed : 1,
           ...(ranges ? { ranges } : {}),
           onProgress: (done, totalDone) => {
-            job.done = done;
-            job.total = totalDone;
+            const pct = totalDone > 0 ? Math.floor((done / totalDone) * 100) : 0;
+            if (pct > job.lastPct) {
+              job.lastPct = pct;
+              job.done = pct;
+              job.total = 100;
+            }
           },
         });
         job.results = output.results ?? [];
-        job.done = job.total;
+        job.lastPct = 100;
+        job.done = 100;
+        job.total = 100;
         job.status = "done";
       } catch (e: any) {
         job.status = "error";
