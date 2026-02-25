@@ -10,6 +10,12 @@ export type TradeStatsBySymbol = {
   fees: number;
   funding: number;
   lastCloseTs: number | null;
+  longTrades: number;
+  longWins: number;
+  shortTrades: number;
+  shortWins: number;
+  turnover24hUsd?: number | null;
+  volatility24hPct?: number | null;
 };
 
 
@@ -94,12 +100,25 @@ export function useTradeStatsBySymbol(sessionState: SessionState, sessionId: str
             netPnl: 0,
             fees: 0,
             funding: 0,
-            lastCloseTs: null
+            lastCloseTs: null,
+            longTrades: 0,
+            longWins: 0,
+            shortTrades: 0,
+            shortWins: 0
           } as TradeStatsBySymbol);
 
         cur.trades += 1;
         if (realizedPnl > 0) cur.wins += 1;
         else cur.losses += 1;
+
+        const side = String(ev.payload?.side ?? "").toUpperCase();
+        if (side === "LONG") {
+          cur.longTrades += 1;
+          if (realizedPnl > 0) cur.longWins += 1;
+        } else if (side === "SHORT") {
+          cur.shortTrades += 1;
+          if (realizedPnl > 0) cur.shortWins += 1;
+        }
 
         cur.netPnl += realizedPnl;
         cur.fees += feesPaid;

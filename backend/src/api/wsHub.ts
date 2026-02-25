@@ -18,6 +18,9 @@ type SymbolRowBase = {
   fundingRate: number;
   nextFundingTime: number;
   fundingIntervalHour: number | null;
+  turnover24hUsd: number | null;
+  highPrice24h: number | null;
+  lowPrice24h: number | null;
   updatedAt: number;
 
   prevCandleClose: number | null;
@@ -254,6 +257,9 @@ export function createWsHub(app: FastifyInstance) {
       const fundingRate = finiteOr(raw?.fundingRate, 0) ?? 0;
       const nextFundingTime = finiteOr(raw?.nextFundingTime, 0) ?? 0;
       const fundingIntervalHour = finiteOr(raw?.fundingIntervalHour, null);
+      const turnover24hUsd = finiteOr(raw?.turnover24hUsd, null);
+      const highPrice24h = finiteOr(raw?.highPrice24h, null);
+      const lowPrice24h = finiteOr(raw?.lowPrice24h, null);
       const updatedAt = finiteOr(raw?.updatedAt, 0) ?? 0;
 
       const refs = candles.getRefs(symbol);
@@ -286,6 +292,9 @@ export function createWsHub(app: FastifyInstance) {
         fundingRate,
         nextFundingTime,
         fundingIntervalHour,
+        turnover24hUsd,
+        highPrice24h,
+        lowPrice24h,
         updatedAt,
 
         prevCandleClose: refs.prevCandleClose,

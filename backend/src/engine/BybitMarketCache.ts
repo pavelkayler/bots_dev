@@ -6,6 +6,9 @@ type TickerCacheRow = {
   fundingRate: number | null;
   nextFundingTime: number | null;
   fundingIntervalHour: number | null;
+  turnover24hUsd: number | null;
+  highPrice24h: number | null;
+  lowPrice24h: number | null;
 
   updatedAt: number;
 };
@@ -23,6 +26,9 @@ export class BybitMarketCache {
         fundingRate: null,
         nextFundingTime: null,
         fundingIntervalHour: null,
+        turnover24hUsd: null,
+        highPrice24h: null,
+        lowPrice24h: null,
         updatedAt: Date.now(),
       } satisfies TickerCacheRow);
 
@@ -31,6 +37,12 @@ export class BybitMarketCache {
     if (delta.fundingRate != null) row.fundingRate = Number(delta.fundingRate);
     if (delta.nextFundingTime != null) row.nextFundingTime = Number(delta.nextFundingTime);
     if (delta.fundingIntervalHour != null) row.fundingIntervalHour = Number(delta.fundingIntervalHour);
+    const turnover24hUsd = Number(delta.turnover24h);
+    if (Number.isFinite(turnover24hUsd)) row.turnover24hUsd = turnover24hUsd;
+    const highPrice24h = Number(delta.highPrice24h);
+    if (Number.isFinite(highPrice24h)) row.highPrice24h = highPrice24h;
+    const lowPrice24h = Number(delta.lowPrice24h);
+    if (Number.isFinite(lowPrice24h)) row.lowPrice24h = lowPrice24h;
 
     row.updatedAt = Date.now();
     this.map.set(symbol, row);
@@ -54,6 +66,9 @@ export class BybitMarketCache {
     fundingRate: number | null;
     nextFundingTime: number | null;
     fundingIntervalHour: number | null;
+    turnover24hUsd: number | null;
+    highPrice24h: number | null;
+    lowPrice24h: number | null;
     updatedAt: number;
   } | null {
     const r = this.map.get(symbol);
@@ -65,6 +80,9 @@ export class BybitMarketCache {
       fundingRate: r.fundingRate,
       nextFundingTime: r.nextFundingTime,
       fundingIntervalHour: r.fundingIntervalHour,
+      turnover24hUsd: r.turnover24hUsd,
+      highPrice24h: r.highPrice24h,
+      lowPrice24h: r.lowPrice24h,
       updatedAt: r.updatedAt,
     };
   }
@@ -76,6 +94,9 @@ export class BybitMarketCache {
     fundingRate: number;
     nextFundingTime: number;
     fundingIntervalHour: number | null;
+    turnover24hUsd: number | null;
+    highPrice24h: number | null;
+    lowPrice24h: number | null;
     updatedAt: number;
   }> {
     const out: any[] = [];
@@ -90,6 +111,9 @@ export class BybitMarketCache {
         fundingRate: r.fundingRate,
         nextFundingTime: r.nextFundingTime,
         fundingIntervalHour: r.fundingIntervalHour ?? null,
+        turnover24hUsd: r.turnover24hUsd,
+        highPrice24h: r.highPrice24h,
+        lowPrice24h: r.lowPrice24h,
         updatedAt: r.updatedAt,
       });
     }

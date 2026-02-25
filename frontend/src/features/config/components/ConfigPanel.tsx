@@ -97,7 +97,7 @@ function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft |
 }
 
 export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraftKlineTfMinChange }: Props) {
-  const { draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save } = useRuntimeConfig();
+  const { config, draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save } = useRuntimeConfig();
   const [inputError, setInputError] = useState<string | null>(null);
   const [numericDraft, setNumericDraft] = useState<NumericDraft | null>(null);
 
@@ -181,12 +181,16 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
   }, []);
 
   useEffect(() => {
-    if (!draft) return;
-    const id = String((draft as any).universe?.selectedId ?? "");
+    if (!config) return;
+    const id = String((config as any).universe?.selectedId ?? "");
     setSelectedUniverseId(id);
-    setNumericDraft(toNumericDraft(draft));
+    setNumericDraft(toNumericDraft(config));
+  }, [config]);
+
+  useEffect(() => {
+    if (!draft) return;
     onDraftKlineTfMinChange?.(Number(draft.universe.klineTfMin));
-  }, [draft, onDraftKlineTfMinChange]);
+  }, [draft?.universe.klineTfMin, onDraftKlineTfMinChange]);
 
   async function onUniverseSelect(id: string) {
     setSelectedUniverseId(id);
