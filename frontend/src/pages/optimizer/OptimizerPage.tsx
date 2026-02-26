@@ -6,6 +6,7 @@ import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntim
 import {
   getJobResults,
   getJobStatus,
+  cancelCurrentJob,
   getCurrentJob,
   getSettings,
   getStatus,
@@ -325,7 +326,7 @@ export function OptimizerPage() {
           setRunning(true);
           return;
         }
-        if (statusRes.status === "done") {
+        if (statusRes.status === "done" || statusRes.status === "cancelled") {
           setRunning(false);
           await fetchResults(1, sortKey, sortDir, current.jobId);
           return;
@@ -493,9 +494,10 @@ export function OptimizerPage() {
           setRunning(false);
           setError(res.message ?? "Optimization job failed.");
         }
-        if (res.status === "done") {
+        if (res.status === "done" || res.status === "cancelled") {
           window.clearInterval(timer);
           setRunning(false);
+          if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
           await fetchResults(1, sortKey, sortDir, jobId);
         }
       } catch (e: any) {
@@ -506,6 +508,16 @@ export function OptimizerPage() {
 
     return () => window.clearInterval(timer);
   }, [jobId, running, sortDir, sortKey]);
+
+
+  async function onStopOptimization() {
+    setError(null);
+    try {
+      await cancelCurrentJob();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
 
   async function onSort(nextSortKey: OptimizerSortKeyExtended) {
     if (!jobId) return;
@@ -630,6 +642,11 @@ export function OptimizerPage() {
               <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || running || Boolean(rangeError)}>
                 Run optimization
               </Button>
+              {running ? (
+                <Button variant="outline-danger" onClick={() => void onStopOptimization()}>
+                  Stop
+                </Button>
+              ) : null}
             </div>
 
             <h6>Ranges</h6>

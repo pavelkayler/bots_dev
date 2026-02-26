@@ -25,10 +25,11 @@ import {
 } from "../optimizer/runner.js";
 
 type OptimizerJob = {
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "cancelled";
   total: number;
   done: number;
   lastPct: number;
+  cancelRequested: boolean;
   message?: string;
   results: OptimizerResult[];
 };
@@ -445,6 +446,7 @@ const now = Date.now();
       done: 0,
       lastPct: 0,
       results: [],
+      cancelRequested: false,
     };
     optimizerJobs.set(jobId, job);
     rememberOptimizerJob(jobId);
@@ -459,20 +461,27 @@ const now = Date.now();
             ...(ranges ? { ranges } : {}),
             ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
             directionMode: directionMode as "both" | "long" | "short",
-            onProgress: (done, totalDone) => {
+            onProgress: (done, totalDone, partialResults) => {
               const pct = totalDone > 0 ? Math.floor((done / totalDone) * 100) : 0;
               if (pct > job.lastPct) {
                 job.lastPct = pct;
                 job.done = pct;
                 job.total = 100;
               }
+              job.results = partialResults;
             },
+            shouldStop: () => job.cancelRequested,
           });
           job.results = output.results ?? [];
-          job.lastPct = 100;
-          job.done = 100;
-          job.total = 100;
-          job.status = "done";
+          if (output.cancelled || job.cancelRequested) {
+            job.status = "cancelled";
+            job.message = "Optimization cancelled.";
+          } else {
+            job.lastPct = 100;
+            job.done = 100;
+            job.total = 100;
+            job.status = "done";
+          }
         } catch (e: any) {
           job.status = "error";
           job.message = String(e?.message ?? e);
@@ -481,6 +490,22 @@ const now = Date.now();
     }, 0);
 
     return { jobId };
+  });
+
+
+  app.post("/api/optimizer/jobs/current/cancel", async (_req, reply) => {
+    const jobId = resolveCurrentOptimizerJobId();
+    if (!jobId) {
+      reply.code(404);
+      return { error: "optimizer_job_not_found" };
+    }
+    const job = optimizerJobs.get(jobId);
+    if (!job || job.status !== "running") {
+      reply.code(409);
+      return { error: "optimizer_job_not_running" };
+    }
+    job.cancelRequested = true;
+    return { ok: true };
   });
 
   app.get("/api/optimizer/jobs/current", async () => {

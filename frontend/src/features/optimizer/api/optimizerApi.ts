@@ -79,9 +79,9 @@ export async function runOptimizationJob(payload: {
   return await postJson<{ jobId: string }>(`${base}/api/optimizer/run`, payload);
 }
 
-export async function getJobStatus(jobId: string): Promise<{ status: "running" | "done" | "error"; total: number; done: number; message?: string }> {
+export async function getJobStatus(jobId: string): Promise<{ status: "running" | "done" | "error" | "cancelled"; total: number; done: number; message?: string }> {
   const base = getApiBase();
-  return await getJson<{ status: "running" | "done" | "error"; total: number; done: number; message?: string }>(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/status`);
+  return await getJson<{ status: "running" | "done" | "error" | "cancelled"; total: number; done: number; message?: string }>(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/status`);
 }
 
 export async function getCurrentJob(): Promise<{ jobId: string | null }> {
@@ -93,7 +93,7 @@ export async function getJobResults(
   jobId: string,
   query: { page: number; sortKey: OptimizerSortKeyExtended; sortDir: OptimizerSortDir }
 ): Promise<{
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "cancelled";
   page: number;
   pageSize: number;
   totalRows: number;
@@ -108,4 +108,10 @@ export async function getJobResults(
     sortDir: query.sortDir,
   });
   return await getJson(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/results?${params.toString()}`);
+}
+
+
+export async function cancelCurrentJob(): Promise<{ ok: true }> {
+  const base = getApiBase();
+  return await postJson<{ ok: true }>(`${base}/api/optimizer/jobs/current/cancel`, {});
 }
