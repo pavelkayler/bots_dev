@@ -20,7 +20,7 @@ const universeSchema = z
   })
   .strict();
 
-const signalsSchema = z
+const signalsShapeSchema = z
   .object({
     priceThresholdPct: z.number().finite().min(0),
     oivThresholdPct: z.number().finite().min(0),
@@ -28,10 +28,19 @@ const signalsSchema = z
     dailyTriggerMin: z.number().int().min(1),
     dailyTriggerMax: z.number().int().min(1),
   })
-  .refine((v) => v.dailyTriggerMax >= v.dailyTriggerMin, {
-    message: "dailyTriggerMax must be greater than or equal to dailyTriggerMin",
-  })
   .strict();
+
+const signalsSchema = signalsShapeSchema.superRefine((v, ctx) => {
+  if (v.dailyTriggerMax < v.dailyTriggerMin) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["dailyTriggerMax"],
+      message: "dailyTriggerMax must be greater than or equal to dailyTriggerMin",
+    });
+  }
+});
+
+const signalsPatchSchema = signalsShapeSchema.partial().strict();
 
 const fundingCooldownSchema = z
   .object({
@@ -74,7 +83,7 @@ const patchSchema = z
   .object({
     universe: universeSchema.partial().optional(),
     fundingCooldown: fundingCooldownSchema.partial().optional(),
-    signals: signalsSchema.partial().optional(),
+    signals: signalsPatchSchema.optional(),
     paper: paperSchema.partial().optional(),
   })
   .strict();
