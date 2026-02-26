@@ -315,10 +315,15 @@ export async function runOptimization(args: {
     count: number;
     skipped: number;
   };
+  seedInfo: {
+    baseSeed: number;
+    effectiveSeed: number;
+    runIndex: number;
+  };
 }> {
   const tapeIds = args.tapeIds.map((id) => safeId(id));
   const precision = withDefaultPrecision(args.precision);
-  const rng = buildRng(args.seed);
+  const baseSeed = Number.isFinite(args.seed) ? args.seed : 1;
   const baseConfig = configStore.get();
   const ranges = args.ranges ?? {};
 
@@ -340,6 +345,13 @@ export async function runOptimization(args: {
   const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
   const shouldRememberNegatives = Boolean(args.rememberNegatives);
   const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;
+  const runIndex = shouldRememberNegatives ? blacklistState?.runIndex ?? 0 : 0;
+  const effectiveSeed = shouldRememberNegatives ? baseSeed + runIndex : baseSeed;
+  if (blacklistState) {
+    blacklistState.runIndex = runIndex + 1;
+    flushNegativeBlacklist(blacklistState);
+  }
+  const rng = buildRng(effectiveSeed);
   let skippedBlacklisted = 0;
   let lastBlacklistFlushMs = Date.now();
   let addedSinceFlush = 0;
@@ -662,6 +674,11 @@ export async function runOptimization(args: {
           },
         }
       : {}),
+    seedInfo: {
+      baseSeed,
+      effectiveSeed,
+      runIndex,
+    },
   };
 }
 
@@ -669,6 +686,7 @@ type NegativeBlacklistFile = {
   runKey: string;
   createdAtMs: number;
   updatedAtMs: number;
+  runIndex?: number;
   negativeSet: Record<string, true>;
 };
 
@@ -677,6 +695,7 @@ type NegativeBlacklistState = {
   hash: string;
   createdAtMs: number;
   updatedAtMs: number;
+  runIndex: number;
   negativeSet: Set<string>;
 };
 
@@ -698,22 +717,23 @@ function loadNegativeBlacklist(runKey: string): NegativeBlacklistState {
   const filePath = blacklistPath(hash);
   const now = Date.now();
   if (!fs.existsSync(filePath)) {
-    return { runKey, hash, createdAtMs: now, updatedAtMs: now, negativeSet: new Set() };
+    return { runKey, hash, createdAtMs: now, updatedAtMs: now, runIndex: 0, negativeSet: new Set() };
   }
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as NegativeBlacklistFile;
     if (!parsed || parsed.runKey !== runKey || typeof parsed.negativeSet !== "object" || parsed.negativeSet == null) {
-      return { runKey, hash, createdAtMs: now, updatedAtMs: now, negativeSet: new Set() };
+      return { runKey, hash, createdAtMs: now, updatedAtMs: now, runIndex: 0, negativeSet: new Set() };
     }
     return {
       runKey,
       hash,
       createdAtMs: Number(parsed.createdAtMs) || now,
       updatedAtMs: Number(parsed.updatedAtMs) || now,
+      runIndex: Math.max(0, Math.floor(Number(parsed.runIndex) || 0)),
       negativeSet: new Set(Object.keys(parsed.negativeSet)),
     };
   } catch {
-    return { runKey, hash, createdAtMs: now, updatedAtMs: now, negativeSet: new Set() };
+    return { runKey, hash, createdAtMs: now, updatedAtMs: now, runIndex: 0, negativeSet: new Set() };
   }
 }
 
@@ -725,6 +745,7 @@ function flushNegativeBlacklist(state: NegativeBlacklistState) {
     runKey: state.runKey,
     createdAtMs: state.createdAtMs,
     updatedAtMs: state.updatedAtMs,
+    runIndex: state.runIndex,
     negativeSet,
   };
   fs.writeFileSync(blacklistPath(state.hash), JSON.stringify(payload, null, 2), "utf8");
