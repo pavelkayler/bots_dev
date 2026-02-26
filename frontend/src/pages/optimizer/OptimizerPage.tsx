@@ -44,6 +44,7 @@ const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
 const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
 const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
 const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
+const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 
@@ -288,9 +289,13 @@ export function OptimizerPage() {
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState<string>("");
   const [excludeNegative, setExcludeNegative] = useState(false);
+  const [rememberNegatives, setRememberNegatives] = useState(false);
   const [running, setRunning] = useState(false);
   const [optimizerPaused, setOptimizerPaused] = useState(false);
   const [jobStartedAtMs, setJobStartedAtMs] = useState<number | null>(null);
+  const [jobUpdatedAtMs, setJobUpdatedAtMs] = useState<number | null>(null);
+  const [jobFinishedAtMs, setJobFinishedAtMs] = useState<number | null>(null);
+  const [jobStatus, setJobStatus] = useState<"running" | "paused" | "done" | "error" | "cancelled" | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [jobId, setJobId] = useState<string | null>(null);
   const [done, setDone] = useState(0);
@@ -339,6 +344,7 @@ export function OptimizerPage() {
       if (Number.isFinite(n) && n >= 0) setMinTrades(String(n));
     }
     setExcludeNegative(localStorage.getItem(EXCLUDE_NEGATIVE_STORAGE_KEY) === "1");
+    setRememberNegatives(localStorage.getItem(REMEMBER_NEGATIVES_STORAGE_KEY) === "1");
     void refreshStatus();
     setTapesRefreshKey((prev) => prev + 1);
     void (async () => {
@@ -358,6 +364,9 @@ export function OptimizerPage() {
         setDone((prev) => (Math.abs(prev - statusRes.done) >= 0.01 ? statusRes.done : prev));
         setTotal((prev) => (Math.abs(prev - statusRes.total) >= 0.01 ? statusRes.total : prev));
         if (statusRes.startedAtMs) setJobStartedAtMs(statusRes.startedAtMs);
+        if (statusRes.updatedAtMs) setJobUpdatedAtMs(statusRes.updatedAtMs);
+        setJobFinishedAtMs(statusRes.finishedAtMs ?? null);
+        setJobStatus(statusRes.status);
         if (statusRes.status === "running" || statusRes.status === "paused") {
           setRunning(true);
           setOptimizerPaused(statusRes.status === "paused");
@@ -416,9 +425,14 @@ export function OptimizerPage() {
   }, [excludeNegative]);
 
   useEffect(() => {
+    localStorage.setItem(REMEMBER_NEGATIVES_STORAGE_KEY, rememberNegatives ? "1" : "0");
+  }, [rememberNegatives]);
+
+  useEffect(() => {
+    if (jobStatus !== "running") return;
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [jobStatus]);
 
   async function onStartRecording() {
     setError(null);
@@ -539,11 +553,15 @@ export function OptimizerPage() {
         directionMode,
         ...(optTfMin.trim() ? { optTfMin: Number(optTfMin) } : {}),
         excludeNegative,
+        rememberNegatives,
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
       });
       setJobId(runRes.jobId);
       setJobStartedAtMs(Date.now());
+      setJobUpdatedAtMs(Date.now());
+      setJobFinishedAtMs(null);
+      setJobStatus("running");
       setOptimizerPaused(false);
       setJobPrecisionById((prev) => ({ ...prev, [runRes.jobId]: precision }));
       setResults([]);
@@ -563,6 +581,10 @@ export function OptimizerPage() {
         setDone((prev) => (Math.abs(prev - res.done) >= 0.01 ? res.done : prev));
         setTotal((prev) => (Math.abs(prev - res.total) >= 0.01 ? res.total : prev));
         if (res.startedAtMs) setJobStartedAtMs(res.startedAtMs);
+        if (res.updatedAtMs) setJobUpdatedAtMs(res.updatedAtMs);
+        setJobFinishedAtMs(res.finishedAtMs ?? null);
+        setJobStatus(res.status);
+        setNowMs(Date.now());
         setOptimizerPaused(res.status === "paused");
         await fetchResults(page, sortKey, sortDir, jobId);
         if (res.status === "error") {
@@ -669,6 +691,14 @@ export function OptimizerPage() {
   }
 
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const isRunningStatus = jobStatus === "running";
+  const endMs = !jobStartedAtMs
+    ? null
+    : isRunningStatus
+      ? nowMs
+      : (jobFinishedAtMs ?? jobUpdatedAtMs ?? jobStartedAtMs);
+  const elapsedSec = endMs == null || !jobStartedAtMs ? null : Math.max(0, (endMs - jobStartedAtMs) / 1000);
+  const etaSec = isRunningStatus && done > 0.01 && elapsedSec != null ? elapsedSec * (100 / done - 1) : null;
 
   return (
     <>
@@ -741,6 +771,9 @@ export function OptimizerPage() {
                 <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
               </Form.Group>
               <Form.Group>
+                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives for this tape" checked={rememberNegatives} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
+              </Form.Group>
+              <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>direction</Form.Label>
                 <Form.Select value={directionMode} onChange={(e) => setDirectionMode(e.currentTarget.value as "both" | "long" | "short")}>
                   <option value="both">Both</option>
@@ -810,7 +843,8 @@ export function OptimizerPage() {
             </div>
 
             {jobId ? <><ProgressBar now={running ? done : 100} label={`${running ? done.toFixed(2) : "100.00"}%`} title={`progress ${done.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
-            <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(jobStartedAtMs ? (nowMs - jobStartedAtMs) / 1000 : null)}</b> · ETA: <b>{done <= 0.01 || !jobStartedAtMs ? "-" : formatDuration(((nowMs - jobStartedAtMs) / 1000) * (100 / done - 1))}</b></div></> : null}
+            <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec)}</b> · ETA: <b>{isRunningStatus ? formatDuration(etaSec) : "-"}</b></div>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div></> : null}
 
             <Table striped bordered hover size="sm">
               <thead>

@@ -41,6 +41,9 @@ type OptimizerJob = {
   processedCandidates: number;
   totalCandidates: number;
   excludeNegative: boolean;
+  rememberNegatives: boolean;
+  runKey: string;
+  finishedAtMs: number | null;
 };
 
 type OptimizerCheckpoint = {
@@ -56,6 +59,9 @@ type OptimizerCheckpoint = {
   minTrades: number;
   startedAtMs: number;
   excludeNegative: boolean;
+  rememberNegatives: boolean;
+  runKey: string;
+  finishedAtMs: number | null;
 };
 
 const optimizerJobs = new Map<string, OptimizerJob>();
@@ -86,6 +92,9 @@ function writeCheckpoint(jobId: string, job: OptimizerJob) {
     minTrades: job.minTrades,
     startedAtMs: job.startedAtMs,
     excludeNegative: job.excludeNegative,
+    rememberNegatives: job.rememberNegatives,
+    runKey: job.runKey,
+    finishedAtMs: job.finishedAtMs,
   };
   fs.writeFileSync(checkpointPath(jobId), JSON.stringify(checkpoint, null, 2), "utf8");
 }
@@ -118,6 +127,9 @@ function restoreLatestCheckpoint() {
       processedCandidates: Number(parsed.processedCandidates) || 0,
       totalCandidates: Number(parsed.totalCandidates) || 0,
       excludeNegative: Boolean(parsed.excludeNegative),
+      rememberNegatives: Boolean((parsed as any).rememberNegatives),
+      runKey: typeof (parsed as any).runKey === "string" ? (parsed as any).runKey : "",
+      finishedAtMs: typeof (parsed as any).finishedAtMs === "number" ? (parsed as any).finishedAtMs : null,
       ...(parsed.message ? { message: parsed.message } : {}),
     };
     optimizerJobs.set(parsed.jobId, job);
@@ -509,6 +521,8 @@ const now = Date.now();
     const minTradesRaw = body?.minTrades;
     const minTrades = minTradesRaw == null || String(minTradesRaw).trim() === "" ? 1 : Math.floor(Number(minTradesRaw));
     const excludeNegative = Boolean(body?.excludeNegative);
+    const rememberNegatives = Boolean(body?.rememberNegatives);
+    const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${directionMode}|tf=${optTfMin ?? 0}`;
 
     if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
       reply.code(400);
@@ -566,6 +580,9 @@ const now = Date.now();
       processedCandidates: 0,
       totalCandidates,
       excludeNegative,
+      rememberNegatives,
+      runKey,
+      finishedAtMs: null,
     };
     optimizerJobs.set(jobId, job);
     rememberOptimizerJob(jobId);
@@ -584,6 +601,7 @@ const now = Date.now();
             directionMode: directionMode as "both" | "long" | "short",
             ...(optTfMin !== undefined ? { optTfMin } : {}),
             excludeNegative,
+            rememberNegatives,
             onProgress: (done, totalDone, partialResults) => {
               const rawPct = totalDone > 0 ? (done / totalDone) * 100 : 0;
               const pct2 = Math.max(0, Math.min(100, Math.round(rawPct * 100) / 100));
@@ -593,7 +611,8 @@ const now = Date.now();
               job.processedCandidates = done;
               job.totalCandidates = totalDone;
               job.updatedAtMs = Date.now();
-              job.results = partialResults.slice(0, 200);
+              job.results = partialResults.filter((r) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 200);
+              job.finishedAtMs = null;
               const now = Date.now();
               if (done % 20 === 0 || now - lastCheckpointMs >= 10_000 || pct2 >= 100) {
                 writeCheckpoint(jobId, job);
@@ -622,27 +641,32 @@ const now = Date.now();
             },
           });
 
-          job.results = (output.results ?? []).slice(0, 2000);
+          job.results = (output.results ?? []).filter((r) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 2000);
           job.updatedAtMs = Date.now();
           if (output.cancelled || job.cancelRequested) {
             job.status = "cancelled";
+            if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
             job.message = "Optimization cancelled.";
           } else {
             job.lastPct = 100;
             job.done = 100;
             job.total = 100;
             job.status = "done";
+            if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
             const totalStored = Array.isArray(job.results) ? job.results.length : 0;
             const tradedCandidates = totalStored > 0 ? job.results.filter((r) => (r?.trades ?? 0) > 0).length : 0;
             const tradedSummary = `Min trades filter: ${minTrades} | Candidates with trades>0: ${tradedCandidates}/${totalStored}`;
             if (output.diagnostics && output.diagnostics.decisionsOk === 0 && output.diagnostics.decisionsNoRefs > 0) {
               job.message = `Replay diagnostics: decisionsOk=0, decisionsNoRefs=${output.diagnostics.decisionsNoRefs}.`;
             }
-            job.message = job.message ? `${job.message} | ${tradedSummary}` : tradedSummary;
+            const blacklistSummary = output.blacklist ? `Blacklisted: ${output.blacklist.count} (skipped ${output.blacklist.skipped})` : null;
+            const summaryParts = [job.message, tradedSummary, blacklistSummary].filter(Boolean);
+            job.message = summaryParts.join(" | ");
           }
           writeCheckpoint(jobId, job);
         } catch (e: any) {
           job.status = "error";
+          if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
           job.updatedAtMs = Date.now();
           job.message = String(e?.message ?? e);
           writeCheckpoint(jobId, job);
@@ -721,6 +745,7 @@ const now = Date.now();
       done: job.done,
       startedAtMs: job.startedAtMs,
       updatedAtMs: job.updatedAtMs,
+      finishedAtMs: job.finishedAtMs,
       ...(job.message ? { message: job.message } : {}),
     };
   });

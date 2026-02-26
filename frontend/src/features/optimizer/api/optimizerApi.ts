@@ -104,14 +104,15 @@ export async function runOptimizationJob(payload: {
   directionMode?: "both" | "long" | "short";
   optTfMin?: number;
   excludeNegative?: boolean;
+  rememberNegatives?: boolean;
 }): Promise<{ jobId: string }> {
   const base = getApiBase();
   return await postJson<{ jobId: string }>(`${base}/api/optimizer/run`, payload);
 }
 
-export async function getJobStatus(jobId: string): Promise<{ status: "running" | "paused" | "done" | "error" | "cancelled"; total: number; done: number; startedAtMs?: number; updatedAtMs?: number; message?: string }> {
+export async function getJobStatus(jobId: string): Promise<{ status: "running" | "paused" | "done" | "error" | "cancelled"; total: number; done: number; startedAtMs?: number; updatedAtMs?: number; finishedAtMs?: number | null; message?: string }> {
   const base = getApiBase();
-  return await getJson<{ status: "running" | "paused" | "done" | "error" | "cancelled"; total: number; done: number; startedAtMs?: number; updatedAtMs?: number; message?: string }>(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/status`);
+  return await getJson<{ status: "running" | "paused" | "done" | "error" | "cancelled"; total: number; done: number; startedAtMs?: number; updatedAtMs?: number; finishedAtMs?: number | null; message?: string }>(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/status`);
 }
 
 export async function getCurrentJob(): Promise<{ jobId: string | null }> {
