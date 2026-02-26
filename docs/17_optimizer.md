@@ -1,113 +1,124 @@
-# 17 Optimizer (Tape recording + Replay batch search)
+# 17 Optimizer (Tape recording + Replay search)
 
-Last update: 2026-02-25
+Last update: 2026-02-26
 
-This document describes the **Optimizer** feature added to help tune paper-trading parameters using a recorded market “tape” and deterministic replay.
+This document describes the Optimizer feature used to tune paper-trading parameters via recorded market “tapes” and deterministic replay.
 
 ## Goals
-- Record a lightweight market tape (JSONL) while the runtime session is **RUNNING**.
-- Run a batch optimization (random search) over many parameter candidates on the **same** tape(s) to compare configs fairly.
-- Keep the main Dashboard behavior unchanged.
+- Record market tapes (JSONL) while runtime session is **RUNNING**.
+- Run random-search optimization over many parameter candidates on one or more tape files.
+- Keep backend responsive during heavy optimization (worker thread).
+- Support long runs: pause/resume/cancel, checkpoints, and looped execution.
 
 ## UI
-- Route: `/optimizer`
-- Main sections:
-  - Tape recording (start/stop + tapes list)
-  - Optimization inputs (candidates/seed + ranges)
-  - Results table (server-side sorting + pagination)
+Route: `/optimizer`
 
-## Tape directory (server-side)
-Optimizer uses a configurable server filesystem directory:
-- Setting name: `tapesDir`
-- Stored in: `backend/data/optimizer_settings.json`
-- UI provides a modal to set the directory path.
+Main sections:
+- Tape list (server directory)
+- Optimization inputs (candidates/seed/tf/direction + filters + loop controls)
+- Progress (0.01% precision) + per-run elapsed/ETA + loop elapsed
+- Results table (live incremental updates)
 
-Important:
-- This is a **server** directory path (backend filesystem). The UI cannot use a browser folder picker to select server paths.
+## Tape directory
+- Setting: `tapesDir` (backend filesystem path)
+- Stored: `backend/data/optimizer_settings.json`
 
-## Tape recording
-### Recording conditions
-- Recording may start only when session state is **RUNNING**.
-- Recording stops only by explicit Stop action.
+## Tape recording (automatic)
+### When it records
+- Recording is **automatic**:
+  - starts on transition into `RUNNING`
+  - stops on any non-RUNNING state (STOPPING/STOPPED/PAUSED)
 
 ### JSONL format
-Each tape is a JSONL file. First line is always meta:
+First line is always:
 - `type: "meta"`
-- Includes tape id, createdAt, sessionId, applied universe id, klineTfMin, and symbols.
+- Includes: tapeId, createdAt, sessionId, universeSelectedId, klineTfMin, symbols
 
 Other line types:
 - `type: "ticker"`
-- `type: "kline_confirm"` (only confirmed candles)
+- `type: "kline_confirm"` (confirmed candles, when available)
 
-### Ticker payload rules (important)
-- **Full-only**: ticker lines are written only when all fields are available and finite:
-  - `markPrice`
-  - `openInterestValue`
-  - `fundingRate`
-  - `nextFundingTime`
-- **Per-symbol throttle**: a given symbol is recorded at most once per **5000ms**.
+### Ticker payload rules
+- **Full-only**: write ticker only if all fields are present and finite:
+  - `markPrice`, `openInterestValue`, `fundingRate`, `nextFundingTime`
+- **Per-symbol throttle**: record each symbol at most once per **5000ms**
 
-This keeps tapes compact and ensures replay always has complete market snapshots.
+### Rotation (hard cap)
+- Max tape segment size: **90 MB**
+- When the active tape reaches the cap, recorder rotates to:
+  - `...-seg2`, `...-seg3`, ...
+- Recording stays ON (no session interruption).
 
 ## Optimization run
-### Inputs
-- `candidates` — number of parameter sets to try.
-- `seed` — deterministic RNG seed for random search.
-- `ranges` — inclusive min/max for each parameter:
-  - `priceTh` → `signals.priceThresholdPct`
-  - `oivTh` → `signals.oivThresholdPct`
-  - `tp` → `paper.tpRoiPct`
-  - `sl` → `paper.slRoiPct`
-  - `offset` → `paper.entryOffsetPct`
+### Core inputs
+- `candidates`: how many candidates to evaluate
+- `seed`: RNG seed (base seed)
+- `directionMode`: `both | long | short`
+- `tf (opt)`: optimization timeframe override (used for replay/ref bucketing)
 
-### Dynamic precision (step) per parameter
-Quantization step is derived from the user-entered Min/Max strings:
-- For each param:
-  - `decimals = max(decimals(minStr), decimals(maxStr))`
-  - `step = 10^-decimals`
-Examples:
-- min `1`, max `6.000` → decimals=3 → step `0.001`
-- min `1.0`, max `6.0` → decimals=1 → step `0.1`
+### Filters
+- `minTrades`: require at least N closed trades per candidate (server-side)
+- `excludeNegative`: hide negative netPnl candidates from preview/final lists
+- `rememberNegatives`: persist a per-runKey blacklist (skip previously negative candidates on next runs)
 
-The frontend computes precision from strings and sends it to backend for candidate generation, formatting, and Copy-to-settings.
+### Effective seed shifting (repeat runs)
+When `rememberNegatives` is enabled:
+- A persistent per-runKey `runIndex` is stored in the blacklist file.
+- Each run uses:
+  - `effectiveSeed = baseSeed + runIndex`
+- runIndex increments on each run start for the same runKey.
 
-### Multi-tape
-UI can select multiple tapes.
-- For each candidate, the runner replays it on every selected tape and aggregates:
-  - `netPnlTotal = sum(netPnl per tape)`
-  - `tradesTotal = sum(trades per tape)`
-  - `winsTotal = sum(wins per tape)`
-  - `winRatePct = winsTotal / tradesTotal * 100` (when tradesTotal > 0)
+### Run key
+Blacklist and seed shifting are scoped by:
+- selected tapeIds (sorted)
+- directionMode
+- tf(opt)
 
-### Jobs + progress + responsiveness
-Optimization runs as an in-memory job:
-- `POST /api/optimizer/run` returns `{ jobId }` quickly.
-- Backend yields to the event loop at integer percent boundaries (1..100) so the server stays responsive.
-- UI polls `/status` to show progress and then fetches paged results.
+(runKey format is deterministic; stored in blacklist JSON.)
 
-Persistence:
-- Jobs continue on backend while running.
-- UI restores the current/last job on mount via `/api/optimizer/jobs/current`.
+### Job model
+- Optimization runs as a job with:
+  - progress `donePercent` in range 0.00..100.00
+  - per-run elapsed + ETA (ETA disabled when not RUNNING)
+  - pause/resume/cancel
+
+### Worker thread
+- Heavy replay executes in a **worker thread**.
+- Main backend thread remains responsive to HTTP/WS.
+
+### Incremental results + checkpoints
+- Results are available incrementally during the run (preview top-K).
+- Checkpoints are written to `backend/data/optimizer_checkpoints` using atomic writes.
+- Retention is enforced (keeps a bounded number of recent checkpoint files).
+- After backend restart, recovered job/loop state is surfaced as paused-safe (manual resume).
+
+## Loop execution
+Optimizer supports repeated runs:
+- Run N times (`runsCount`)
+- Or infinite loop until Stop
+
+Loop state is persisted to disk and exposes:
+- run index (i/N)
+- loop elapsed
 
 ## Results table
-- Server-side sorting across all pages.
-- Page size fixed at 50.
-- Params are split into columns:
-  - `priceTh`, `oivTh`, `tp`, `sl`, `offset`
-  - Each sortable.
+- In loop mode: results are aggregated cumulatively (table grows/updates as runs find candidates).
+- In single-run mode: table reflects the current run’s results (may clear at start only under explicit UI rule).
+
+Each result row includes:
+- netPnl, trades, winRate
+- expectancy, profitFactor, max drawdown
+- execution counters (placed/filled/expired)
+- params (priceTh/oivTh/tp/sl/offset/timeoutSec/rearmMs)
 
 ## Copy to settings
-- Each result row has `Copy to settings`.
-- Clicking it writes a pending config patch to localStorage.
-- Config page reads and merges this patch into **draft** (no auto-apply).
-- Operator must still click **Apply**.
+- “Copy to settings” writes a pending patch to localStorage.
+- Config page merges it into draft; operator applies manually.
 
-## Local persistence (frontend)
-Optimizer stores operator inputs in localStorage:
-- ranges (autosave)
-- `candidates` and `seed`
-This prevents resets on navigation.
+## Health endpoints
+- `GET /api/doctor` returns best-effort environment checks:
+  - dataDir paths/writable
+  - free bytes (best-effort)
+  - warnings (e.g., low disk)
+- `GET /api/soak/last` returns last soak snapshot cached in memory.
 
-## Limitations / known constraints
-- Optimizer jobs are stored in memory: backend restart clears job state.
-- Tape directory is a server path; UI cannot browse the server filesystem.

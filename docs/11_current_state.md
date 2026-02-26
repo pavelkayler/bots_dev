@@ -1,6 +1,6 @@
 # 11 Current State (what exists now) + Next Actions
 
-Last update: 2026-02-25
+Last update: 2026-02-26
 
 ## What the project is
 A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper testing and parameter iteration:
@@ -17,6 +17,8 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
   - `GET /api/session/status`
   - `POST /api/session/start`
   - `POST /api/session/stop`
+  - `POST /api/session/pause`
+  - `POST /api/session/resume`
   - `GET /api/session/summary` (+ download)
 - Each session creates:
   - `backend/data/sessions/<sessionId>/events.jsonl`
@@ -24,10 +26,16 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
 
 ### Streams lifecycle (important)
 - Backend connects to Bybit public WS **only while session is RUNNING**.
-- On STOPPING/STOPPED:
+- On STOPPING/STOPPED/PAUSED:
   - upstream WS is closed
   - reconnect timers are cancelled
   - LiveRows `rows` are pushed as empty array (operator sees no tickers while stopped)
+
+### Manual Pause/Resume (runtime)
+- **Pause** is manual-only and is intended for “close laptop / no internet for a while”.
+- Semantics:
+  - `RUNNING -> PAUSING -> PAUSED`: upstream closed, timers cancelled, `rows=[]`.
+  - `PAUSED -> RESUMING -> RUNNING`: cold re-subscribe to upstream + restart timers.
 
 ### Dashboard (operator view)
 - Header shows:
@@ -55,20 +63,14 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
   - trades table supports global sort + pagination (50/100/200)
 
 ### Config + Presets
-- Config is edited as **draft** and applied via Apply / Apply and Run.
+- Config is edited as **draft** and applied via **Apply**.
 - Numeric inputs allow empty while typing; Apply validates and blocks if required fields are empty/invalid.
 - Apply gating:
   - disabled if Universe not selected
   - disabled if draft == applied
   - disabled if invalid
-- Apply and Run (was “Apply and Reboot”):
-  - Apply config patch, then:
-    - if RUNNING: STOP → START
-    - if STOPPED: START
-  - UI suppresses the intermediate stop-summary flash.
-- Start and Record:
-  - performs Apply-and-Run flow
-  - then starts Optimizer tape recording (new tape)
+
+**Note:** Apply-and-Run / Start-and-Record buttons were removed. Recording is automatic (see below).
 - Presets:
   - selector + Save (overwrite) + Remove
   - option label includes timeframe: `... [tf=<klineTfMin>m]`
@@ -101,31 +103,33 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
 ### Optimizer (/optimizer)
 See `docs/17_optimizer.md`.
 High-level:
-- Tape recording (RUNNING-only)
-  - configurable tapes directory (`tapesDir`)
-  - ticker writes are full-only (4 required fields) and throttled per symbol (>= 5s)
-- Optimization runs as a job:
-  - job continues on backend across navigation/reload
-  - UI restores current/last job and fetches results when done
-  - server-side sorting + pagination
-- Multi-tape selection:
-  - candidate is replayed across all selected tapes and results are aggregated
-- Operator inputs are persisted:
-  - ranges + candidates + seed are auto-saved and restored
-- Params are displayed as separate sortable columns.
 
-## Known issues / tech debt (as of 2026-02-25)
+- **Tape recording (RUNNING-only) is automatic**:
+  - starts on every transition into `RUNNING`
+  - stops on non-RUNNING (STOPPING/STOPPED/PAUSED)
+  - configurable server directory (`tapesDir`)
+  - ticker writes are full-only and per-symbol throttled (>= 5s)
+  - **rotation:** max 90 MB per tape segment; creates `-seg2`, `-seg3`, ...
+
+- Optimization:
+  - job-based API with **pause/resume/cancel**
+  - runs heavy compute in a **worker thread** (main server stays responsive)
+  - progress is float percent with **0.01** precision
+  - incremental preview results + checkpoints to disk + recovery to paused-safe state after restart
+  - optional filters: `minTrades`, `excludeNegative`, `rememberNegatives` (persistent per-runKey blacklist)
+  - effectiveSeed shifts per runKey runIndex when rememberNegatives is enabled
+  - loop controller: run N times or infinite until stop; per-tape `runsTotal` counter
+
+- Health:
+  - `/api/doctor` shows disk/writable/ports warnings (incl. low disk)
+  - soak snapshots written once per minute while RUNNING; `/api/soak/last` exposes last snapshot
+
+## Known issues / tech debt (as of 2026-02-26)
 - Local `npm run build` may fail due to unrelated pre-existing TypeScript typing issues.
 - No automated tests yet (WS contract + config validation + paper broker).
-- Optimizer jobs are in-memory (backend restart clears job state).
+- Frontend build may still fail due to unrelated historical TS issues; only fix when explicitly requested.
 
 ## Next actions (recommended)
-1) Fix TS build errors on both backend + frontend (make CI green).
-2) Add minimal unit tests for:
-   - config validation/normalization (incl. requireFundingSign enforcement)
-   - WS message typing contract
-   - paper fee/funding accounting invariants
-3) Optimizer hardening:
-   - persist job state/results to disk (optional)
-   - add cancellation
-   - add export of results (CSV/JSON)
+1) Keep tightening stability guards: low-disk behavior, backpressure behavior, and long-run soak checks.
+2) Add minimal CI: backend build always green; frontend build when TS debt is addressed.
+3) Add lightweight automated tests for config normalization + worker message contract.

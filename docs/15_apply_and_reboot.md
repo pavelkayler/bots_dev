@@ -1,27 +1,37 @@
-# 15 Apply & Run (Config)
+# 15 Apply (Config) + Session controls
 
-Last update: 2026-02-25
+Last update: 2026-02-26
 
-This page describes the operator-facing config application controls.
+This page describes operator-facing config application and session lifecycle controls.
 
-## Buttons
+## Config apply
 - **Apply**
   - validates draft
   - applies config patch
-  - does not start/stop sessions
+  - does **not** auto-start/stop sessions
 
-- **Apply and Run** (was “Apply and Reboot”)
-  - Apply config patch
-  - then:
-    - if RUNNING: STOP → START
-    - if STOPPED: START
+Notes:
+- Numeric inputs may be temporarily empty while typing.
+- Apply validates; if required fields are empty/invalid, Apply is blocked.
+- `signals.requireFundingSign` is always forced true by backend normalization/back-compat (UI toggle removed).
 
-- **Start and Record**
-  - runs the same Apply-and-Run flow
-  - then starts Optimizer tape recording (creates a new tape)
-  - recorder start is allowed only when session is RUNNING
+## Session controls (runtime)
+Session lifecycle controls are in the header (common across pages):
+- **Start** (when STOPPED)
+- **Stop** (when RUNNING)
+- **Pause** (manual-only; intended for “close laptop / no internet”) 
+- **Resume** (from PAUSED)
 
-## UX rule: suppress stop-summary flash
-During Apply-and-Run, UI suppresses the intermediate STOP summary refresh, because the stop is immediately followed by a start.
+### Semantics
+- `RUNNING` is the only state where upstream Bybit WS is connected.
+- On `STOPPING/STOPPED/PAUSED`:
+  - upstream WS is closed
+  - timers are cancelled
+  - live rows are cleared (`rows=[]`)
 
-This keeps operator focus on the new run.
+## Tape recording (automatic)
+Optimizer tape recording is **automatic**:
+- starts when session enters `RUNNING`
+- stops when session leaves `RUNNING` (STOPPING/STOPPED/PAUSED)
+
+There are no separate “Start and Record” or “Apply and Run” buttons.

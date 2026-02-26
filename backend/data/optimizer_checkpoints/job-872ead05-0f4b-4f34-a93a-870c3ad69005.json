@@ -1,0 +1,17 @@
+{
+  "jobId": "872ead05-0f4b-4f34-a93a-870c3ad69005",
+  "createdAt": 1772131292175,
+  "updatedAt": 1772131292284,
+  "status": "error",
+  "donePercent": 0,
+  "processedCandidates": 0,
+  "totalCandidates": 200,
+  "topKResults": [],
+  "message": "Cannot find module 'C:\\Users\\foxen\\Desktop\\bots_dev\\backend\\src\\optimizer\\worker\\optimizerWorker.js' imported from C:\\Users\\foxen\\Desktop\\bots_dev\\backend\\",
+  "minTrades": 1,
+  "startedAtMs": 1772131292175,
+  "excludeNegative": true,
+  "rememberNegatives": true,
+  "runKey": "tapes=tape-2026-02-25T12-14-40-332Z,tape-2026-02-25T13-39-14-502Z,tape-2026-02-25T13-46-38-162Z|dir=both|tf=0",
+  "finishedAtMs": 1772131292284
+}

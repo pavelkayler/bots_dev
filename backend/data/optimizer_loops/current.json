@@ -1,0 +1,66 @@
+{
+  "loopId": "6714b720-da71-4fca-9824-66c7b30231f6",
+  "isRunning": true,
+  "isPaused": false,
+  "isInfinite": true,
+  "runsCount": 3,
+  "runIndex": 2021,
+  "createdAtMs": 1772131061843,
+  "updatedAtMs": 1772131292633,
+  "finishedAtMs": null,
+  "lastJobId": "904b2bee-7e38-4337-b18b-22c1ba331ce2",
+  "runPayload": {
+    "tapeIds": [
+      "tape-2026-02-25T13-46-38-162Z",
+      "tape-2026-02-25T13-39-14-502Z",
+      "tape-2026-02-25T12-14-40-332Z"
+    ],
+    "candidates": 200,
+    "seed": 1,
+    "minTrades": 1,
+    "directionMode": "both",
+    "excludeNegative": true,
+    "rememberNegatives": true,
+    "ranges": {
+      "priceTh": {
+        "min": 0.5,
+        "max": 6
+      },
+      "oivTh": {
+        "min": 0.5,
+        "max": 15
+      },
+      "tp": {
+        "min": 2,
+        "max": 12
+      },
+      "sl": {
+        "min": 2,
+        "max": 12
+      },
+      "offset": {
+        "min": 0.001,
+        "max": 1
+      },
+      "timeoutSec": {
+        "min": 5,
+        "max": 60
+      },
+      "rearmMs": {
+        "min": 0,
+        "max": 3000
+      }
+    },
+    "precision": {
+      "priceTh": 2,
+      "oivTh": 2,
+      "tp": 1,
+      "sl": 1,
+      "offset": 3,
+      "timeoutSec": 0,
+      "rearmMs": 0
+    },
+    "runsCount": 3,
+    "infinite": true
+  }
+}

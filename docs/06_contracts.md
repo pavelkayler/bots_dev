@@ -2,6 +2,8 @@
 
 Last update: 2026-02-25
 
+> Note: project evolved after 2026-02-25. New/updated contracts are appended at the end of this file (2026-02-26).
+
 This document describes the contract the UI relies on.
 
 ## REST API
@@ -231,3 +233,43 @@ Snapshot payload includes (high level):
 Legacy / internal (UI no longer exposes):
 - `streams_toggle_request`
 - `streams_apply_subscriptions_request`
+
+---
+
+## Addendum (2026-02-26)
+
+### Session states
+Runtime session states now include manual pause/resume:
+- `RUNNING`, `STOPPING`, `STOPPED`
+- `PAUSING`, `PAUSED`, `RESUMING`
+
+Contract:
+- Upstream Bybit WS is connected **only** in `RUNNING`.
+- In `STOPPING/STOPPED/PAUSED`: upstream closed, timers cancelled, `rows=[]`.
+
+### REST additions
+Session:
+- `POST /api/session/pause`
+- `POST /api/session/resume`
+
+Optimizer (job):
+- `POST /api/optimizer/jobs/current/pause`
+- `POST /api/optimizer/jobs/current/resume`
+- `POST /api/optimizer/jobs/current/cancel`
+
+Optimizer (loop):
+- `POST /api/optimizer/loop/start`
+- `POST /api/optimizer/loop/pause`
+- `POST /api/optimizer/loop/resume`
+- `POST /api/optimizer/loop/stop`
+- `GET /api/optimizer/loop/status`
+
+Health:
+- `GET /api/doctor`
+- `GET /api/soak/last`
+
+### Optimizer execution model
+- Heavy optimizer compute runs in a worker thread.
+- Main thread updates job state from worker messages.
+- Jobs/loops are persisted to disk with paused-safe recovery on backend restart.
+- Tape recording is automatic on entering RUNNING and rotates at 90MB segments.
