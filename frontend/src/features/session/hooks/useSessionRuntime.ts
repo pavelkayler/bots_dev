@@ -77,7 +77,7 @@ export function useSessionRuntime() {
   }
 
   const canStart = status.sessionState === "STOPPED" && busy === "none";
-  const canStop = (status.sessionState === "RUNNING" || status.sessionState === "PAUSED") && busy === "none";
+  const canStop = (status.sessionState === "RUNNING" || status.sessionState === "PAUSED" || status.sessionState === "RESUMING") && busy === "none";
   const canPause = status.sessionState === "RUNNING" && busy === "none";
   const canResume = status.sessionState === "PAUSED" && busy === "none";
 

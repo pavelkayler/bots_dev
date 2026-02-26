@@ -3,6 +3,7 @@ import type { SessionState } from "../../../shared/types/domain";
 import { getSummaryDownloadUrl } from "../api/summaryApi";
 import { useSessionSummary } from "../hooks/useSessionSummary";
 import { fmtTime } from "../../../shared/utils/format";
+import { getRunPackManifestUrl } from "../../session/api/sessionApi";
 import { SummaryCard } from "./SummaryCard";
 import { TradesTable } from "./TradesTable";
 
@@ -34,6 +35,14 @@ export function SessionSummaryPanel({ sessionState, sessionId, suppressStopRefre
             disabled={!data}
           >
             Download
+          </Button>
+          <Button
+            size="sm"
+            variant="outline-secondary"
+            onClick={() => window.open(getRunPackManifestUrl(), "_blank", "noopener,noreferrer")}
+            disabled={!sessionId}
+          >
+            Run pack
           </Button>
         </div>
       </Card.Header>

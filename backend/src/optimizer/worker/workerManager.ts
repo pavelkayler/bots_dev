@@ -10,11 +10,17 @@ export type WorkerManagerHandlers = {
 class OptimizerWorkerManager {
   private workers = new Map<string, Worker>();
 
+  private resolveWorkerEntry() {
+    const currentPath = import.meta.url;
+    const inDist = currentPath.includes("/dist/") || currentPath.includes("\\dist\\");
+    return new URL(inDist ? "./optimizerWorker.js" : "./optimizerWorker.ts", import.meta.url);
+  }
+
   start(jobId: string, runPayload: any, handlers: WorkerManagerHandlers) {
     if (this.workers.size > 0) {
       throw new Error("optimizer_worker_busy");
     }
-    const worker = new Worker(new URL("./optimizerWorker.js", import.meta.url));
+    const worker = new Worker(this.resolveWorkerEntry(), { type: "module" } as any);
     this.workers.set(jobId, worker);
 
     worker.on("message", (msg) => {

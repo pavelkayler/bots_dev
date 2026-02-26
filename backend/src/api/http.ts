@@ -47,6 +47,7 @@ type OptimizerJob = {
   rememberNegatives: boolean;
   runKey: string;
   finishedAtMs: number | null;
+  runPayload: Record<string, unknown> | null;
 };
 
 type OptimizerCheckpoint = {
@@ -173,6 +174,7 @@ function restoreLatestCheckpoint() {
       rememberNegatives: Boolean((parsed as any).rememberNegatives),
       runKey: typeof (parsed as any).runKey === "string" ? (parsed as any).runKey : "",
       finishedAtMs: typeof (parsed as any).finishedAtMs === "number" ? (parsed as any).finishedAtMs : null,
+      runPayload: null,
       ...(parsed.message ? { message: parsed.message } : {}),
     };
     optimizerJobs.set(parsed.jobId, job);
@@ -244,6 +246,46 @@ function parsePrecision(raw: any): Partial<OptimizerPrecision> | undefined {
     parsed[key] = value;
   }
   return Object.keys(parsed).length ? parsed : undefined;
+}
+
+function parseOptimizerSort(query: any): { sortKey: OptimizerSortKey; sortDir: OptimizerSortDir } {
+  const sortKey = ["netPnl", "trades", "winRatePct", "expectancy", "profitFactor", "maxDrawdownUsdt", "ordersPlaced", "ordersFilled", "ordersExpired", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"].includes(String(query.sortKey))
+    ? (String(query.sortKey) as OptimizerSortKey)
+    : "netPnl";
+  const sortDir = String(query.sortDir) === "asc" ? "asc" : "desc";
+  return { sortKey, sortDir: sortDir as OptimizerSortDir };
+}
+
+function getOptimizerJobResultsSorted(job: OptimizerJob, query: any) {
+  const { sortKey, sortDir } = parseOptimizerSort(query);
+  const filtered = job.minTrades > 0 ? job.results.filter((r) => (r?.trades ?? 0) >= job.minTrades) : job.results;
+  const sorted = sortOptimizationResults(filtered, sortKey, sortDir);
+  return { sorted, sortKey, sortDir };
+}
+
+function csvEscape(value: unknown): string {
+  const str = String(value ?? "");
+  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function buildOptimizerCsv(rows: Array<OptimizerResult & { rank: number }>): string {
+  const headers = [
+    "rank","netPnl","trades","winRatePct","expectancy","profitFactor","maxDrawdownUsdt","signalsOk","decisionsNoRefs",
+    "ordersPlaced","ordersFilled","ordersExpired","closesTp","closesSl","closesForce",
+    "priceThresholdPct","oivThresholdPct","entryOffsetPct","tpRoiPct","slRoiPct","timeoutSec","rearmMs"
+  ];
+  const lines = [headers.join(',')];
+  for (const row of rows) {
+    lines.push([
+      row.rank,row.netPnl,row.trades,row.winRatePct,row.expectancy,row.profitFactor,row.maxDrawdownUsdt,row.signalsOk,row.decisionsNoRefs,
+      row.ordersPlaced,row.ordersFilled,row.ordersExpired,row.closesTp,row.closesSl,row.closesForce,
+      row.params.priceThresholdPct,row.params.oivThresholdPct,row.params.entryOffsetPct,row.params.tpRoiPct,row.params.slRoiPct,row.params.timeoutSec,row.params.rearmMs
+    ].map(csvEscape).join(','));
+  }
+  return lines.join("\n");
 }
 
 function safeBody(reqBody: any) {
@@ -700,22 +742,13 @@ const now = Date.now();
   });
 
   app.post("/api/optimizer/tapes/start", async (_req, reply) => {
-    try {
-      const { tapeId } = tapeRecorder.startRecording({ forceNew: true });
-      return { tapeId };
-    } catch (e: any) {
-      if (String(e?.message ?? e) === "session_not_running") {
-        reply.code(409);
-        return { error: "session_not_running", message: "Session must be RUNNING to start tape recording." };
-      }
-      reply.code(400);
-      return { error: "tape_start_failed", message: String(e?.message ?? e) };
-    }
+    reply.code(409);
+    return { error: "tape_recording_lifecycle_managed", message: "Tape recording is controlled by Session RUNNING state." };
   });
 
-  app.post("/api/optimizer/tapes/stop", async () => {
-    tapeRecorder.stopRecording();
-    return { ok: true as const };
+  app.post("/api/optimizer/tapes/stop", async (_req, reply) => {
+    reply.code(409);
+    return { error: "tape_recording_lifecycle_managed", message: "Tape recording is controlled by Session RUNNING state." };
   });
 
   app.get("/api/optimizer/status", async () => {
@@ -799,23 +832,28 @@ const now = Date.now();
       rememberNegatives,
       runKey,
       finishedAtMs: null,
+      runPayload: null,
     };
     optimizerJobs.set(jobId, job);
     rememberOptimizerJob(jobId);
     writeCheckpoint(jobId, job);
 
+    const runPayload = {
+      tapeIds,
+      candidates: totalCandidates,
+      seed: Number.isFinite(seed) ? seed : 1,
+      ...(ranges ? { ranges } : {}),
+      ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
+      directionMode: directionMode as "both" | "long" | "short",
+      ...(optTfMin !== undefined ? { optTfMin } : {}),
+      minTrades,
+      excludeNegative,
+      rememberNegatives,
+    };
+    job.runPayload = runPayload;
+
     try {
-      optimizerWorkerManager.start(jobId, {
-        tapeIds,
-        candidates: totalCandidates,
-        seed: Number.isFinite(seed) ? seed : 1,
-        ...(ranges ? { ranges } : {}),
-        ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
-        directionMode: directionMode as "both" | "long" | "short",
-        ...(optTfMin !== undefined ? { optTfMin } : {}),
-        excludeNegative,
-        rememberNegatives,
-      }, {
+      optimizerWorkerManager.start(jobId, runPayload, {
         onProgress: (msg) => {
           const pct2 = Number(msg.donePercent) || 0;
           job.lastPct = pct2;
@@ -1085,13 +1123,7 @@ const now = Date.now();
 
     const page = Math.max(1, Math.floor(Number(query.page) || 1));
     const pageSize = 50;
-    const sortKey = ["netPnl", "trades", "winRatePct", "expectancy", "profitFactor", "maxDrawdownUsdt", "ordersPlaced", "ordersFilled", "ordersExpired", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"].includes(String(query.sortKey))
-      ? (String(query.sortKey) as OptimizerSortKey)
-      : "netPnl";
-    const sortDir = String(query.sortDir) === "asc" ? "asc" : "desc";
-
-    const filtered = job.minTrades > 0 ? job.results.filter((r) => (r?.trades ?? 0) >= job.minTrades) : job.results;
-    const sorted = sortOptimizationResults(filtered, sortKey, sortDir as OptimizerSortDir);
+    const { sorted, sortKey, sortDir } = getOptimizerJobResultsSorted(job, query);
     const start = (page - 1) * pageSize;
     const pageRows = sorted.slice(start, start + pageSize).map((result, index) => ({
       rank: start + index + 1,
@@ -1106,6 +1138,65 @@ const now = Date.now();
       sortKey,
       sortDir,
       results: pageRows,
+    };
+  });
+
+
+  app.get("/api/optimizer/jobs/:jobId/export", async (req, reply) => {
+    const jobId = String((req.params as any).jobId ?? "");
+    const query = (req.query ?? {}) as any;
+    const format = String(query.format ?? "json").toLowerCase() === "csv" ? "csv" : "json";
+    const job = optimizerJobs.get(jobId);
+    if (!job) {
+      reply.code(404);
+      return { error: "optimizer_job_not_found" };
+    }
+
+    const { sorted } = getOptimizerJobResultsSorted(job, query);
+    const ranked = sorted.map((result, index) => ({ rank: index + 1, ...result }));
+    if (format === "csv") {
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header("Content-Disposition", `attachment; filename="optimizer-job-${jobId}.csv"`);
+      return reply.send(buildOptimizerCsv(ranked));
+    }
+
+    return {
+      jobId,
+      status: job.status,
+      startedAtMs: job.startedAtMs,
+      finishedAtMs: job.finishedAtMs,
+      runPayload: job.runPayload,
+      results: ranked,
+    };
+  });
+
+  app.get("/api/optimizer/jobs/current/export", async (req, reply) => {
+    const jobId = resolveCurrentOptimizerJobId();
+    if (!jobId) {
+      reply.code(404);
+      return { error: "optimizer_job_not_found" };
+    }
+    const query = (req.query ?? {}) as any;
+    const format = String(query.format ?? "json").toLowerCase() === "csv" ? "csv" : "json";
+    const job = optimizerJobs.get(jobId);
+    if (!job) {
+      reply.code(404);
+      return { error: "optimizer_job_not_found" };
+    }
+    const { sorted } = getOptimizerJobResultsSorted(job, query);
+    const ranked = sorted.map((result, index) => ({ rank: index + 1, ...result }));
+    if (format === "csv") {
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header("Content-Disposition", `attachment; filename="optimizer-job-${jobId}.csv"`);
+      return reply.send(buildOptimizerCsv(ranked));
+    }
+    return {
+      jobId,
+      status: job.status,
+      startedAtMs: job.startedAtMs,
+      finishedAtMs: job.finishedAtMs,
+      runPayload: job.runPayload,
+      results: ranked,
     };
   });
 
@@ -1193,5 +1284,32 @@ const now = Date.now();
 
     const stream = fs.createReadStream(st.eventsFile);
     return reply.send(stream);
+  });
+
+  app.get("/api/session/run-pack", async (_req, reply) => {
+    const st = runtime.getStatus();
+    const sessionId = st.sessionId;
+    const manifest = {
+      sessionId,
+      eventsUrl: "/api/session/events/download",
+      summaryUrl: "/api/session/summary/download",
+      configSnapshotUrl: "/api/session/run-pack/config/download",
+      universeSnapshotUrl: "/api/session/run-pack/universe/download",
+    };
+    reply.header("Content-Type", "application/json; charset=utf-8");
+    reply.header("Content-Disposition", 'attachment; filename="run-pack.json"');
+    return manifest;
+  });
+
+  app.get("/api/session/run-pack/config/download", async (_req, reply) => {
+    reply.header("Content-Type", "application/json; charset=utf-8");
+    reply.header("Content-Disposition", 'attachment; filename="run-pack-config.json"');
+    return configStore.get();
+  });
+
+  app.get("/api/session/run-pack/universe/download", async (_req, reply) => {
+    reply.header("Content-Type", "application/json; charset=utf-8");
+    reply.header("Content-Disposition", 'attachment; filename="run-pack-universe.json"');
+    return configStore.get().universe;
   });
 }

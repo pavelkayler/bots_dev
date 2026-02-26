@@ -23,7 +23,7 @@ export function HeaderBar(props: Props) {
   const { conn, sessionState, wsUrl, lastServerTime, streams, canStart, canStop, canPause, canResume, busy, onStart, onStop, onPause, onResume } = props;
 
   const connVariant = conn === "CONNECTED" ? "success" : conn === "CONNECTING" || conn === "RECONNECTING" ? "warning" : "danger";
-  const sessionVariant = sessionState === "RUNNING" ? "success" : sessionState === "STOPPING" || sessionState === "PAUSING" ? "warning" : "secondary";
+  const sessionVariant = sessionState === "RUNNING" ? "success" : sessionState === "STOPPING" || sessionState === "PAUSING" || sessionState === "RESUMING" ? "warning" : "secondary";
   const streamsVariant = !streams.streamsEnabled ? "secondary" : streams.bybitConnected ? "success" : "warning";
   const streamsText = !streams.streamsEnabled ? "Streams: OFF" : streams.bybitConnected ? "Streams: ON" : "Streams: ON (connecting)";
 

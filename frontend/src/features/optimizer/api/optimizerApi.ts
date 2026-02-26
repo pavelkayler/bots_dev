@@ -180,6 +180,24 @@ export async function getJobResults(
   return await getJson(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/results?${params.toString()}`);
 }
 
+export function getJobExportUrl(jobId: string, format: "json" | "csv" = "json", sortKey?: OptimizerSortKeyExtended, sortDir?: OptimizerSortDir): string {
+  const base = getApiBase();
+  const params = new URLSearchParams();
+  params.set("format", format);
+  if (sortKey) params.set("sortKey", sortKey);
+  if (sortDir) params.set("sortDir", sortDir);
+  return `${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/export?${params.toString()}`;
+}
+
+export function getCurrentJobExportUrl(format: "json" | "csv" = "json", sortKey?: OptimizerSortKeyExtended, sortDir?: OptimizerSortDir): string {
+  const base = getApiBase();
+  const params = new URLSearchParams();
+  params.set("format", format);
+  if (sortKey) params.set("sortKey", sortKey);
+  if (sortDir) params.set("sortDir", sortDir);
+  return `${base}/api/optimizer/jobs/current/export?${params.toString()}`;
+}
+
 export async function cancelCurrentJob(): Promise<{ ok: true }> {
   const base = getApiBase();
   return await postJson<{ ok: true }>(`${base}/api/optimizer/jobs/current/cancel`, {});

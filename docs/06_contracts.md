@@ -17,7 +17,7 @@ Response:
 ### GET /api/session/status
 Response:
 ```json
-{ "sessionState": "STOPPED|RUNNING|STOPPING", "sessionId": "string|null", "eventsFile": "string|null" }
+{ "sessionState": "STOPPED|RUNNING|STOPPING|PAUSING|PAUSED|RESUMING", "sessionId": "string|null", "eventsFile": "string|null" }
 ```
 
 ### POST /api/session/start
@@ -66,6 +66,15 @@ Returns computed summary for current session (when available).
 
 ### GET /api/session/summary/download
 Downloads `summary.json`.
+
+### GET /api/session/run-pack
+Returns a run-pack manifest with URLs for events, summary, config snapshot, and universe snapshot.
+
+### GET /api/session/run-pack/config/download
+Downloads current config snapshot JSON.
+
+### GET /api/session/run-pack/universe/download
+Downloads current universe snapshot JSON.
 
 ### Universe builder / universes
 - `GET /api/universes` → list saved universes meta
@@ -122,19 +131,12 @@ Response:
 ```
 
 #### POST /api/optimizer/tapes/start
-Starts tape recording (RUNNING only).
-- Returns `409` if session is not RUNNING.
-
-Response:
-```json
-{ "tapeId": "tape-..." }
-```
+Manual tape start is disabled (lifecycle-managed by session state).
+- Returns `409` with `error: "tape_recording_lifecycle_managed"`.
 
 #### POST /api/optimizer/tapes/stop
-Response:
-```json
-{ "ok": true }
-```
+Manual tape stop is disabled (lifecycle-managed by session state).
+- Returns `409` with `error: "tape_recording_lifecycle_managed"`.
 
 #### POST /api/optimizer/run
 Starts an optimization job.

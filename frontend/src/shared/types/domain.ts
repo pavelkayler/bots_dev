@@ -1,4 +1,4 @@
-export type SessionState = "STOPPED" | "RUNNING" | "STOPPING" | "PAUSING" | "PAUSED";
+export type SessionState = "STOPPED" | "RUNNING" | "STOPPING" | "PAUSING" | "PAUSED" | "RESUMING";
 
 export type ConnStatus = "CONNECTING" | "CONNECTED" | "DISCONNECTED" | "RECONNECTING";
 
@@ -123,3 +123,5 @@ export type WsMessage =
   | { type: "events_tail"; payload: { limit: number; count: number; events: LogEvent[] } }
   | { type: "events_append"; payload: { event: LogEvent } }
   | { type: "error"; message: string };
+
+export type EventsTailResponse = { limit: number; count: number; events: LogEvent[] };

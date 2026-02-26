@@ -3,7 +3,7 @@ import { fmtMoney, fmtNum, formatFee } from "../../../shared/utils/format";
 import type { BotStats } from "../../../shared/types/domain";
 
 type Props = {
-  sessionState: "STOPPED" | "RUNNING" | "STOPPING" | "PAUSED" | "PAUSING";
+  sessionState: "STOPPED" | "RUNNING" | "STOPPING" | "PAUSED" | "PAUSING" | "RESUMING";
   botStats: BotStats;
   uptimeText: string | null;
 };
@@ -18,7 +18,7 @@ export function BotSummaryBar({ sessionState, botStats, uptimeText }: Props) {
 
   const stateBadge =
     sessionState === "RUNNING" ? <Badge bg="success">{`RUNNING${uptimeText ? ` · ${uptimeText}` : ""}`}</Badge> :
-    sessionState === "STOPPING" || sessionState === "PAUSING" ? <Badge bg="warning">{sessionState}</Badge> :
+    sessionState === "STOPPING" || sessionState === "PAUSING" || sessionState === "RESUMING" ? <Badge bg="warning">{sessionState}</Badge> :
     sessionState === "PAUSED" ? <Badge bg="secondary">PAUSED</Badge> :
     <Badge bg="secondary">STOPPED</Badge>;
 
