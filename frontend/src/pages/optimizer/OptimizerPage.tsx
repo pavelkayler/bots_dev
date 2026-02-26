@@ -320,8 +320,8 @@ export function OptimizerPage() {
         if (!current.jobId) return;
         setJobId(current.jobId);
         const statusRes = await getJobStatus(current.jobId);
-        setDone(statusRes.done);
-        setTotal(statusRes.total);
+        setDone((prev) => (Math.abs(prev - statusRes.done) >= 0.01 ? statusRes.done : prev));
+        setTotal((prev) => (Math.abs(prev - statusRes.total) >= 0.01 ? statusRes.total : prev));
         if (statusRes.status === "running") {
           setRunning(true);
           return;
@@ -488,8 +488,8 @@ export function OptimizerPage() {
     const timer = window.setInterval(async () => {
       try {
         const res = await getJobStatus(jobId);
-        setDone(res.done);
-        setTotal(res.total);
+        setDone((prev) => (Math.abs(prev - res.done) >= 0.01 ? res.done : prev));
+        setTotal((prev) => (Math.abs(prev - res.total) >= 0.01 ? res.total : prev));
         if (res.status === "error") {
           setRunning(false);
           setError(res.message ?? "Optimization job failed.");
@@ -504,7 +504,7 @@ export function OptimizerPage() {
         setRunning(false);
         setError(String(e?.message ?? e));
       }
-    }, 500);
+    }, 250);
 
     return () => window.clearInterval(timer);
   }, [jobId, running, sortDir, sortKey]);
@@ -570,7 +570,6 @@ export function OptimizerPage() {
   }
 
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  const progressPct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
 
   return (
     <>
@@ -687,7 +686,7 @@ export function OptimizerPage() {
               {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
             </div>
 
-            {jobId ? <ProgressBar now={running ? progressPct : 100} label={`${running ? done : 100}/${total || 100}`} className="mb-2" /> : null}
+            {jobId ? <ProgressBar now={running ? done : 100} label={`${running ? done.toFixed(2) : "100.00"}%`} title={`progress ${done.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" /> : null}
 
             <Table striped bordered hover size="sm">
               <thead>

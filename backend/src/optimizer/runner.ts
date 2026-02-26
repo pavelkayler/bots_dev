@@ -110,12 +110,14 @@ function readRange(bound: { min?: unknown; max?: unknown } | undefined, fallback
   return { min, max };
 }
 
-export function readTapeLines(tapePath: string): { meta: TapeMeta | null; events: TapeEvent[] } {
+export function readTapeLines(tapePath: string): { meta: TapeMeta | null; events: TapeEvent[]; firstTsMs: number | null; lastTsMs: number | null } {
   const raw = fs.readFileSync(tapePath, "utf8");
   const lines = raw.split(/\r?\n/);
 
   let meta: TapeMeta | null = null;
   const events: TapeEvent[] = [];
+  let firstTsMs: number | null = null;
+  let lastTsMs: number | null = null;
 
   for (const line of lines) {
     const text = line.trim();
@@ -128,9 +130,15 @@ export function readTapeLines(tapePath: string): { meta: TapeMeta | null; events
         continue;
       }
       if (row?.type === "ticker" && typeof row?.symbol === "string") {
+        const tsRaw = Number(row.ts) || 0;
+        const tsMs = tsRaw > 0 && tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
+        if (tsMs > 0) {
+          if (firstTsMs == null || tsMs < firstTsMs) firstTsMs = tsMs;
+          if (lastTsMs == null || tsMs > lastTsMs) lastTsMs = tsMs;
+        }
         events.push({
           type: "ticker",
-          ts: Number(row.ts) || 0,
+          ts: tsRaw,
           symbol: row.symbol,
           payload: row.payload ?? {},
         });
@@ -149,7 +157,7 @@ export function readTapeLines(tapePath: string): { meta: TapeMeta | null; events
     }
   }
 
-  return { meta, events };
+  return { meta, events, firstTsMs, lastTsMs };
 }
 
 export function sortOptimizationResults(results: OptimizerResult[], key: OptimizerSortKey, dir: OptimizerSortDir): OptimizerResult[] {
@@ -200,13 +208,24 @@ export async function runOptimization(args: {
   onProgress?: (done: number, total: number, partialResults: OptimizerResult[]) => void;
   shouldStop?: () => boolean;
   directionMode?: "both" | "long" | "short";
-}): Promise<{ tapeIds: string[]; metaByTapeId: Record<string, TapeMeta | null>; results: OptimizerResult[]; cancelled: boolean }> {
+}): Promise<{
+  tapeIds: string[];
+  metaByTapeId: Record<string, TapeMeta | null>;
+  results: OptimizerResult[];
+  cancelled: boolean;
+  diagnostics?: {
+    decisionsNoRefs: number;
+    decisionsOk: number;
+    effectiveTfMinByTapeId: Record<string, number>;
+    durationMinByTapeId: Record<string, number>;
+  };
+}> {
   const requestedTapeIds = (args.tapeIds && args.tapeIds.length ? args.tapeIds : [args.tapeId]).filter((v): v is string => typeof v === "string" && v.trim().length > 0);
   const tapeIds = requestedTapeIds.map((id) => safeId(id));
   const tapes = tapeIds.map((id) => {
     const tapePath = getTapePath(id);
     const parsed = readTapeLines(tapePath);
-    return { tapeId: id, meta: parsed.meta, events: parsed.events };
+    return { tapeId: id, meta: parsed.meta, events: parsed.events, firstTsMs: parsed.firstTsMs, lastTsMs: parsed.lastTsMs };
   });
 
   const baseConfig = configStore.get();
@@ -216,6 +235,10 @@ export async function runOptimization(args: {
 
   let lastPctLocal = 0;
   let cancelled = false;
+  let decisionsNoRefs = 0;
+  let decisionsOk = 0;
+  const effectiveTfMinByTapeId: Record<string, number> = {};
+  const durationMinByTapeId: Record<string, number> = {};
 
   for (let i = 0; i < args.candidates; i += 1) {
     if (args.shouldStop?.()) {
@@ -271,8 +294,16 @@ export async function runOptimization(args: {
       const paper = new PaperBroker(candidateConfig.paper, logger as any);
       let lastEventTs = 0;
       const tfMinRaw = Number(tape.meta?.klineTfMin ?? baseConfig.universe.klineTfMin);
-      const tfMin = Number.isFinite(tfMinRaw) && tfMinRaw > 0 ? tfMinRaw : baseConfig.universe.klineTfMin;
-      const tfMs = tfMin * 60_000;
+      const tfMinFromMeta = Number.isFinite(tfMinRaw) && tfMinRaw > 0 ? tfMinRaw : baseConfig.universe.klineTfMin;
+      const durationMs = Math.max(0, (tape.lastTsMs ?? 0) - (tape.firstTsMs ?? 0));
+      const durationMin = durationMs / 60_000;
+      let effectiveTfMin = tfMinFromMeta;
+      if (durationMin > 0 && durationMin < tfMinFromMeta) {
+        effectiveTfMin = Math.max(1, Math.floor(durationMin));
+      }
+      const tfMs = effectiveTfMin * 60_000;
+      effectiveTfMinByTapeId[tape.tapeId] = effectiveTfMin;
+      durationMinByTapeId[tape.tapeId] = durationMin;
       const fallbackBySymbol = new Map<string, {
         lastBucketId: number | undefined;
         lastPriceInBucket: number | null;
@@ -281,10 +312,19 @@ export async function runOptimization(args: {
         prevCandleOivClose: number | null;
       }>();
 
+      let eventCounter = 0;
       for (const event of tape.events) {
         const tsRaw = Number(event.ts) || 0;
         const ts = tsRaw > 0 && tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
         if (ts > lastEventTs) lastEventTs = ts;
+        eventCounter += 1;
+        if (eventCounter % 5000 === 0) {
+          if (args.shouldStop?.()) {
+            cancelled = true;
+            break;
+          }
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
 
         if (event.type === "ticker") {
           cache.upsertFromTicker(event.symbol, event.payload ?? {});
@@ -332,6 +372,8 @@ export async function runOptimization(args: {
             fundingRate,
             cooldownActive: cooldownState?.active ?? false,
           });
+          if (decision.reason === "no_refs") decisionsNoRefs += 1;
+          if (decision.reason === "ok_long" || decision.reason === "ok_short") decisionsOk += 1;
 
           paper.tick({
             symbol: event.symbol,
@@ -350,6 +392,8 @@ export async function runOptimization(args: {
         }
       }
 
+      if (cancelled) break;
+
       const symbols = Array.isArray(tape.meta?.symbols) ? tape.meta.symbols : [];
       paper.stopAll({
         nowMs: lastEventTs || 0,
@@ -362,6 +406,8 @@ export async function runOptimization(args: {
       tradesTotal += stats.closedTrades;
       winsTotal += stats.wins;
     }
+
+    if (cancelled) break;
 
     const winRatePct = tradesTotal > 0 ? (winsTotal / tradesTotal) * 100 : 0;
 
@@ -388,5 +434,15 @@ export async function runOptimization(args: {
     metaByTapeId: Object.fromEntries(tapes.map((t) => [t.tapeId, t.meta])),
     results: sortOptimizationResults(results, "netPnl", "desc"),
     cancelled,
+    ...(decisionsOk === 0 && decisionsNoRefs >= 100
+      ? {
+          diagnostics: {
+            decisionsNoRefs,
+            decisionsOk,
+            effectiveTfMinByTapeId,
+            durationMinByTapeId,
+          },
+        }
+      : {}),
   };
 }
