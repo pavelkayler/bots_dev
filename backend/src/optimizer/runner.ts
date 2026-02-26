@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
 import readline from "node:readline";
 import { BybitMarketCache } from "../engine/BybitMarketCache.js";
 import { CandleTracker } from "../engine/CandleTracker.js";
@@ -296,6 +298,7 @@ export async function runOptimization(args: {
   shouldPause?: () => boolean;
   waitWhilePaused?: () => Promise<"resumed" | "cancelled">;
   excludeNegative?: boolean;
+  rememberNegatives?: boolean;
 }): Promise<{
   tapeIds: string[];
   metaByTapeId: Record<string, TapeMeta | null>;
@@ -307,6 +310,10 @@ export async function runOptimization(args: {
     effectiveTfMinByTapeId: Record<string, number>;
     durationMinByTapeId: Record<string, number>;
     medianTickIntervalSec: number;
+  };
+  blacklist?: {
+    count: number;
+    skipped: number;
   };
 }> {
   const tapeIds = args.tapeIds.map((id) => safeId(id));
@@ -328,6 +335,14 @@ export async function runOptimization(args: {
   const medianTickIntervalSec = median(globalTickIntervals);
 
   const results: OptimizerResult[] = [];
+  const effectiveDirection = args.directionMode ?? "both";
+  const effectiveTf = args.optTfMin ?? 0;
+  const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
+  const shouldRememberNegatives = Boolean(args.rememberNegatives);
+  const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;
+  let skippedBlacklisted = 0;
+  let lastBlacklistFlushMs = Date.now();
+  let addedSinceFlush = 0;
   let cancelled = false;
   let lastPctLocal = 0;
 
@@ -356,6 +371,13 @@ export async function runOptimization(args: {
       },
       precision
     );
+    const paramSig = buildParamSig(params, precision);
+    if (blacklistState && blacklistState.negativeSet.has(paramSig)) {
+      skippedBlacklisted += 1;
+      const done = i + 1;
+      if (args.onProgress) args.onProgress(done, args.candidates, results);
+      continue;
+    }
 
     let netPnlTotal = 0;
     let tradesTotal = 0;
@@ -587,6 +609,16 @@ export async function runOptimization(args: {
       closesForce,
       params,
     };
+    if (blacklistState && candidateResult.netPnl < 0 && !blacklistState.negativeSet.has(paramSig)) {
+      blacklistState.negativeSet.add(paramSig);
+      addedSinceFlush += 1;
+      const now = Date.now();
+      if (addedSinceFlush >= 100 || now - lastBlacklistFlushMs >= 10_000) {
+        flushNegativeBlacklist(blacklistState);
+        addedSinceFlush = 0;
+        lastBlacklistFlushMs = now;
+      }
+    }
     if (!args.excludeNegative || candidateResult.netPnl >= 0) {
       results.push(candidateResult);
     }
@@ -600,6 +632,10 @@ export async function runOptimization(args: {
       lastPctLocal = pct;
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
+  }
+
+  if (blacklistState && addedSinceFlush > 0) {
+    flushNegativeBlacklist(blacklistState);
   }
 
   return {
@@ -618,5 +654,90 @@ export async function runOptimization(args: {
           },
         }
       : {}),
+    ...(blacklistState
+      ? {
+          blacklist: {
+            count: blacklistState.negativeSet.size,
+            skipped: skippedBlacklisted,
+          },
+        }
+      : {}),
   };
+}
+
+type NegativeBlacklistFile = {
+  runKey: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  negativeSet: Record<string, true>;
+};
+
+type NegativeBlacklistState = {
+  runKey: string;
+  hash: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  negativeSet: Set<string>;
+};
+
+function getBlacklistDir() {
+  return path.resolve(process.cwd(), "data/optimizer_blacklists");
+}
+
+function runKeyHash(runKey: string) {
+  return createHash("sha1").update(runKey).digest("hex").slice(0, 12);
+}
+
+function blacklistPath(hash: string) {
+  return path.join(getBlacklistDir(), `${hash}.json`);
+}
+
+function loadNegativeBlacklist(runKey: string): NegativeBlacklistState {
+  const hash = runKeyHash(runKey);
+  fs.mkdirSync(getBlacklistDir(), { recursive: true });
+  const filePath = blacklistPath(hash);
+  const now = Date.now();
+  if (!fs.existsSync(filePath)) {
+    return { runKey, hash, createdAtMs: now, updatedAtMs: now, negativeSet: new Set() };
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as NegativeBlacklistFile;
+    if (!parsed || parsed.runKey !== runKey || typeof parsed.negativeSet !== "object" || parsed.negativeSet == null) {
+      return { runKey, hash, createdAtMs: now, updatedAtMs: now, negativeSet: new Set() };
+    }
+    return {
+      runKey,
+      hash,
+      createdAtMs: Number(parsed.createdAtMs) || now,
+      updatedAtMs: Number(parsed.updatedAtMs) || now,
+      negativeSet: new Set(Object.keys(parsed.negativeSet)),
+    };
+  } catch {
+    return { runKey, hash, createdAtMs: now, updatedAtMs: now, negativeSet: new Set() };
+  }
+}
+
+function flushNegativeBlacklist(state: NegativeBlacklistState) {
+  state.updatedAtMs = Date.now();
+  const negativeSet: Record<string, true> = {};
+  for (const sig of state.negativeSet) negativeSet[sig] = true;
+  const payload: NegativeBlacklistFile = {
+    runKey: state.runKey,
+    createdAtMs: state.createdAtMs,
+    updatedAtMs: state.updatedAtMs,
+    negativeSet,
+  };
+  fs.writeFileSync(blacklistPath(state.hash), JSON.stringify(payload, null, 2), "utf8");
+}
+
+function buildParamSig(params: RandomizedParams, precision: OptimizerPrecision): string {
+  return [
+    `priceTh=${params.priceThresholdPct.toFixed(precision.priceTh)}`,
+    `oivTh=${params.oivThresholdPct.toFixed(precision.oivTh)}`,
+    `tp=${params.tpRoiPct.toFixed(precision.tp)}`,
+    `sl=${params.slRoiPct.toFixed(precision.sl)}`,
+    `offset=${params.entryOffsetPct.toFixed(precision.offset)}`,
+    `timeoutSec=${Math.round(params.timeoutSec)}`,
+    `rearmMs=${Math.round(params.rearmMs)}`,
+  ].join("|");
 }
