@@ -23,9 +23,11 @@ import {
   resumeOptimizerLoop,
   getOptimizerLoopStatus,
   getDoctorStatus,
+  getLastSoakSnapshot,
   type DoctorStatus,
   type OptimizerLoopStatus,
   type OptimizationResult,
+  type SoakLastStatus,
   type OptimizerPrecision,
   type OptimizerSortDir,
   type OptimizerSortKeyExtended,
@@ -366,6 +368,7 @@ export function OptimizerPage() {
   const [loopBusy, setLoopBusy] = useState(false);
   const [doctorStatus, setDoctorStatus] = useState<DoctorStatus | null>(null);
   const [doctorBusy, setDoctorBusy] = useState(false);
+  const [lastSoak, setLastSoak] = useState<SoakLastStatus["snapshot"]>(null);
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
   const prevLoopJobIdRef = useRef<string | null>(null);
@@ -962,12 +965,23 @@ export function OptimizerPage() {
   }
 
 
+
+  async function refreshSoakLast() {
+    try {
+      const res = await getLastSoakSnapshot();
+      setLastSoak(res.snapshot);
+    } catch {
+      setLastSoak(null);
+    }
+  }
+
   async function onCheckDoctor() {
     setDoctorBusy(true);
     setError(null);
     try {
       const next = await getDoctorStatus();
       setDoctorStatus(next);
+      await refreshSoakLast();
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -1078,9 +1092,11 @@ export function OptimizerPage() {
                   <div style={{ marginTop: 8 }}>
                     <div>ok: <b>{doctorStatus.ok ? "true" : "false"}</b></div>
                     <div>http: <b>{doctorStatus.ports.http}</b></div>
-                    <div>free bytes: <b>{doctorStatus.disk.freeBytes == null ? "-" : doctorStatus.disk.freeBytes.toLocaleString()}</b></div>
+                    <div>dataDir free: <b>{doctorStatus.dataDirBytesFree == null ? "-" : doctorStatus.dataDirBytesFree.toLocaleString()}</b></div>
+                    <div>low disk: <b>{doctorStatus.warnings.includes("low_disk") ? "YES" : "NO"}</b></div>
                     <div>warnings: <b>{doctorStatus.warnings.length}</b></div>
                     {doctorStatus.warnings.length ? <ul style={{ marginBottom: 0 }}>{doctorStatus.warnings.map((w) => <li key={w}>{w}</li>)}</ul> : null}
+                    <div>Last soak snapshot: <b>{lastSoak?.tsMs ? new Date(lastSoak.tsMs).toLocaleString() : "-"}</b></div>
                   </div>
                 ) : null}
               </div>
