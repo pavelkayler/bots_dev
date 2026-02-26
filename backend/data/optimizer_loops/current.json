@@ -1,14 +1,14 @@
 {
-  "loopId": "6714b720-da71-4fca-9824-66c7b30231f6",
-  "isRunning": true,
+  "loopId": "a4b5fa50-d92a-49c8-9f98-8b1bb4a4140f",
+  "isRunning": false,
   "isPaused": false,
-  "isInfinite": true,
+  "isInfinite": false,
   "runsCount": 3,
-  "runIndex": 2021,
-  "createdAtMs": 1772131061843,
-  "updatedAtMs": 1772131292633,
-  "finishedAtMs": null,
-  "lastJobId": "904b2bee-7e38-4337-b18b-22c1ba331ce2",
+  "runIndex": 3,
+  "createdAtMs": 1772138218696,
+  "updatedAtMs": 1772138259680,
+  "finishedAtMs": 1772138259680,
+  "lastJobId": null,
   "runPayload": {
     "tapeIds": [
       "tape-2026-02-25T13-46-38-162Z",
@@ -19,8 +19,8 @@
     "seed": 1,
     "minTrades": 1,
     "directionMode": "both",
-    "excludeNegative": true,
-    "rememberNegatives": true,
+    "excludeNegative": false,
+    "rememberNegatives": false,
     "ranges": {
       "priceTh": {
         "min": 0.5,
@@ -61,6 +61,6 @@
       "rearmMs": 0
     },
     "runsCount": 3,
-    "infinite": true
+    "infinite": false
   }
 }

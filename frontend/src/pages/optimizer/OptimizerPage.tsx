@@ -337,7 +337,6 @@ export function OptimizerPage() {
   const [optTfMin, setOptTfMin] = useState<string>("");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
-  const [running, setRunning] = useState(false);
   const [optimizerPaused, setOptimizerPaused] = useState(false);
   const [jobStartedAtMs, setJobStartedAtMs] = useState<number | null>(null);
   const [jobUpdatedAtMs, setJobUpdatedAtMs] = useState<number | null>(null);
@@ -448,17 +447,14 @@ export function OptimizerPage() {
         setJobFinishedAtMs(statusRes.finishedAtMs ?? null);
         setJobStatus(statusRes.status);
         if (statusRes.status === "running" || statusRes.status === "paused") {
-          setRunning(true);
           setOptimizerPaused(statusRes.status === "paused");
           await fetchResults(1, sortKey, sortDir, current.jobId, { keepPreviousIfEmpty: loopActive });
           return;
         }
         if (statusRes.status === "done" || statusRes.status === "cancelled") {
-          setRunning(false);
           await fetchResults(1, sortKey, sortDir, current.jobId, { keepPreviousIfEmpty: loopActive });
           return;
         }
-        setRunning(false);
         setError(statusRes.message ?? "Optimization job failed.");
       } catch (e: any) {
         setError(String(e?.message ?? e));
@@ -561,6 +557,7 @@ export function OptimizerPage() {
   const loopPaused = Boolean(loopStatus?.loop?.isRunning && loopStatus?.loop?.isPaused);
   const loopActive = loopRunning || loopPaused;
   const loopStopped = !loopRunning;
+  const jobActive = jobStatus === "running" || jobStatus === "paused";
   const [displayJobId, setDisplayJobId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -569,10 +566,10 @@ export function OptimizerPage() {
       setDisplayJobId((prev) => (prev === nextJobId ? prev : nextJobId));
       return;
     }
-    if (!running && !loopActive) {
+    if (!jobActive && !loopActive) {
       setDisplayJobId(null);
     }
-  }, [loopActive, loopJobId, running, singleJobId]);
+  }, [jobActive, loopActive, loopJobId, singleJobId]);
 
   const activeJobId = displayJobId;
 
@@ -609,7 +606,6 @@ export function OptimizerPage() {
       setLoopAggMap(new Map());
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
-      setRunning(true);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -761,7 +757,6 @@ export function OptimizerPage() {
 
   async function onRunOptimization() {
     if (!selectedTapeIds.length || rangeError) return;
-    setRunning(true);
     setError(null);
     setDone(0);
     setTotal(0);
@@ -800,12 +795,11 @@ export function OptimizerPage() {
       setTotalRows(0);
     } catch (e: any) {
       setError(String(e?.message ?? e));
-      setRunning(false);
     }
   }
 
   useEffect(() => {
-    if (!activeJobId || (!running && !loopActive)) return;
+    if (!activeJobId || (!jobActive && !loopActive)) return;
     const timer = window.setInterval(async () => {
       try {
         const now = Date.now();
@@ -834,23 +828,20 @@ export function OptimizerPage() {
         });
         await fetchResults(page, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
         if (res.status === "error") {
-          setRunning(false);
           setError(res.message ?? "Optimization job failed.");
         }
         if (res.status === "done" || res.status === "cancelled") {
           window.clearInterval(timer);
-          setRunning(false);
           if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
           await fetchResults(1, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
         }
       } catch (e: any) {
-        setRunning(false);
         setError(String(e?.message ?? e));
       }
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [activeJobId, loopActive, page, running, sortDir, sortKey]);
+  }, [activeJobId, jobActive, loopActive, page, sortDir, sortKey]);
 
 
   async function onStopOptimization() {
@@ -1143,11 +1134,11 @@ export function OptimizerPage() {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || running || Boolean(rangeError)}>
+                <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || jobActive || loopActive || Boolean(rangeError)}>
                   Run optimization
                 </Button>
               </Col>
-              {!loopActive && running ? (
+              {!loopActive && jobActive ? (
                 <Col xs="auto">
                   <ButtonGroup>
                     {!optimizerPaused ? <Button variant="outline-warning" onClick={() => void onPauseOptimization()}>Pause</Button> : <Button variant="outline-primary" onClick={() => void onResumeOptimization()}>Resume</Button>}

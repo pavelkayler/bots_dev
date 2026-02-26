@@ -22,9 +22,20 @@ class OptimizerWorkerManager {
     }
     const workerUrl = this.resolveWorkerEntry();
     const needsTsLoader = String(workerUrl).endsWith(".ts");
-    const hasTsxLoader = process.execArgv.some((arg) => arg.includes("tsx"));
-    const execArgvForWorker = needsTsLoader && !hasTsxLoader ? [...process.execArgv, "--loader", "tsx"] : process.execArgv;
-    const worker = new Worker(workerUrl, { type: "module", execArgv: execArgvForWorker } as any);
+
+    const worker: Worker = needsTsLoader
+      ? (() => {
+          const target = String(workerUrl);
+          const bootstrap = `import('tsx/esm/api').then(({ register }) => {
+  register();
+  return import(${JSON.stringify(target)});
+}).catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+});`;
+          return new Worker(bootstrap, { eval: true, type: "module" } as any);
+        })()
+      : new Worker(workerUrl, { type: "module" } as any);
     this.workers.set(jobId, worker);
 
     worker.on("message", (msg) => {
