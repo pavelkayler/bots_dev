@@ -12,6 +12,8 @@ import * as paperSummary from "../paper/summary.js";
 type SessionSummaryResponse = any;
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
 import { getOptimizerSettings, listTapes, safeId, setOptimizerSettings } from "../optimizer/tapeStore.js";
+import { incrementTapeRuns } from "../optimizer/tapeRunsStore.js";
+import { readLoopState, recoverLoopStateOnBoot, type OptimizerLoopRunPayload, type OptimizerLoopState, writeLoopState } from "../optimizer/loopStore.js";
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 import {
   DEFAULT_OPTIMIZER_PRECISION,
@@ -68,6 +70,8 @@ const optimizerJobs = new Map<string, OptimizerJob>();
 const optimizerJobStartedAt = new Map<string, number>();
 let latestOptimizerJobId: string | null = null;
 const checkpointDir = path.resolve(process.cwd(), "data/optimizer_checkpoints");
+let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
+
 
 function ensureCheckpointDir() {
   fs.mkdirSync(checkpointDir, { recursive: true });
@@ -270,8 +274,76 @@ async function computeSummary(eventsFile: string, sessionId: string | null): Pro
 
 restoreLatestCheckpoint();
 
+function isOptimizerJobTerminal(status: OptimizerJob["status"]) {
+  return status === "done" || status === "cancelled" || status === "error";
+}
+
+function updateLoopState(patch: Partial<OptimizerLoopState>) {
+  if (!optimizerLoopState) return;
+  optimizerLoopState = { ...optimizerLoopState, ...patch, updatedAtMs: Date.now() };
+  writeLoopState(optimizerLoopState);
+}
+
+async function startLoopJob(app: FastifyInstance) {
+  if (!optimizerLoopState || !optimizerLoopState.isRunning || optimizerLoopState.isPaused) return;
+  const state = optimizerLoopState;
+  if (!state.isInfinite && state.runIndex >= state.runsCount) {
+    updateLoopState({ isRunning: false, isPaused: false });
+    return;
+  }
+  const res = await app.inject({ method: "POST", url: "/api/optimizer/run", payload: state.runPayload });
+  if (res.statusCode !== 200) {
+    updateLoopState({ isRunning: false, isPaused: false });
+    return;
+  }
+  const parsed = JSON.parse(res.body || "{}") as { jobId?: string };
+  if (!parsed.jobId) {
+    updateLoopState({ isRunning: false, isPaused: false });
+    return;
+  }
+  updateLoopState({ lastJobId: parsed.jobId });
+}
+
+async function tickOptimizerLoop(app: FastifyInstance) {
+  const state = optimizerLoopState;
+  if (!state || !state.isRunning || state.isPaused) return;
+
+  if (state.lastJobId) {
+    const job = optimizerJobs.get(state.lastJobId);
+    if (job && !isOptimizerJobTerminal(job.status)) return;
+    updateLoopState({ runIndex: state.runIndex + 1, lastJobId: null });
+  }
+
+  const latest = optimizerLoopState;
+  if (!latest || !latest.isRunning || latest.isPaused) return;
+  if (!latest.isInfinite && latest.runIndex >= latest.runsCount) {
+    updateLoopState({ isRunning: false, isPaused: false });
+    return;
+  }
+
+  await startLoopJob(app);
+}
+
+function getLoopLastJobStatus() {
+  if (!optimizerLoopState?.lastJobId) return null;
+  const job = optimizerJobs.get(optimizerLoopState.lastJobId);
+  if (!job) return null;
+  return {
+    status: job.status,
+    donePercent: job.done,
+    ...(job.message ? { message: job.message } : {}),
+  };
+}
+
 export function registerHttpRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ ok: true }));
+
+  const loopTimer = setInterval(() => {
+    void tickOptimizerLoop(app);
+  }, 500);
+  app.addHook("onClose", async () => {
+    clearInterval(loopTimer);
+  });
 
   app.get("/api/session/status", async () => runtime.getStatus());
 
@@ -562,6 +634,8 @@ const now = Date.now();
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
 
+    incrementTapeRuns(tapeIds);
+
     const jobId = randomUUID();
     const totalCandidates = Math.floor(candidates);
     const job: OptimizerJob = {
@@ -676,6 +750,111 @@ const now = Date.now();
     }, 0);
 
     return { jobId };
+  });
+
+  app.post("/api/optimizer/loop/start", async (req, reply) => {
+    if (optimizerLoopState?.isRunning) {
+      reply.code(409);
+      return { error: "optimizer_loop_running" };
+    }
+
+    const body = safeBody((req as any).body) as any;
+    const normalizedTapeIds = (Array.isArray(body?.tapeIds) ? body.tapeIds : [body?.tapeId]).map((v: unknown) => String(v ?? "").trim()).filter(Boolean);
+    const payload: OptimizerLoopRunPayload = {
+      ...body,
+      tapeIds: normalizedTapeIds,
+      candidates: Number(body?.candidates),
+      seed: Number(body?.seed ?? 1),
+      directionMode: body?.directionMode == null ? "both" : String(body.directionMode) as "both" | "long" | "short",
+      minTrades: body?.minTrades == null || String(body.minTrades).trim() === "" ? 1 : Math.floor(Number(body.minTrades)),
+      excludeNegative: Boolean(body?.excludeNegative),
+      rememberNegatives: Boolean(body?.rememberNegatives),
+      ...(body?.optTfMin == null || String(body.optTfMin).trim() === "" ? {} : { optTfMin: Math.floor(Number(body.optTfMin)) }),
+      ...(body?.ranges ? { ranges: body.ranges } : {}),
+      ...(body?.precision ? { precision: body.precision } : {}),
+    };
+    const runsCount = Math.max(1, Math.floor(Number(body?.runsCount ?? 1)));
+    const isInfinite = Boolean(body?.infinite);
+
+    const now = Date.now();
+    optimizerLoopState = {
+      loopId: randomUUID(),
+      isRunning: true,
+      isPaused: false,
+      isInfinite,
+      runsCount,
+      runIndex: 0,
+      createdAtMs: now,
+      updatedAtMs: now,
+      lastJobId: null,
+      runPayload: payload,
+    };
+    writeLoopState(optimizerLoopState);
+    await startLoopJob(app);
+    if (!optimizerLoopState.lastJobId) {
+      const failedLoopId = optimizerLoopState.loopId;
+      updateLoopState({ isRunning: false, isPaused: false });
+      reply.code(400);
+      return { error: "optimizer_loop_start_failed", loopId: failedLoopId };
+    }
+    return { loopId: optimizerLoopState.loopId };
+  });
+
+  app.post("/api/optimizer/loop/stop", async () => {
+    const state = optimizerLoopState;
+    if (!state) return { ok: true };
+    if (state.lastJobId) {
+      const job = optimizerJobs.get(state.lastJobId);
+      if (job && (job.status === "running" || job.status === "paused")) {
+        job.cancelRequested = true;
+        job.updatedAtMs = Date.now();
+        writeCheckpoint(state.lastJobId, job);
+      }
+    }
+    updateLoopState({ isRunning: false, isPaused: false });
+    return { ok: true };
+  });
+
+  app.post("/api/optimizer/loop/pause", async () => {
+    if (!optimizerLoopState) return { ok: true };
+    updateLoopState({ isPaused: true });
+    const state = optimizerLoopState;
+    if (state?.lastJobId) {
+      const job = optimizerJobs.get(state.lastJobId);
+      if (job && job.status === "running") {
+        job.pauseRequested = true;
+        job.updatedAtMs = Date.now();
+      }
+    }
+    return { ok: true };
+  });
+
+  app.post("/api/optimizer/loop/resume", async (_req, reply) => {
+    const state = optimizerLoopState;
+    if (!state) {
+      reply.code(404);
+      return { error: "optimizer_loop_not_found" };
+    }
+    updateLoopState({ isPaused: false, isRunning: true });
+    if (state.lastJobId) {
+      const job = optimizerJobs.get(state.lastJobId);
+      if (job && job.status === "paused") {
+        job.resumeRequested = true;
+        job.updatedAtMs = Date.now();
+      }
+    }
+    await tickOptimizerLoop(app);
+    return { ok: true };
+  });
+
+  app.get("/api/optimizer/loop/status", async () => {
+    if (!optimizerLoopState) return { loop: null };
+    return {
+      loop: optimizerLoopState,
+      runsCompleted: optimizerLoopState.runIndex,
+      runsTotal: optimizerLoopState.isInfinite ? null : optimizerLoopState.runsCount,
+      lastJobStatus: getLoopLastJobStatus(),
+    };
   });
 
   app.post("/api/optimizer/jobs/current/cancel", async (_req, reply) => {

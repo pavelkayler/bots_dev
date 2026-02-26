@@ -5,6 +5,7 @@ export type OptimizerTape = {
   id: string;
   createdAt: number;
   fileSizeBytes: number;
+  runsTotal: number;
   meta: {
     tapeId?: string;
     createdAt?: number;
@@ -42,6 +43,24 @@ export type OptimizationResult = {
   };
 };
 
+
+export type OptimizerLoopStatus = {
+  loop: {
+    loopId: string;
+    isRunning: boolean;
+    isPaused: boolean;
+    isInfinite: boolean;
+    runsCount: number;
+    runIndex: number;
+    createdAtMs: number;
+    updatedAtMs: number;
+    lastJobId: string | null;
+    runPayload: Record<string, unknown>;
+  } | null;
+  runsCompleted?: number;
+  runsTotal?: number | null;
+  lastJobStatus?: { status: "running" | "paused" | "done" | "error" | "cancelled"; donePercent: number; message?: string } | null;
+};
 export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
 export type OptimizerSortDir = "asc" | "desc";
 export type OptimizerPrecision = Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", number>;
@@ -154,4 +173,44 @@ export async function pauseCurrentJob(): Promise<{ ok: true }> {
 export async function resumeCurrentJob(): Promise<{ ok: true }> {
   const base = getApiBase();
   return await postJson<{ ok: true }>(`${base}/api/optimizer/jobs/current/resume`, {});
+}
+
+
+export async function startOptimizerLoop(payload: {
+  tapeId?: string;
+  tapeIds?: string[];
+  candidates: number;
+  seed: number;
+  minTrades?: number;
+  ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", { min: number; max: number }>>;
+  precision?: Partial<OptimizerPrecision>;
+  directionMode?: "both" | "long" | "short";
+  optTfMin?: number;
+  excludeNegative?: boolean;
+  rememberNegatives?: boolean;
+  runsCount?: number;
+  infinite?: boolean;
+}): Promise<{ loopId: string }> {
+  const base = getApiBase();
+  return await postJson<{ loopId: string }>(`${base}/api/optimizer/loop/start`, payload);
+}
+
+export async function stopOptimizerLoop(): Promise<{ ok: true }> {
+  const base = getApiBase();
+  return await postJson<{ ok: true }>(`${base}/api/optimizer/loop/stop`, {});
+}
+
+export async function pauseOptimizerLoop(): Promise<{ ok: true }> {
+  const base = getApiBase();
+  return await postJson<{ ok: true }>(`${base}/api/optimizer/loop/pause`, {});
+}
+
+export async function resumeOptimizerLoop(): Promise<{ ok: true }> {
+  const base = getApiBase();
+  return await postJson<{ ok: true }>(`${base}/api/optimizer/loop/resume`, {});
+}
+
+export async function getOptimizerLoopStatus(): Promise<OptimizerLoopStatus> {
+  const base = getApiBase();
+  return await getJson<OptimizerLoopStatus>(`${base}/api/optimizer/loop/status`);
 }

@@ -17,6 +17,12 @@ import {
   setSettings,
   startTape,
   stopTape,
+  startOptimizerLoop,
+  stopOptimizerLoop,
+  pauseOptimizerLoop,
+  resumeOptimizerLoop,
+  getOptimizerLoopStatus,
+  type OptimizerLoopStatus,
   type OptimizationResult,
   type OptimizerPrecision,
   type OptimizerSortDir,
@@ -45,10 +51,12 @@ const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
 const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
 const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
+const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
+const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 
-type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number };
+type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number; runsTotal: number };
 
 
 const TapeSizeCell = memo(function TapeSizeCell({
@@ -115,6 +123,7 @@ const TapeTableRow = memo(function TapeTableRow({
       <td style={{ fontSize: 12 }}>{new Date(tape.createdAt).toLocaleString()}</td>
       <td style={{ fontSize: 12 }}>{tape.symbolsCount}</td>
       <td style={{ fontSize: 12 }}>{tape.tf ?? "-"}</td>
+      <td style={{ fontSize: 12 }}>{tape.runsTotal}</td>
       <td style={{ fontSize: 12 }}>
         <TapeSizeCell
           tapeId={tape.id}
@@ -156,10 +165,11 @@ const TapesTable = memo(function TapesTable({
             symbolsCount: Array.isArray(t.meta?.symbols) ? t.meta.symbols.length : 0,
             tf: t.meta?.klineTfMin ?? null,
             initialBytes: Number(t.fileSizeBytes) || 0,
+            runsTotal: Number(t.runsTotal) || 0,
           };
           const old = prevById.get(t.id);
           if (!old) return next;
-          if (old.createdAt === next.createdAt && old.symbolsCount === next.symbolsCount && old.tf === next.tf && old.initialBytes === next.initialBytes) return old;
+          if (old.createdAt === next.createdAt && old.symbolsCount === next.symbolsCount && old.tf === next.tf && old.initialBytes === next.initialBytes && old.runsTotal === next.runsTotal) return old;
           return next;
         });
       });
@@ -181,6 +191,7 @@ const TapesTable = memo(function TapesTable({
           <th>createdAt</th>
           <th>symbolsCount</th>
           <th>tf</th>
+          <th>runs</th>
           <th>size</th>
         </tr>
       </thead>
@@ -197,7 +208,7 @@ const TapesTable = memo(function TapesTable({
         ))}
         {!rows.length ? (
           <tr>
-            <td colSpan={6} style={{ fontSize: 12, opacity: 0.75 }}>No tapes</td>
+            <td colSpan={7} style={{ fontSize: 12, opacity: 0.75 }}>No tapes</td>
           </tr>
         ) : null}
       </tbody>
@@ -312,6 +323,9 @@ export function OptimizerPage() {
   const [tapesDirDraft, setTapesDirDraft] = useState("");
 
   const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
+  const [loopRunsCount, setLoopRunsCount] = useState("3");
+  const [loopInfinite, setLoopInfinite] = useState(false);
+  const [loopStatus, setLoopStatus] = useState<OptimizerLoopStatus | null>(null);
   const rangesSaveTimerRef = useRef<number | null>(null);
 
   async function refreshStatus() {
@@ -345,6 +359,8 @@ export function OptimizerPage() {
     }
     setExcludeNegative(localStorage.getItem(EXCLUDE_NEGATIVE_STORAGE_KEY) === "1");
     setRememberNegatives(localStorage.getItem(REMEMBER_NEGATIVES_STORAGE_KEY) === "1");
+    setLoopRunsCount(loadStoredPositiveInt(LOOP_RUNS_COUNT_STORAGE_KEY, "3", 1));
+    setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
     void refreshStatus();
     setTapesRefreshKey((prev) => prev + 1);
     void (async () => {
@@ -429,10 +445,109 @@ export function OptimizerPage() {
   }, [rememberNegatives]);
 
   useEffect(() => {
+    const n = Math.floor(Number(loopRunsCount));
+    if (Number.isFinite(n) && n >= 1) localStorage.setItem(LOOP_RUNS_COUNT_STORAGE_KEY, String(n));
+  }, [loopRunsCount]);
+
+  useEffect(() => {
+    localStorage.setItem(LOOP_INFINITE_STORAGE_KEY, loopInfinite ? "1" : "0");
+  }, [loopInfinite]);
+
+  useEffect(() => {
     if (jobStatus !== "running") return;
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [jobStatus]);
+
+  useEffect(() => {
+    let timer: number | null = null;
+    const refresh = async () => {
+      try {
+        const next = await getOptimizerLoopStatus();
+        setLoopStatus(next);
+      } catch {
+        return;
+      }
+    };
+    void refresh();
+    if (loopStatus?.loop?.isRunning || loopStatus?.loop?.isPaused) {
+      timer = window.setInterval(() => {
+        void refresh();
+      }, 500);
+    }
+    return () => {
+      if (timer != null) window.clearInterval(timer);
+    };
+  }, [loopStatus?.loop?.isPaused, loopStatus?.loop?.isRunning]);
+
+  async function onStartLoop() {
+    if (!selectedTapeIds.length || rangeError) return;
+    setError(null);
+    try {
+      const rangePayload = buildRangesPayload();
+      const precision: OptimizerPrecision = {
+        priceTh: Math.max(countDecimals(ranges.priceTh.min), countDecimals(ranges.priceTh.max)),
+        oivTh: Math.max(countDecimals(ranges.oivTh.min), countDecimals(ranges.oivTh.max)),
+        tp: Math.max(countDecimals(ranges.tp.min), countDecimals(ranges.tp.max)),
+        sl: Math.max(countDecimals(ranges.sl.min), countDecimals(ranges.sl.max)),
+        offset: Math.max(countDecimals(ranges.offset.min), countDecimals(ranges.offset.max)),
+        timeoutSec: Math.max(countDecimals(ranges.timeoutSec.min), countDecimals(ranges.timeoutSec.max)),
+        rearmMs: Math.max(countDecimals(ranges.rearmMs.min), countDecimals(ranges.rearmMs.max)),
+      };
+      await startOptimizerLoop({
+        tapeIds: selectedTapeIds,
+        candidates: Number(candidates),
+        seed: Number(seed),
+        minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
+        directionMode,
+        ...(optTfMin.trim() ? { optTfMin: Number(optTfMin) } : {}),
+        excludeNegative,
+        rememberNegatives,
+        ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
+        precision,
+        runsCount: Math.max(1, Math.floor(Number(loopRunsCount) || 1)),
+        infinite: loopInfinite,
+      });
+      const next = await getOptimizerLoopStatus();
+      setLoopStatus(next);
+      setRunning(true);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
+
+  async function onStopLoop() {
+    setError(null);
+    try {
+      await stopOptimizerLoop();
+      const next = await getOptimizerLoopStatus();
+      setLoopStatus(next);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
+
+  async function onPauseLoop() {
+    setError(null);
+    try {
+      await pauseOptimizerLoop();
+      const next = await getOptimizerLoopStatus();
+      setLoopStatus(next);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
+
+  async function onResumeLoop() {
+    setError(null);
+    try {
+      await resumeOptimizerLoop();
+      const next = await getOptimizerLoopStatus();
+      setLoopStatus(next);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
 
   async function onStartRecording() {
     setError(null);
@@ -800,6 +915,17 @@ export function OptimizerPage() {
                 {!optimizerPaused ? <Button variant="outline-warning" onClick={() => void onPauseOptimization()}>Pause</Button> : <Button variant="outline-primary" onClick={() => void onResumeOptimization()}>Resume</Button>}
                 <Button variant="outline-danger" onClick={() => void onStopOptimization()}>Stop</Button>
               </>) : null}
+              <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>runsCount</Form.Label>
+                <Form.Control value={loopRunsCount} onChange={(e) => setLoopRunsCount(e.currentTarget.value)} type="number" min={1} step={1} disabled={loopInfinite} />
+              </Form.Group>
+              <Form.Group>
+                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
+              </Form.Group>
+              <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={!selectedTapeIds.length || Boolean(rangeError)}>Start loop</Button>
+              <Button variant="outline-danger" onClick={() => void onStopLoop()}>Stop loop</Button>
+              <Button variant="outline-warning" onClick={() => void onPauseLoop()}>Pause loop</Button>
+              <Button variant="outline-success" onClick={() => void onResumeLoop()}>Resume loop</Button>
             </div>
 
             <h6>Ranges</h6>
@@ -838,6 +964,10 @@ export function OptimizerPage() {
             <div style={{ fontSize: 12, marginBottom: 8 }}>
               selected tapes: <b>{selectedTapeIds.length}</b>
               {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
+            </div>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>
+              Loop: <b>{loopStatus?.loop?.isRunning ? (loopStatus?.loop?.isPaused ? "paused" : "running") : "stopped"}</b>
+              {loopStatus?.loop ? ` · Run ${loopStatus.runsCompleted ?? loopStatus.loop.runIndex}/${loopStatus.runsTotal == null ? "∞" : loopStatus.runsTotal}` : ""}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             </div>
