@@ -660,7 +660,8 @@ const now = Date.now();
               job.message = `Replay diagnostics: decisionsOk=0, decisionsNoRefs=${output.diagnostics.decisionsNoRefs}.`;
             }
             const blacklistSummary = output.blacklist ? `Blacklisted: ${output.blacklist.count} (skipped ${output.blacklist.skipped})` : null;
-            const summaryParts = [job.message, tradedSummary, blacklistSummary].filter(Boolean);
+            const seedSummary = `Effective seed: ${output.seedInfo.effectiveSeed} (base ${output.seedInfo.baseSeed} + idx ${output.seedInfo.runIndex})`;
+            const summaryParts = [job.message, tradedSummary, blacklistSummary, seedSummary].filter(Boolean);
             job.message = summaryParts.join(" | ");
           }
           writeCheckpoint(jobId, job);
