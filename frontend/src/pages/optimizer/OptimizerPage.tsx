@@ -37,6 +37,7 @@ const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
 const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
 const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
+const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3 };
 
@@ -267,6 +268,7 @@ export function OptimizerPage() {
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
+  const [optTfMin, setOptTfMin] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [done, setDone] = useState(0);
@@ -304,6 +306,11 @@ export function OptimizerPage() {
     setSeed(loadStoredPositiveInt(SEED_STORAGE_KEY, "1", 0));
     const savedDirection = localStorage.getItem(DIRECTION_STORAGE_KEY);
     if (savedDirection === "long" || savedDirection === "short" || savedDirection === "both") setDirectionMode(savedDirection);
+    const savedOptTf = localStorage.getItem(OPT_TF_STORAGE_KEY);
+    if (savedOptTf != null) {
+      const n = Math.floor(Number(savedOptTf));
+      if (Number.isFinite(n) && n >= 1) setOptTfMin(String(n));
+    }
     void refreshStatus();
     setTapesRefreshKey((prev) => prev + 1);
     void (async () => {
@@ -354,6 +361,19 @@ export function OptimizerPage() {
   useEffect(() => {
     localStorage.setItem(DIRECTION_STORAGE_KEY, directionMode);
   }, [directionMode]);
+
+  useEffect(() => {
+    try {
+      if (!optTfMin.trim()) {
+        localStorage.removeItem(OPT_TF_STORAGE_KEY);
+      } else {
+        const n = Math.floor(Number(optTfMin));
+        if (Number.isFinite(n) && n >= 1) localStorage.setItem(OPT_TF_STORAGE_KEY, String(n));
+      }
+    } catch {
+      return;
+    }
+  }, [optTfMin]);
 
   async function onStartRecording() {
     setError(null);
@@ -469,6 +489,7 @@ export function OptimizerPage() {
         candidates: Number(candidates),
         seed: Number(seed),
         directionMode,
+        ...(optTfMin.trim() ? { optTfMin: Number(optTfMin) } : {}),
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
       });
@@ -636,6 +657,18 @@ export function OptimizerPage() {
                   <option value="both">Both</option>
                   <option value="long">Long</option>
                   <option value="short">Short</option>
+                </Form.Select>
+              </Form.Group>
+              <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
+                <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(e.currentTarget.value)}>
+                  <option value="">Auto (tape tf)</option>
+                  <option value="1">1</option>
+                  <option value="3">3</option>
+                  <option value="5">5</option>
+                  <option value="15">15</option>
+                  <option value="30">30</option>
+                  <option value="60">60</option>
                 </Form.Select>
               </Form.Group>
               <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || running || Boolean(rangeError)}>

@@ -5,3 +5,6 @@ build/
 .env.*
 npm-debug.log*
 yarn-error.log*
+# local tapes / recordings
+backend/data/tapes/
+*.jsonl

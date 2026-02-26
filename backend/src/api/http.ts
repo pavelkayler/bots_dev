@@ -405,6 +405,8 @@ const now = Date.now();
     const candidates = Number(body?.candidates);
     const seed = Number(body?.seed ?? 1);
     const directionMode = body?.directionMode == null ? "both" : String(body.directionMode);
+    const optTfMinRaw = body?.optTfMin;
+    const optTfMin = optTfMinRaw == null || String(optTfMinRaw).trim() === "" ? undefined : Math.floor(Number(optTfMinRaw));
 
     if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
       reply.code(400);
@@ -419,6 +421,13 @@ const now = Date.now();
     if (!["both", "long", "short"].includes(directionMode)) {
       reply.code(400);
       return { error: "invalid_direction_mode" };
+    }
+
+    if (optTfMin !== undefined) {
+      if (!Number.isFinite(optTfMin) || optTfMin < 1 || optTfMin > 240) {
+        reply.code(400);
+        return { error: "invalid_opt_tf_min" };
+      }
     }
 
     try {
@@ -461,6 +470,7 @@ const now = Date.now();
             ...(ranges ? { ranges } : {}),
             ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
             directionMode: directionMode as "both" | "long" | "short",
+            ...(optTfMin !== undefined ? { optTfMin } : {}),
             onProgress: (done, totalDone, partialResults) => {
               const rawPct = totalDone > 0 ? (done / totalDone) * 100 : 0;
               const pct2 = Math.max(0, Math.min(100, Math.round(rawPct * 100) / 100));

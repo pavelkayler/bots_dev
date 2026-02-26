@@ -223,6 +223,7 @@ export async function runOptimization(args: {
   seed: number;
   ranges?: OptimizerRanges;
   precision?: Partial<OptimizerPrecision>;
+  optTfMin?: number;
   onProgress?: (done: number, total: number, partialResults: OptimizerResult[]) => void;
   shouldStop?: () => boolean;
   directionMode?: "both" | "long" | "short";
@@ -276,7 +277,7 @@ export async function runOptimization(args: {
         marginUSDT: baseConfig.paper.marginUSDT,
         leverage: baseConfig.paper.leverage,
         entryOffsetPct: params.entryOffsetPct,
-        entryTimeoutSec: baseConfig.paper.entryTimeoutSec,
+        entryTimeoutSec: Math.max(baseConfig.paper.entryTimeoutSec, 15),
         tpRoiPct: params.tpRoiPct,
         slRoiPct: params.slRoiPct,
         makerFeeRate: baseConfig.paper.makerFeeRate,
@@ -311,8 +312,8 @@ export async function runOptimization(args: {
 
       const paper = new PaperBroker(candidateConfig.paper, logger as any);
       let lastEventTs = 0;
-      const tfMinRaw = Number(tape.meta?.klineTfMin ?? baseConfig.universe.klineTfMin);
-      const tfMinFromMeta = Number.isFinite(tfMinRaw) && tfMinRaw > 0 ? tfMinRaw : baseConfig.universe.klineTfMin;
+      const tfMinRaw = Number(args.optTfMin ?? tape.meta?.klineTfMin ?? baseConfig.universe.klineTfMin);
+      const tfMinFromMeta = Number.isFinite(tfMinRaw) && tfMinRaw > 0 ? Math.floor(tfMinRaw) : baseConfig.universe.klineTfMin;
       const durationMs = Math.max(0, (tape.lastTsMs ?? 0) - (tape.firstTsMs ?? 0));
       const durationMin = durationMs / 60_000;
       let effectiveTfMin = tfMinFromMeta;
@@ -354,6 +355,7 @@ export async function runOptimization(args: {
           const nextFundingTime = Number(row?.nextFundingTime ?? 0);
 
           const refs = candles.getRefs(event.symbol);
+          const useTrackerRefs = args.optTfMin == null;
 
           const bucketId = Math.floor(ts / tfMs);
           const fallbackState = fallbackBySymbol.get(event.symbol) ?? {
@@ -378,8 +380,8 @@ export async function runOptimization(args: {
           if (Number.isFinite(openInterestValue) && openInterestValue > 0) fallbackState.lastOivInBucket = openInterestValue;
           fallbackBySymbol.set(event.symbol, fallbackState);
 
-          const priceRef = refs.prevCandleClose ?? fallbackState.prevCandleClose;
-          const oivRef = refs.prevCandleOivClose ?? fallbackState.prevCandleOivClose;
+          const priceRef = useTrackerRefs ? (refs.prevCandleClose ?? fallbackState.prevCandleClose) : fallbackState.prevCandleClose;
+          const oivRef = useTrackerRefs ? (refs.prevCandleOivClose ?? fallbackState.prevCandleOivClose) : fallbackState.prevCandleOivClose;
           const priceMovePct = priceRef == null || markPrice <= 0 ? null : pctChange(markPrice, priceRef);
           const oivMovePct = oivRef == null || openInterestValue <= 0 ? null : pctChange(openInterestValue, oivRef);
 

@@ -1,0 +1,333 @@
+{
+  "summary": {
+    "generatedAt": 1772098947178,
+    "sessionId": "2026-02-26T09-39-31-061Z",
+    "startTs": 1772098771061,
+    "endTs": 1772098947165,
+    "durationSec": 176.104,
+    "trades": {
+      "total": 13,
+      "wins": 5,
+      "losses": 8,
+      "winRate": 0.384615,
+      "avgWin": 1.74997524,
+      "avgLoss": -1.4745788,
+      "expectancy": -0.23436571,
+      "avgHoldSec": 47.06
+    },
+    "pnl": {
+      "netRealized": -3.0467542,
+      "grossFromMove": 2.15324961,
+      "funding": 0,
+      "fees": 5.20000382
+    },
+    "equity": {
+      "maxDrawdown": 6.1934548,
+      "peak": 3.1467006,
+      "trough": -3.0467542
+    },
+    "perSymbol": [
+      {
+        "symbol": "RAVEUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 6.009583427201031
+      },
+      {
+        "symbol": "AZTECUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -3.9203477724530518
+      },
+      {
+        "symbol": "IDEXUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -2.4596958189012046
+      },
+      {
+        "symbol": "PENDLEUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -2.206324657902548
+      },
+      {
+        "symbol": "PIPPINUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 1.712231091696585
+      },
+      {
+        "symbol": "AKEUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -1.6316163031237028
+      },
+      {
+        "symbol": "BARDUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 0.6572974296207179
+      },
+      {
+        "symbol": "KITEUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -0.4582622945093452
+      },
+      {
+        "symbol": "AGLDUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -0.39000190001903284
+      },
+      {
+        "symbol": "POLUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -0.38999810001888724
+      },
+      {
+        "symbol": "ZKUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -0.3403835378306362
+      },
+      {
+        "symbol": "HYPEUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 0.19349804737703022
+      },
+      {
+        "symbol": "ARCUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 0.177266184009583
+      }
+    ]
+  },
+  "trades": [
+    {
+      "symbol": "PIPPINUSDT",
+      "side": "LONG",
+      "openedAt": 1772098917180,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.8322816771,
+      "closePrice": 0.83404,
+      "qty": 1201.5162985257555,
+      "closeType": "FORCE",
+      "pnlFromMove": 2.1126536224210692,
+      "fundingAccrued": 0,
+      "feesPaid": 0.40042253072448425,
+      "realizedPnl": 1.712231091696585,
+      "holdMs": 29979
+    },
+    {
+      "symbol": "HYPEUSDT",
+      "side": "LONG",
+      "openedAt": 1772098891167,
+      "closedAt": 1772098947159,
+      "entryPrice": 29.12870871,
+      "closePrice": 29.146,
+      "qty": 34.33039239589416,
+      "closeType": "FORCE",
+      "pnlFromMove": 0.5936167707311765,
+      "fundingAccrued": 0,
+      "feesPaid": 0.4001187233541462,
+      "realizedPnl": 0.19349804737703022,
+      "holdMs": 55992
+    },
+    {
+      "symbol": "KITEUSDT",
+      "side": "LONG",
+      "openedAt": 1772098904178,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.2929370706,
+      "closePrice": 0.29292,
+      "qty": 3413.702465009903,
+      "closeType": "FORCE",
+      "pnlFromMove": -0.05827394929920503,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39998834521014015,
+      "realizedPnl": -0.4582622945093452,
+      "holdMs": 42981
+    },
+    {
+      "symbol": "AGLDUSDT",
+      "side": "LONG",
+      "openedAt": 1772098906179,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.28015719840000003,
+      "closePrice": 0.28016,
+      "qty": 3569.4246148629386,
+      "closeType": "FORCE",
+      "pnlFromMove": 0.01000010000096737,
+      "fundingAccrued": 0,
+      "feesPaid": 0.4000020000200002,
+      "realizedPnl": -0.39000190001903284,
+      "holdMs": 40980
+    },
+    {
+      "symbol": "AZTECUSDT",
+      "side": "LONG",
+      "openedAt": 1772098910179,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.02492175078,
+      "closePrice": 0.024834,
+      "qty": 40125.59185057383,
+      "closeType": "FORCE",
+      "pnlFromMove": -3.5210519828496216,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3992957896034301,
+      "realizedPnl": -3.9203477724530518,
+      "holdMs": 36980
+    },
+    {
+      "symbol": "RAVEUSDT",
+      "side": "LONG",
+      "openedAt": 1772098917180,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.3593264067,
+      "closePrice": 0.36163,
+      "qty": 2782.9850001391505,
+      "closeType": "FORCE",
+      "pnlFromMove": 6.410865600321095,
+      "fundingAccrued": 0,
+      "feesPaid": 0.4012821731200642,
+      "realizedPnl": 6.009583427201031,
+      "holdMs": 29979
+    },
+    {
+      "symbol": "POLUSDT",
+      "side": "SHORT",
+      "openedAt": 1772098846126,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.11100111000000001,
+      "closePrice": 0.111,
+      "qty": 9008.91891981981,
+      "closeType": "FORCE",
+      "pnlFromMove": 0.009999900001112508,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39999800001999974,
+      "realizedPnl": -0.38999810001888724,
+      "holdMs": 101033
+    },
+    {
+      "symbol": "ARCUSDT",
+      "side": "LONG",
+      "openedAt": 1772098946217,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.035249647499999995,
+      "closePrice": 0.03527,
+      "qty": 28369.078017021307,
+      "closeType": "FORCE",
+      "pnlFromMove": 0.5773816603416513,
+      "fundingAccrued": 0,
+      "feesPaid": 0.40011547633206834,
+      "realizedPnl": 0.177266184009583,
+      "holdMs": 942
+    },
+    {
+      "symbol": "AKEUSDT",
+      "side": "LONG",
+      "openedAt": 1772098828111,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.00032209677900000005,
+      "closePrice": 0.0003217,
+      "qty": 3104656.939149335,
+      "closeType": "FORCE",
+      "pnlFromMove": -1.2318626756588347,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3997536274648682,
+      "realizedPnl": -1.6316163031237028,
+      "holdMs": 119048
+    },
+    {
+      "symbol": "ZKUSDT",
+      "side": "LONG",
+      "openedAt": 1772098904178,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.020149798500000003,
+      "closePrice": 0.020151,
+      "qty": 49628.287846153886,
+      "closeType": "FORCE",
+      "pnlFromMove": 0.059628387846933216,
+      "fundingAccrued": 0,
+      "feesPaid": 0.4000119256775694,
+      "realizedPnl": -0.3403835378306362,
+      "holdMs": 42981
+    },
+    {
+      "symbol": "PENDLEUSDT",
+      "side": "LONG",
+      "openedAt": 1772098914180,
+      "closedAt": 1772098947159,
+      "entryPrice": 1.321086789,
+      "closePrice": 1.3187,
+      "qty": 756.95253962607,
+      "closeType": "FORCE",
+      "pnlFromMove": -1.8066859951015681,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39963866280097976,
+      "realizedPnl": -2.206324657902548,
+      "holdMs": 32979
+    },
+    {
+      "symbol": "BARDUSDT",
+      "side": "SHORT",
+      "openedAt": 1772098910179,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.8786287862000001,
+      "closePrice": 0.8777,
+      "qty": 1138.1370787143462,
+      "closeType": "FORCE",
+      "pnlFromMove": 1.0570860124182342,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3997885827975164,
+      "realizedPnl": 0.6572974296207179,
+      "holdMs": 36980
+    },
+    {
+      "symbol": "IDEXUSDT",
+      "side": "LONG",
+      "openedAt": 1772098906179,
+      "closedAt": 1772098947159,
+      "entryPrice": 0.00676293237,
+      "closePrice": 0.006749,
+      "qty": 147864.85289072912,
+      "closeType": "FORCE",
+      "pnlFromMove": -2.060107840469298,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3995879784319062,
+      "realizedPnl": -2.4596958189012046,
+      "holdMs": 40980
+    }
+  ]
+}
