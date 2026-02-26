@@ -54,6 +54,7 @@ export type OptimizerLoopStatus = {
     runIndex: number;
     createdAtMs: number;
     updatedAtMs: number;
+    finishedAtMs?: number | null;
     lastJobId: string | null;
     runPayload: Record<string, unknown>;
   } | null;
@@ -65,6 +66,15 @@ export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
 export type OptimizerSortDir = "asc" | "desc";
 export type OptimizerPrecision = Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", number>;
 export type OptimizerSettings = { tapesDir: string };
+
+export type DoctorStatus = {
+  ok: boolean;
+  nowMs: number;
+  ports: { http: number };
+  disk: { dataDir: string; freeBytes: number | null };
+  paths: { tapesDir: string; checkpointsDir: string; blacklistsDir: string };
+  warnings: string[];
+};
 
 export type OptimizerSortKeyExtended =
   | OptimizerSortKey
@@ -213,4 +223,9 @@ export async function resumeOptimizerLoop(): Promise<{ ok: true }> {
 export async function getOptimizerLoopStatus(): Promise<OptimizerLoopStatus> {
   const base = getApiBase();
   return await getJson<OptimizerLoopStatus>(`${base}/api/optimizer/loop/status`);
+}
+
+export async function getDoctorStatus(): Promise<DoctorStatus> {
+  const base = getApiBase();
+  return await getJson<DoctorStatus>(`${base}/api/doctor`);
 }

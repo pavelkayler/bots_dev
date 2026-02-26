@@ -22,6 +22,8 @@ import {
   pauseOptimizerLoop,
   resumeOptimizerLoop,
   getOptimizerLoopStatus,
+  getDoctorStatus,
+  type DoctorStatus,
   type OptimizerLoopStatus,
   type OptimizationResult,
   type OptimizerPrecision,
@@ -268,8 +270,7 @@ function formatDuration(sec: number | null): string {
   const hh = Math.floor(total / 3600);
   const mm = Math.floor((total % 3600) / 60);
   const ss = total % 60;
-  if (hh > 0) return `${hh.toString().padStart(2, "0")}:${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
-  return `${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
+  return `${hh.toString().padStart(2, "0")}:${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
 }
 
 function roundTo2(value: number): number {
@@ -336,6 +337,8 @@ export function OptimizerPage() {
   const [loopInfinite, setLoopInfinite] = useState(false);
   const [loopStatus, setLoopStatus] = useState<OptimizerLoopStatus | null>(null);
   const [loopBusy, setLoopBusy] = useState(false);
+  const [doctorStatus, setDoctorStatus] = useState<DoctorStatus | null>(null);
+  const [doctorBusy, setDoctorBusy] = useState(false);
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
 
@@ -351,6 +354,15 @@ export function OptimizerPage() {
       setError(String(e?.message ?? e));
     }
   }
+
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const id = window.setInterval(() => {
+      void refreshStatus();
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [isRecording]);
 
   useEffect(() => {
     setRanges(loadSavedRanges());
@@ -465,10 +477,10 @@ export function OptimizerPage() {
   }, [loopInfinite]);
 
   useEffect(() => {
-    if (jobStatus !== "running") return;
+    if (jobStatus !== "running" && !loopStatus?.loop?.isRunning) return;
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [jobStatus]);
+  }, [jobStatus, loopStatus?.loop?.isRunning]);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -854,6 +866,20 @@ export function OptimizerPage() {
     }
   }
 
+
+  async function onCheckDoctor() {
+    setDoctorBusy(true);
+    setError(null);
+    try {
+      const next = await getDoctorStatus();
+      setDoctorStatus(next);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setDoctorBusy(false);
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const isRunningStatus = jobStatus === "running";
   const endMs = !jobStartedAtMs
@@ -865,6 +891,13 @@ export function OptimizerPage() {
   const etaSec = isRunningStatus && done > 0.01 && elapsedSec != null ? elapsedSec * (100 / done - 1) : null;
   const hasJobProgress = Boolean(activeJobId && (jobStatus === "running" || jobStatus === "paused" || jobStatus === "done"));
   const pct = clamp(roundTo2(jobStatus === "done" ? 100 : done), 0, 100);
+  const loopStartMs = loopStatus?.loop?.createdAtMs ?? null;
+  const loopEndMs = !loopStartMs
+    ? null
+    : loopRunning
+      ? nowMs
+      : (loopStatus?.loop?.finishedAtMs ?? loopStatus?.loop?.updatedAtMs ?? loopStartMs);
+  const loopElapsedSec = loopStartMs == null || loopEndMs == null ? null : Math.max(0, (loopEndMs - loopStartMs) / 1000);
 
   return (
     <>
@@ -918,6 +951,22 @@ export function OptimizerPage() {
               recordingTapeId={recordingTapeId}
               onError={setError}
             />
+
+            <details style={{ marginBottom: 12 }}>
+              <summary style={{ cursor: "pointer", fontSize: 13 }}><b>Doctor</b></summary>
+              <div style={{ marginTop: 8, fontSize: 12 }}>
+                <Button size="sm" variant="outline-secondary" onClick={() => void onCheckDoctor()} disabled={doctorBusy}>Check</Button>
+                {doctorStatus ? (
+                  <div style={{ marginTop: 8 }}>
+                    <div>ok: <b>{doctorStatus.ok ? "true" : "false"}</b></div>
+                    <div>http: <b>{doctorStatus.ports.http}</b></div>
+                    <div>free bytes: <b>{doctorStatus.disk.freeBytes == null ? "-" : doctorStatus.disk.freeBytes.toLocaleString()}</b></div>
+                    <div>warnings: <b>{doctorStatus.warnings.length}</b></div>
+                    {doctorStatus.warnings.length ? <ul style={{ marginBottom: 0 }}>{doctorStatus.warnings.map((w) => <li key={w}>{w}</li>)}</ul> : null}
+                  </div>
+                ) : null}
+              </div>
+            </details>
 
             <h6>Optimization</h6>
             <Row className="g-2 align-items-end mb-2">
@@ -1050,6 +1099,7 @@ export function OptimizerPage() {
               Loop: <b>{loopRunning ? (loopPaused ? "paused" : "running") : "stopped"}</b>
               {loopExists && loopStatus?.loop ? ` · Run ${loopStatus.runsCompleted ?? loopStatus.loop.runIndex}/${loopStatus.runsTotal == null ? "∞" : loopStatus.runsTotal}` : ""}
             </div>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>Loop elapsed: <b>{formatDuration(loopElapsedSec)}</b></div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             </div>
 

@@ -70,6 +70,8 @@ const optimizerJobs = new Map<string, OptimizerJob>();
 const optimizerJobStartedAt = new Map<string, number>();
 let latestOptimizerJobId: string | null = null;
 const checkpointDir = path.resolve(process.cwd(), "data/optimizer_checkpoints");
+const optimizerBlacklistsDir = path.resolve(process.cwd(), "data/optimizer_blacklists");
+const MAX_CHECKPOINT_FILES = 5;
 let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
 
 
@@ -80,6 +82,27 @@ function ensureCheckpointDir() {
 function checkpointPath(jobId: string) {
   ensureCheckpointDir();
   return path.join(checkpointDir, `job-${jobId}.json`);
+}
+
+function writeFileAtomic(filePath: string, body: string) {
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(tempPath, body, "utf8");
+  fs.renameSync(tempPath, filePath);
+}
+
+function pruneOldCheckpoints() {
+  ensureCheckpointDir();
+  const files = fs.readdirSync(checkpointDir)
+    .filter((name) => /^job-.+\.json$/.test(name))
+    .map((name) => ({ name, filePath: path.join(checkpointDir, name), mtimeMs: fs.statSync(path.join(checkpointDir, name)).mtimeMs }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const file of files.slice(MAX_CHECKPOINT_FILES)) {
+    try {
+      fs.unlinkSync(file.filePath);
+    } catch {
+      continue;
+    }
+  }
 }
 
 function writeCheckpoint(jobId: string, job: OptimizerJob) {
@@ -100,7 +123,8 @@ function writeCheckpoint(jobId: string, job: OptimizerJob) {
     runKey: job.runKey,
     finishedAtMs: job.finishedAtMs,
   };
-  fs.writeFileSync(checkpointPath(jobId), JSON.stringify(checkpoint, null, 2), "utf8");
+  writeFileAtomic(checkpointPath(jobId), JSON.stringify(checkpoint, null, 2));
+  pruneOldCheckpoints();
 }
 
 function restoreLatestCheckpoint() {
@@ -280,7 +304,15 @@ function isOptimizerJobTerminal(status: OptimizerJob["status"]) {
 
 function updateLoopState(patch: Partial<OptimizerLoopState>) {
   if (!optimizerLoopState) return;
-  optimizerLoopState = { ...optimizerLoopState, ...patch, updatedAtMs: Date.now() };
+  const now = Date.now();
+  const next: OptimizerLoopState = { ...optimizerLoopState, ...patch, updatedAtMs: now };
+  if (patch.isRunning === false && optimizerLoopState.isRunning && optimizerLoopState.finishedAtMs == null) {
+    next.finishedAtMs = now;
+  }
+  if (patch.isRunning === true) {
+    next.finishedAtMs = null;
+  }
+  optimizerLoopState = next;
   writeLoopState(optimizerLoopState);
 }
 
@@ -335,6 +367,29 @@ function getLoopLastJobStatus() {
   };
 }
 
+
+function ensureWritableDir(dirPath: string): string | null {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+    return null;
+  } catch (e: any) {
+    return `${dirPath}: ${String(e?.message ?? e)}`;
+  }
+}
+
+function readFreeBytesBestEffort(dirPath: string): number | null {
+  try {
+    const stat = fs.statfsSync(dirPath);
+    const bsize = Number((stat as any).bsize);
+    const bavail = Number((stat as any).bavail);
+    if (!Number.isFinite(bsize) || !Number.isFinite(bavail)) return null;
+    return Math.max(0, Math.floor(bsize * bavail));
+  } catch {
+    return null;
+  }
+}
+
 export function registerHttpRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ ok: true }));
 
@@ -346,6 +401,30 @@ export function registerHttpRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/session/status", async () => runtime.getStatus());
+
+
+  app.get("/api/doctor", async () => {
+    const tapesDir = getOptimizerSettings().tapesDir;
+    const warnings: string[] = [];
+    const tapeWarning = ensureWritableDir(tapesDir);
+    if (tapeWarning) warnings.push(`tapesDir not writable: ${tapeWarning}`);
+    const checkpointWarning = ensureWritableDir(checkpointDir);
+    if (checkpointWarning) warnings.push(`checkpointsDir not writable: ${checkpointWarning}`);
+    const blacklistWarning = ensureWritableDir(optimizerBlacklistsDir);
+    if (blacklistWarning) warnings.push(`blacklistsDir not writable: ${blacklistWarning}`);
+    return {
+      ok: warnings.length === 0,
+      nowMs: Date.now(),
+      ports: { http: Number(process.env.PORT ?? 8080) },
+      disk: { dataDir: path.resolve(process.cwd(), "data"), freeBytes: readFreeBytesBestEffort(path.resolve(process.cwd(), "data")) },
+      paths: {
+        tapesDir,
+        checkpointsDir: checkpointDir,
+        blacklistsDir: optimizerBlacklistsDir,
+      },
+      warnings,
+    };
+  });
 
   app.post("/api/session/start", async (_req, reply) => {
     const cfg = configStore.get();
@@ -786,6 +865,7 @@ const now = Date.now();
       runIndex: 0,
       createdAtMs: now,
       updatedAtMs: now,
+      finishedAtMs: null,
       lastJobId: null,
       runPayload: payload,
     };
