@@ -462,12 +462,11 @@ const now = Date.now();
             ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
             directionMode: directionMode as "both" | "long" | "short",
             onProgress: (done, totalDone, partialResults) => {
-              const pct = totalDone > 0 ? Math.floor((done / totalDone) * 100) : 0;
-              if (pct > job.lastPct) {
-                job.lastPct = pct;
-                job.done = pct;
-                job.total = 100;
-              }
+              const rawPct = totalDone > 0 ? (done / totalDone) * 100 : 0;
+              const pct2 = Math.max(0, Math.min(100, Math.round(rawPct * 100) / 100));
+              job.lastPct = pct2;
+              job.done = pct2;
+              job.total = 100;
               job.results = partialResults;
             },
             shouldStop: () => job.cancelRequested,
@@ -481,6 +480,9 @@ const now = Date.now();
             job.done = 100;
             job.total = 100;
             job.status = "done";
+            if (output.diagnostics && output.diagnostics.decisionsOk === 0 && output.diagnostics.decisionsNoRefs > 0) {
+              job.message = `Replay diagnostics: decisionsOk=0, decisionsNoRefs=${output.diagnostics.decisionsNoRefs}.`;
+            }
           }
         } catch (e: any) {
           job.status = "error";
