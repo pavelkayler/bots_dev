@@ -9,7 +9,7 @@ import { deleteUniverse, listUniverses, readUniverse, writeUniverse, formatUnive
 import { buildUniverseByTickersWs } from "../universe/universeBuilder.js";
 import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
-import type { SessionSummaryResponse } from "../paper/summary.js";
+type SessionSummaryResponse = any;
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
 import { getOptimizerSettings, listTapes, safeId, setOptimizerSettings } from "../optimizer/tapeStore.js";
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
@@ -403,6 +403,7 @@ const now = Date.now();
     const tapeIds = (tapeIdsRaw ?? [body?.tapeId]).map((v: unknown) => String(v ?? "").trim()).filter(Boolean);
     const candidates = Number(body?.candidates);
     const seed = Number(body?.seed ?? 1);
+    const directionMode = body?.directionMode == null ? "both" : String(body.directionMode);
 
     if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
       reply.code(400);
@@ -412,6 +413,11 @@ const now = Date.now();
     if (!tapeIds.length) {
       reply.code(400);
       return { error: "invalid_tape_id", message: "No tape IDs provided" };
+    }
+
+    if (!["both", "long", "short"].includes(directionMode)) {
+      reply.code(400);
+      return { error: "invalid_direction_mode" };
     }
 
     try {
@@ -452,6 +458,7 @@ const now = Date.now();
             seed: Number.isFinite(seed) ? seed : 1,
             ...(ranges ? { ranges } : {}),
             ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
+            directionMode: directionMode as "both" | "long" | "short",
             onProgress: (done, totalDone) => {
               const pct = totalDone > 0 ? Math.floor((done / totalDone) * 100) : 0;
               if (pct > job.lastPct) {
@@ -528,6 +535,30 @@ const now = Date.now();
       sortKey,
       sortDir,
       results: pageRows,
+    };
+  });
+
+
+  app.get("/api/stats/trade-by-symbol", async (req, reply) => {
+    const query = (req.query ?? {}) as any;
+    const mode = String(query.mode ?? "both");
+    if (!["both", "long", "short"].includes(mode)) {
+      reply.code(400);
+      return { error: "invalid_mode" };
+    }
+    const symbols = configStore.get().universe.symbols ?? [];
+    return {
+      sessionId: runtime.getStatus().sessionId,
+      mode,
+      stats: runtime.getTradeStatsBySymbol(mode as "both" | "long" | "short", symbols),
+    };
+  });
+
+  app.get("/api/stats/trade-excursions-by-symbol", async () => {
+    const symbols = configStore.get().universe.symbols ?? [];
+    return {
+      sessionId: runtime.getStatus().sessionId,
+      stats: runtime.getTradeExcursionsBySymbol(symbols),
     };
   });
 

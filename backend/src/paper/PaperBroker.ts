@@ -49,6 +49,8 @@ type Position = {
     fundingAccrued: number;
 
     lastFundingAppliedForNextFundingTime: number | null;
+    minRoiPct: number;
+    maxRoiPct: number;
 };
 
 type SymbolState = {
@@ -102,6 +104,12 @@ function calcTpSl(entry: number, side: PaperSide, leverage: number, tpRoiPct: nu
 
 function fee(notional: number, rate: number) {
     return notional * rate;
+}
+
+function calcRoiPct(side: PaperSide, entryPrice: number, markPrice: number, leverage: number): number {
+    if (!Number.isFinite(entryPrice) || !Number.isFinite(markPrice) || entryPrice <= 0 || leverage <= 0) return 0;
+    if (side === "LONG") return ((markPrice - entryPrice) / entryPrice) * leverage * 100;
+    return ((entryPrice - markPrice) / entryPrice) * leverage * 100;
 }
 
 export class PaperBroker {
@@ -278,7 +286,10 @@ export class PaperBroker {
                         pnlFromMove,
                         fundingAccrued: p.fundingAccrued,
                         feesPaid: p.feesPaid,
-                        realizedPnl: p.realizedPnl
+                        realizedPnl: p.realizedPnl,
+                        minRoiPct: p.minRoiPct,
+                        maxRoiPct: p.maxRoiPct,
+                        closedAt: nowMs
                     }
                 });
 
@@ -349,6 +360,10 @@ export class PaperBroker {
                 }
             }
 
+            const roiPct = calcRoiPct(p.side, p.entryPrice, markPrice, this.cfg.leverage);
+            p.minRoiPct = Math.min(p.minRoiPct, roiPct);
+            p.maxRoiPct = Math.max(p.maxRoiPct, roiPct);
+
             // TP/SL check
             let closeType: "TP" | "SL" | null = null;
             let closePrice: number | null = null;
@@ -397,7 +412,10 @@ export class PaperBroker {
                         pnlFromMove,
                         fundingAccrued: p.fundingAccrued,
                         feesPaid: p.feesPaid,
-                        realizedPnl: p.realizedPnl
+                        realizedPnl: p.realizedPnl,
+                        minRoiPct: p.minRoiPct,
+                        maxRoiPct: p.maxRoiPct,
+                        closedAt: nowMs
                     }
                 });
 
@@ -456,7 +474,9 @@ export class PaperBroker {
                     realizedPnl: 0,
                     feesPaid: entryFee,
                     fundingAccrued: 0,
-                    lastFundingAppliedForNextFundingTime: null
+                    lastFundingAppliedForNextFundingTime: null,
+                    minRoiPct: 0,
+                    maxRoiPct: 0
                 };
 
                 pos.realizedPnl -= entryFee;

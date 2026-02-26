@@ -149,6 +149,18 @@ function parseKlineSymbol(topic: string): string | null {
   return parts[2] ?? null;
 }
 
+
+function toMskDayKey(ts: number): string {
+  const shifted = ts + 3 * 60 * 60 * 1000;
+  return new Date(shifted).toISOString().slice(0, 10);
+}
+
+type DailyGateState = {
+  currentDayKey: string;
+  dailyTriggerCount: number;
+  lastTriggeredCandleId: number | null;
+};
+
 function pctChange(now: number, ref: number): number | null {
   if (!Number.isFinite(now) || !Number.isFinite(ref) || ref === 0) return null;
   return ((now - ref) / ref) * 100;
@@ -231,6 +243,8 @@ export function createWsHub(app: FastifyInstance) {
   // Universe tracking (auto-apply via reconnect when changed)
   let lastUniverseKey = JSON.stringify(configStore.get().universe);
   let universeApplyTimer: NodeJS.Timeout | null = null;
+  const dailyGateBySymbol = new Map<string, DailyGateState>();
+  let lastGateSessionId: string | null = runtime.getStatus().sessionId;
 
   function broadcastStreamsState() {
     const msg: ServerWsMessage = { type: "streams_state", payload: { streamsEnabled, bybitConnected } };
@@ -247,6 +261,11 @@ export function createWsHub(app: FastifyInstance) {
 
     const cfg = configStore.get();
     const symbols = Array.isArray(cfg.universe?.symbols) ? cfg.universe.symbols : [];
+    const sessionId = runtime.getStatus().sessionId;
+    if (sessionId !== lastGateSessionId) {
+      dailyGateBySymbol.clear();
+      lastGateSessionId = sessionId;
+    }
 
     const out: SymbolRowBase[] = [];
 
@@ -283,8 +302,32 @@ export function createWsHub(app: FastifyInstance) {
         cooldownActive,
       });
 
-      const signal = decision.signal;
-      const signalReason = signal ? decision.reason : "";
+      const tfMs = Math.max(1, Number(cfg.universe.klineTfMin || 1)) * 60_000;
+      const candleId = Math.floor(now / tfMs);
+      const dayKey = toMskDayKey(now);
+      const gateState = dailyGateBySymbol.get(symbol) ?? { currentDayKey: dayKey, dailyTriggerCount: 0, lastTriggeredCandleId: null };
+      if (gateState.currentDayKey !== dayKey) {
+        gateState.currentDayKey = dayKey;
+        gateState.dailyTriggerCount = 0;
+        gateState.lastTriggeredCandleId = null;
+      }
+
+      let signal = decision.signal;
+      let signalReason = signal ? decision.reason : "";
+      if (signal && gateState.lastTriggeredCandleId !== candleId) {
+        gateState.dailyTriggerCount += 1;
+        gateState.lastTriggeredCandleId = candleId;
+      }
+      if (signal) {
+        if (gateState.dailyTriggerCount < cfg.signals.dailyTriggerMin) {
+          signal = null;
+          signalReason = "daily_gate_before_min";
+        } else if (gateState.dailyTriggerCount > cfg.signals.dailyTriggerMax) {
+          signal = null;
+          signalReason = "daily_gate_over_max";
+        }
+      }
+      dailyGateBySymbol.set(symbol, gateState);
 
       out.push({
         symbol,
@@ -521,12 +564,14 @@ export function createWsHub(app: FastifyInstance) {
       onKline: (topic, _type, data) => {
         const symbol = parseKlineSymbol(topic);
         if (!symbol) return;
-        const confirmRaw = data?.confirm;
+        const klineRow = Array.isArray(data) ? data[0] : data;
+        if (!klineRow || typeof klineRow !== "object") return;
+        const confirmRaw = (klineRow as any)?.confirm;
         const isConfirm = confirmRaw === true || confirmRaw === "true" || confirmRaw === 1 || confirmRaw === "1";
         if (isConfirm) {
-          tapeRecorder.recordKlineConfirm(Date.now(), symbol, { close: data?.close ?? data?.c ?? data?.closePrice });
+          tapeRecorder.recordKlineConfirm(Date.now(), symbol, { close: (klineRow as any)?.close ?? (klineRow as any)?.c ?? (klineRow as any)?.closePrice });
         }
-        candles.ingestKline(symbol, data);
+        candles.ingestKline(symbol, klineRow);
       },
     });
 
