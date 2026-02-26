@@ -82,6 +82,18 @@ export function getTapePath(id: string): string {
   return path.join(getTapesDir(), `${safeId(id)}.jsonl`);
 }
 
+export function resolveTapePath(id: string): string {
+  const tapePath = getTapePath(id);
+  const realTapesDir = fs.realpathSync.native(getTapesDir());
+  const resolvedPath = path.resolve(tapePath);
+  const parentDir = path.dirname(resolvedPath);
+  const realParentDir = fs.existsSync(parentDir) ? fs.realpathSync.native(parentDir) : path.resolve(parentDir);
+  if (realParentDir !== realTapesDir) {
+    throw new Error("invalid_tape_path");
+  }
+  return resolvedPath;
+}
+
 export function listTapes(): TapeListItem[] {
   ensureDir();
   const tapesDir = getTapesDir();

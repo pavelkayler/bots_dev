@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline";
 import { runtime } from "../runtime/runtime.js";
 import { CONFIG } from "../config.js";
 import { configStore } from "../runtime/configStore.js";
@@ -11,7 +12,7 @@ import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
 type SessionSummaryResponse = any;
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
-import { getOptimizerSettings, listTapes, safeId, setOptimizerSettings } from "../optimizer/tapeStore.js";
+import { getOptimizerSettings, listTapes, resolveTapePath, safeId, setOptimizerSettings } from "../optimizer/tapeStore.js";
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 import {
   DEFAULT_OPTIMIZER_PRECISION,
@@ -58,6 +59,95 @@ function toNumberOrUndefined(value: unknown): number | undefined {
   const n = Number(value);
   if (!Number.isFinite(n)) throw new Error("invalid_numeric_range");
   return n;
+}
+
+function toPositiveNumberOrFallback(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1]! + sorted[mid]!) / 2;
+  }
+  return sorted[mid]!;
+}
+
+async function analyzeTapeQa(tapePath: string, tfMin: number, entryTimeoutSec: number) {
+  let firstTsMs: number | null = null;
+  let lastTsMs: number | null = null;
+  let tickerLines = 0;
+  const symbolsSeen = new Set<string>();
+  const lastTsBySymbol = new Map<string, number>();
+  const deltasBySymbol = new Map<string, number[]>();
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(tapePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed: any;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (parsed?.type !== "ticker" || !parsed.payload || typeof parsed.payload !== "object") continue;
+
+    const payload = parsed.payload as { ts?: unknown; symbol?: unknown };
+    const ts = Number(payload.ts);
+    if (!Number.isFinite(ts)) continue;
+    const tsMs = ts < 1e12 ? ts * 1000 : ts;
+    const symbol = String(payload.symbol ?? "").trim();
+    if (!symbol) continue;
+
+    tickerLines += 1;
+    symbolsSeen.add(symbol);
+    firstTsMs = firstTsMs == null ? tsMs : Math.min(firstTsMs, tsMs);
+    lastTsMs = lastTsMs == null ? tsMs : Math.max(lastTsMs, tsMs);
+
+    const prevTs = lastTsBySymbol.get(symbol);
+    if (prevTs != null) {
+      const deltaSec = (tsMs - prevTs) / 1000;
+      if (deltaSec > 0) {
+        const deltas = deltasBySymbol.get(symbol) ?? [];
+        if (deltas.length < 2000) {
+          deltas.push(deltaSec);
+          deltasBySymbol.set(symbol, deltas);
+        }
+      }
+    }
+    lastTsBySymbol.set(symbol, tsMs);
+  }
+
+  const durationMs = firstTsMs != null && lastTsMs != null ? Math.max(0, lastTsMs - firstTsMs) : 0;
+  const durationSec = durationMs / 1000;
+  const durationMin = durationMs / 60000;
+  const mediansPerSymbol: number[] = [];
+  for (const deltas of deltasBySymbol.values()) {
+    const m = median(deltas);
+    if (m != null) mediansPerSymbol.push(m);
+  }
+  const medianOfMediansSec = median(mediansPerSymbol);
+
+  return {
+    tickerLines,
+    symbolsSeen: symbolsSeen.size,
+    firstTsMs: firstTsMs ?? 0,
+    lastTsMs: lastTsMs ?? 0,
+    durationSec,
+    durationMin,
+    medianTickIntervalSec: medianOfMediansSec,
+    tooShortForTf: durationMin < tfMin,
+    sparse: medianOfMediansSec != null && medianOfMediansSec > entryTimeoutSec,
+  };
 }
 
 function parseRanges(raw: any): OptimizerRanges | undefined {
@@ -358,6 +448,36 @@ const now = Date.now();
 
   app.get("/api/optimizer/tapes", async () => {
     return { tapes: listTapes() };
+  });
+
+  app.get("/api/optimizer/tapes/:tapeId/qa", async (req, reply) => {
+    const tapeId = String((req.params as any).tapeId ?? "").trim();
+    const tfMin = toPositiveNumberOrFallback((req.query as any)?.tfMin, 1);
+    const runtimeEntryTimeoutSec = Number((configStore.get() as any)?.signals?.entryTimeoutSec);
+    const entryTimeoutDefault = Number.isFinite(runtimeEntryTimeoutSec) && runtimeEntryTimeoutSec > 0 ? runtimeEntryTimeoutSec : 15;
+    const entryTimeoutSec = toPositiveNumberOrFallback((req.query as any)?.entryTimeoutSec, entryTimeoutDefault);
+
+    try {
+      safeId(tapeId);
+      const tapePath = resolveTapePath(tapeId);
+      if (!fs.existsSync(tapePath)) {
+        reply.code(404);
+        return { error: "tape_not_found" };
+      }
+      const qa = await analyzeTapeQa(tapePath, tfMin, entryTimeoutSec);
+      return { tapeId, ...qa };
+    } catch (e: any) {
+      if (String(e?.message ?? e) === "invalid_tape_id") {
+        reply.code(400);
+        return { error: "invalid_tape_id" };
+      }
+      if (String(e?.message ?? e) === "invalid_tape_path") {
+        reply.code(400);
+        return { error: "invalid_tape_path" };
+      }
+      reply.code(500);
+      return { error: "tape_qa_failed", message: String(e?.message ?? e) };
+    }
   });
 
   app.get("/api/optimizer/settings", async () => {
