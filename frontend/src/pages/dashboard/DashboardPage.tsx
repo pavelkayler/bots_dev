@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Container, Form } from "react-bootstrap";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -31,55 +31,15 @@ export function DashboardPage() {
     requestRowsRefresh
   } = useWsFeed();
 
-  const { status, busy, error, start, stop, canStart, canStop } = useSessionRuntime();
+  const { status, busy, error, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
   const [activeOnly, setActiveOnly] = useState(true);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [isRebooting, setIsRebooting] = useState(false);
   const [draftKlineTfMin, setDraftKlineTfMin] = useState(1);
-  const wsSessionStateRef = useRef(wsSessionState);
-  const wsSessionIdRef = useRef(wsSessionId);
-  const waitersRef = useRef<Array<{ predicate: () => boolean; resolve: () => void }>>([]);
-
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
-
-
-  useEffect(() => {
-    wsSessionStateRef.current = wsSessionState;
-    wsSessionIdRef.current = wsSessionId;
-    const remaining: Array<{ predicate: () => boolean; resolve: () => void }> = [];
-    for (const waiter of waitersRef.current) {
-      if (waiter.predicate()) waiter.resolve();
-      else remaining.push(waiter);
-    }
-    waitersRef.current = remaining;
-  }, [wsSessionState, wsSessionId]);
-
-  function waitForWs(predicate: () => boolean) {
-    if (predicate()) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      waitersRef.current.push({ predicate, resolve });
-    });
-  }
-
-  async function onApplyAndReboot() {
-    const previousSessionId = wsSessionIdRef.current;
-    setIsRebooting(true);
-    try {
-      if (wsSessionStateRef.current === "RUNNING") {
-        await stop();
-        await waitForWs(() => wsSessionStateRef.current === "STOPPED");
-      }
-      await start();
-      await waitForWs(() => wsSessionStateRef.current === "RUNNING" && Boolean(wsSessionIdRef.current) && wsSessionIdRef.current !== previousSessionId);
-    } finally {
-      setIsRebooting(false);
-    }
-  }
-
   const universeReady = Boolean(universeSelectedId) && universeSymbolsCount > 0;
   const canStartFinal = canStart && universeReady;
 
@@ -142,6 +102,10 @@ export function DashboardPage() {
         busy={busy}
         onStart={() => void start()}
         onStop={() => void stop()}
+        onPause={() => void pause()}
+        onResume={() => void resume()}
+        canPause={canPause}
+        canResume={canResume}
       />
 
       <Container fluid className="py-2 px-2">
@@ -153,9 +117,9 @@ export function DashboardPage() {
 
         <BotSummaryBar sessionState={status.sessionState} botStats={botStats} uptimeText={uptimeText} />
 
-        <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} suppressStopRefresh={isRebooting} />
+        <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} suppressStopRefresh={false} />
 
-        <ConfigPanel sessionState={status.sessionState} rebooting={isRebooting} onApplyAndReboot={onApplyAndReboot} onDraftKlineTfMinChange={setDraftKlineTfMin} />
+        <ConfigPanel sessionState={status.sessionState} onDraftKlineTfMinChange={setDraftKlineTfMin} />
 
         <Card className="mb-3">
           <Card.Header className="d-flex align-items-center gap-2 flex-wrap">

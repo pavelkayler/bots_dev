@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { StatusResponse, SessionState } from "../../../shared/types/domain";
-import { fetchStatus, startSession, stopSession } from "../api/sessionApi";
+import type { StatusResponse } from "../../../shared/types/domain";
+import { fetchStatus, pauseSession, resumeSession, startSession, stopSession } from "../api/sessionApi";
 import { useInterval } from "../../../shared/hooks/useInterval";
 
 export function useSessionRuntime() {
@@ -10,7 +10,7 @@ export function useSessionRuntime() {
     eventsFile: null
   });
 
-  const [busy, setBusy] = useState<"none" | "start" | "stop">("none");
+  const [busy, setBusy] = useState<"none" | "start" | "stop" | "pause" | "resume">("none");
   const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
@@ -18,13 +18,12 @@ export function useSessionRuntime() {
       const st = await fetchStatus();
       setStatus(st);
     } catch {
-      // ignore polling errors
+      return;
     }
   }
 
   useEffect(() => {
     void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useInterval(() => void refresh(), 2000);
@@ -33,8 +32,7 @@ export function useSessionRuntime() {
     setError(null);
     setBusy("start");
     try {
-      const st = await startSession();
-      setStatus(st);
+      setStatus(await startSession());
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -46,8 +44,7 @@ export function useSessionRuntime() {
     setError(null);
     setBusy("stop");
     try {
-      const st = await stopSession();
-      setStatus(st);
+      setStatus(await stopSession());
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -55,16 +52,34 @@ export function useSessionRuntime() {
     }
   }
 
-  const canStart = status.sessionState !== "RUNNING" && busy === "none";
-  const canStop = status.sessionState === "RUNNING" && busy === "none";
+  async function pause() {
+    setError(null);
+    setBusy("pause");
+    try {
+      setStatus(await pauseSession());
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy("none");
+    }
+  }
 
-  return {
-    status,
-    busy,
-    error,
-    start,
-    stop,
-    canStart,
-    canStop
-  };
+  async function resume() {
+    setError(null);
+    setBusy("resume");
+    try {
+      setStatus(await resumeSession());
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setBusy("none");
+    }
+  }
+
+  const canStart = status.sessionState === "STOPPED" && busy === "none";
+  const canStop = (status.sessionState === "RUNNING" || status.sessionState === "PAUSED") && busy === "none";
+  const canPause = status.sessionState === "RUNNING" && busy === "none";
+  const canResume = status.sessionState === "PAUSED" && busy === "none";
+
+  return { status, busy, error, start, stop, pause, resume, canStart, canStop, canPause, canResume };
 }

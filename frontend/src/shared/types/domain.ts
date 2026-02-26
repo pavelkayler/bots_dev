@@ -1,4 +1,4 @@
-export type SessionState = "STOPPED" | "RUNNING" | "STOPPING";
+export type SessionState = "STOPPED" | "RUNNING" | "STOPPING" | "PAUSING" | "PAUSED";
 
 export type ConnStatus = "CONNECTING" | "CONNECTED" | "DISCONNECTED" | "RECONNECTING";
 

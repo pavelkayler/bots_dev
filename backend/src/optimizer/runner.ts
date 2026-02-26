@@ -293,6 +293,9 @@ export async function runOptimization(args: {
   optTfMin?: number;
   onProgress?: (done: number, total: number, partialResults: OptimizerResult[]) => void;
   shouldStop?: () => boolean;
+  shouldPause?: () => boolean;
+  waitWhilePaused?: () => Promise<"resumed" | "cancelled">;
+  excludeNegative?: boolean;
 }): Promise<{
   tapeIds: string[];
   metaByTapeId: Record<string, TapeMeta | null>;
@@ -450,6 +453,13 @@ export async function runOptimization(args: {
             cancelled = true;
             break;
           }
+          if (args.shouldPause?.()) {
+            const pauseOutcome = await args.waitWhilePaused?.();
+            if (pauseOutcome === "cancelled") {
+              cancelled = true;
+              break;
+            }
+          }
           await new Promise<void>((resolve) => setImmediate(resolve));
         }
 
@@ -560,7 +570,7 @@ export async function runOptimization(args: {
     const expectancy = tradesTotal > 0 ? netPnlTotal / tradesTotal : 0;
     const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? 1_000_000_000 : 0) : grossProfit / Math.abs(grossLoss);
 
-    results.push({
+    const candidateResult: OptimizerResult = {
       netPnl: netPnlTotal,
       trades: tradesTotal,
       winRatePct,
@@ -576,7 +586,10 @@ export async function runOptimization(args: {
       closesSl,
       closesForce,
       params,
-    });
+    };
+    if (!args.excludeNegative || candidateResult.netPnl >= 0) {
+      results.push(candidateResult);
+    }
 
     const done = i + 1;
     const pct = args.candidates > 0 ? Math.floor((done / args.candidates) * 100) : 0;
