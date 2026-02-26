@@ -174,7 +174,25 @@ export function sortOptimizationResults(results: OptimizerResult[], key: Optimiz
     if (key === "offset") return result.params.entryOffsetPct;
     return toComparable(result[key]);
   };
-  return [...results].sort((a, b) => (readValue(a) - readValue(b)) * direction);
+  const compareDesc = (left: number, right: number) => right - left;
+  return [...results].sort((a, b) => {
+    if (key !== "trades") {
+      const aNoTrades = (a.trades ?? 0) === 0;
+      const bNoTrades = (b.trades ?? 0) === 0;
+      if (aNoTrades !== bNoTrades) return aNoTrades ? 1 : -1;
+    }
+
+    const primaryDiff = (readValue(a) - readValue(b)) * direction;
+    if (primaryDiff !== 0) return primaryDiff;
+
+    const netPnlDiff = compareDesc(a.netPnl ?? 0, b.netPnl ?? 0);
+    if (netPnlDiff !== 0) return netPnlDiff;
+
+    const tradesDiff = compareDesc(a.trades ?? 0, b.trades ?? 0);
+    if (tradesDiff !== 0) return tradesDiff;
+
+    return compareDesc(a.winRatePct ?? 0, b.winRatePct ?? 0);
+  });
 }
 
 function generateCandidate(
