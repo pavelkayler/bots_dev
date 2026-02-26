@@ -20,6 +20,7 @@ export type PaperBrokerConfig = {
     applyFunding: boolean;
 
     rearmDelayMs: number;
+    maxDailyLossUSDT: number;
 };
 
 type EntryOrder = {
@@ -112,6 +113,11 @@ function calcRoiPct(side: PaperSide, entryPrice: number, markPrice: number, leve
     return ((entryPrice - markPrice) / entryPrice) * leverage * 100;
 }
 
+function toMskDayKey(ts: number): string {
+    const shifted = ts + 3 * 60 * 60 * 1000;
+    return new Date(shifted).toISOString().slice(0, 10);
+}
+
 export class PaperBroker {
     private readonly cfg: PaperBrokerConfig;
     private readonly logger: EventLogger;
@@ -124,10 +130,24 @@ export class PaperBroker {
     private netRealized = 0;
     private feesPaid = 0;
     private fundingAccrued = 0;
+    private currentMskDayKey: string | null = null;
 
     constructor(cfg: PaperBrokerConfig, logger: EventLogger) {
         this.cfg = cfg;
         this.logger = logger;
+    }
+
+    private syncRiskDay(nowMs: number) {
+        const dayKey = toMskDayKey(nowMs);
+        if (this.currentMskDayKey !== dayKey) {
+            this.currentMskDayKey = dayKey;
+        }
+    }
+
+    private isDailyLossLimitReached(): boolean {
+        const limit = Number(this.cfg.maxDailyLossUSDT);
+        if (!Number.isFinite(limit) || limit <= 0) return false;
+        return this.netRealized <= -limit;
     }
 
     getStats(): PaperStats {
@@ -324,6 +344,7 @@ export class PaperBroker {
         if (!this.cfg.enabled) return;
 
         const { symbol, nowMs, markPrice, fundingRate, nextFundingTime, signal, signalReason, cooldownActive } = input;
+        this.syncRiskDay(nowMs);
 
         const st = this.map.get(symbol) ?? {
             order: null,
@@ -527,6 +548,17 @@ export class PaperBroker {
                 type: "ORDER_SKIPPED",
                 symbol,
                 payload: { reason: "direction_blocked", signal, directionMode: this.cfg.directionMode }
+            });
+            this.map.set(symbol, st);
+            return;
+        }
+
+        if (this.isDailyLossLimitReached()) {
+            this.logger.log({
+                ts: nowMs,
+                type: "ORDER_SKIPPED",
+                symbol,
+                payload: { reason: "risk_daily_loss", signal, maxDailyLossUSDT: this.cfg.maxDailyLossUSDT, netRealized: this.netRealized }
             });
             this.map.set(symbol, st);
             return;

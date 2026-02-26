@@ -20,35 +20,48 @@ export type OptimizationResult = {
   netPnl: number;
   trades: number;
   winRatePct: number;
+  expectancy: number;
+  profitFactor: number;
+  maxDrawdownUsdt: number;
+  signalsOk: number;
+  decisionsNoRefs: number;
+  ordersPlaced: number;
+  ordersFilled: number;
+  ordersExpired: number;
+  closesTp: number;
+  closesSl: number;
+  closesForce: number;
   params: {
     priceThresholdPct: number;
     oivThresholdPct: number;
     entryOffsetPct: number;
     tpRoiPct: number;
     slRoiPct: number;
+    timeoutSec: number;
+    rearmMs: number;
   };
 };
 
 export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
 export type OptimizerSortDir = "asc" | "desc";
-export type OptimizerPrecision = Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset", number>;
+export type OptimizerPrecision = Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", number>;
 export type OptimizerSettings = { tapesDir: string };
 
-export type OptimizerSortKeyExtended = OptimizerSortKey | "priceTh" | "oivTh" | "tp" | "sl" | "offset";
-
-
-export type TapeQaResponse = {
-  tapeId: string;
-  tickerLines: number;
-  symbolsSeen: number;
-  firstTsMs: number;
-  lastTsMs: number;
-  durationSec: number;
-  durationMin: number;
-  medianTickIntervalSec: number | null;
-  tooShortForTf: boolean;
-  sparse: boolean;
-};
+export type OptimizerSortKeyExtended =
+  | OptimizerSortKey
+  | "priceTh"
+  | "oivTh"
+  | "tp"
+  | "sl"
+  | "offset"
+  | "timeoutSec"
+  | "rearmMs"
+  | "expectancy"
+  | "profitFactor"
+  | "maxDrawdownUsdt"
+  | "ordersPlaced"
+  | "ordersFilled"
+  | "ordersExpired";
 
 export async function listTapes(): Promise<{ tapes: OptimizerTape[] }> {
   const base = getApiBase();
@@ -80,22 +93,13 @@ export async function getStatus(): Promise<{ isRecording: boolean; tapeId: strin
   return await getJson<{ isRecording: boolean; tapeId: string | null }>(`${base}/api/optimizer/status`);
 }
 
-
-export async function getTapeQa(tapeId: string, tfMin: number, entryTimeoutSec: number): Promise<TapeQaResponse> {
-  const base = getApiBase();
-  const params = new URLSearchParams({
-    tfMin: String(tfMin),
-    entryTimeoutSec: String(entryTimeoutSec),
-  });
-  return await getJson<TapeQaResponse>(`${base}/api/optimizer/tapes/${encodeURIComponent(tapeId)}/qa?${params.toString()}`);
-}
-
 export async function runOptimizationJob(payload: {
   tapeId?: string;
   tapeIds?: string[];
   candidates: number;
   seed: number;
-  ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset", { min: number; max: number }>>;
+  minTrades?: number;
+  ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", { min: number; max: number }>>;
   precision?: Partial<OptimizerPrecision>;
   directionMode?: "both" | "long" | "short";
   optTfMin?: number;
@@ -134,7 +138,6 @@ export async function getJobResults(
   });
   return await getJson(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/results?${params.toString()}`);
 }
-
 
 export async function cancelCurrentJob(): Promise<{ ok: true }> {
   const base = getApiBase();

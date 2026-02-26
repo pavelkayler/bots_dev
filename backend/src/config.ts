@@ -36,6 +36,7 @@ export const CONFIG = {
         makerFeeRate: 0.0002,
         applyFunding: true,
 
-        rearmDelayMs: 1000
+        rearmDelayMs: 1000,
+        maxDailyLossUSDT: 0
     }
 };
