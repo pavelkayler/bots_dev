@@ -420,12 +420,12 @@ export function OptimizerPage() {
         if (statusRes.status === "running" || statusRes.status === "paused") {
           setRunning(true);
           setOptimizerPaused(statusRes.status === "paused");
-          await fetchResults(1, sortKey, sortDir, current.jobId);
+          await fetchResults(1, sortKey, sortDir, current.jobId, { keepPreviousIfEmpty: loopActive });
           return;
         }
         if (statusRes.status === "done" || statusRes.status === "cancelled") {
           setRunning(false);
-          await fetchResults(1, sortKey, sortDir, current.jobId);
+          await fetchResults(1, sortKey, sortDir, current.jobId, { keepPreviousIfEmpty: loopActive });
           return;
         }
         setRunning(false);
@@ -710,9 +710,11 @@ export function OptimizerPage() {
   ) {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
     const nextResults = res.results ?? [];
-    if (!options?.keepPreviousIfEmpty || nextResults.length > 0) {
-      setResults(nextResults);
+    const keepPreviousIfEmpty = options?.keepPreviousIfEmpty ?? loopActive;
+    if (keepPreviousIfEmpty && nextResults.length === 0) {
+      return;
     }
+    setResults(nextResults);
     setPage(res.page);
     setTotalRows(res.totalRows);
   }
@@ -799,7 +801,7 @@ export function OptimizerPage() {
           window.clearInterval(timer);
           setRunning(false);
           if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
-          await fetchResults(1, sortKey, sortDir, activeJobId);
+          await fetchResults(1, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
         }
       } catch (e: any) {
         setRunning(false);
@@ -846,12 +848,12 @@ export function OptimizerPage() {
     const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
     setSortKey(nextSortKey);
     setSortDir(nextSortDir);
-    await fetchResults(1, nextSortKey, nextSortDir, activeJobId);
+    await fetchResults(1, nextSortKey, nextSortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
   }
 
   async function onPageChange(nextPage: number) {
     if (!activeJobId) return;
-    await fetchResults(nextPage, sortKey, sortDir, activeJobId);
+    await fetchResults(nextPage, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
   }
 
   const activePrecision = (activeJobId ? jobPrecisionById[activeJobId] : undefined) ?? DEFAULT_PRECISION;
