@@ -20,7 +20,11 @@ class OptimizerWorkerManager {
     if (this.workers.size > 0) {
       throw new Error("optimizer_worker_busy");
     }
-    const worker = new Worker(this.resolveWorkerEntry(), { type: "module" } as any);
+    const workerUrl = this.resolveWorkerEntry();
+    const needsTsLoader = String(workerUrl).endsWith(".ts");
+    const hasTsxLoader = process.execArgv.some((arg) => arg.includes("tsx"));
+    const execArgvForWorker = needsTsLoader && !hasTsxLoader ? [...process.execArgv, "--loader", "tsx"] : process.execArgv;
+    const worker = new Worker(workerUrl, { type: "module", execArgv: execArgvForWorker } as any);
     this.workers.set(jobId, worker);
 
     worker.on("message", (msg) => {
