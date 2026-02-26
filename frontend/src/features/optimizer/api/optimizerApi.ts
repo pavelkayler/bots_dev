@@ -36,6 +36,20 @@ export type OptimizerSettings = { tapesDir: string };
 
 export type OptimizerSortKeyExtended = OptimizerSortKey | "priceTh" | "oivTh" | "tp" | "sl" | "offset";
 
+
+export type TapeQaResponse = {
+  tapeId: string;
+  tickerLines: number;
+  symbolsSeen: number;
+  firstTsMs: number;
+  lastTsMs: number;
+  durationSec: number;
+  durationMin: number;
+  medianTickIntervalSec: number | null;
+  tooShortForTf: boolean;
+  sparse: boolean;
+};
+
 export async function listTapes(): Promise<{ tapes: OptimizerTape[] }> {
   const base = getApiBase();
   return await getJson<{ tapes: OptimizerTape[] }>(`${base}/api/optimizer/tapes`);
@@ -64,6 +78,16 @@ export async function stopTape(): Promise<{ ok: true }> {
 export async function getStatus(): Promise<{ isRecording: boolean; tapeId: string | null }> {
   const base = getApiBase();
   return await getJson<{ isRecording: boolean; tapeId: string | null }>(`${base}/api/optimizer/status`);
+}
+
+
+export async function getTapeQa(tapeId: string, tfMin: number, entryTimeoutSec: number): Promise<TapeQaResponse> {
+  const base = getApiBase();
+  const params = new URLSearchParams({
+    tfMin: String(tfMin),
+    entryTimeoutSec: String(entryTimeoutSec),
+  });
+  return await getJson<TapeQaResponse>(`${base}/api/optimizer/tapes/${encodeURIComponent(tapeId)}/qa?${params.toString()}`);
 }
 
 export async function runOptimizationJob(payload: {

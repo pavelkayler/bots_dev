@@ -7,6 +7,7 @@ import {
   getJobResults,
   getJobStatus,
   cancelCurrentJob,
+  getTapeQa,
   getCurrentJob,
   getSettings,
   getStatus,
@@ -19,6 +20,7 @@ import {
   type OptimizerPrecision,
   type OptimizerSortDir,
   type OptimizerSortKeyExtended,
+  type TapeQaResponse,
 } from "../../features/optimizer/api/optimizerApi";
 
 type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset";
@@ -42,6 +44,16 @@ const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3 };
 
 type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number };
+
+
+type TapeQaSummary = {
+  tapesCount: number;
+  totalSymbolsSeen: number;
+  avgDurationMin: number;
+  worstMedianTickIntervalSec: number | null;
+  countTooShort: number;
+  countSparse: number;
+};
 
 const TapeSizeCell = memo(function TapeSizeCell({
   tapeId,
@@ -283,6 +295,11 @@ export function OptimizerPage() {
   const [tapesDir, setTapesDir] = useState("");
   const [showTapesDirModal, setShowTapesDirModal] = useState(false);
   const [tapesDirDraft, setTapesDirDraft] = useState("");
+  const [qaMessage, setQaMessage] = useState<string | null>(null);
+  const [showQaModal, setShowQaModal] = useState(false);
+  const [qaRunning, setQaRunning] = useState(false);
+  const [qaDoneCount, setQaDoneCount] = useState(0);
+  const [qaResults, setQaResults] = useState<TapeQaResponse[]>([]);
 
   const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
   const rangesSaveTimerRef = useRef<number | null>(null);
@@ -555,6 +572,53 @@ export function OptimizerPage() {
 
   const activePrecision = (jobId ? jobPrecisionById[jobId] : undefined) ?? DEFAULT_PRECISION;
 
+  const qaSummary = useMemo<TapeQaSummary | null>(() => {
+    if (!qaResults.length) return null;
+    const totalSymbolsSeen = qaResults.reduce((acc, row) => acc + row.symbolsSeen, 0);
+    const avgDurationMin = qaResults.reduce((acc, row) => acc + row.durationMin, 0) / qaResults.length;
+    const medians = qaResults.map((row) => row.medianTickIntervalSec).filter((value): value is number => value != null);
+    const worstMedianTickIntervalSec = medians.length ? Math.max(...medians) : null;
+    return {
+      tapesCount: qaResults.length,
+      totalSymbolsSeen,
+      avgDurationMin,
+      worstMedianTickIntervalSec,
+      countTooShort: qaResults.filter((row) => row.tooShortForTf).length,
+      countSparse: qaResults.filter((row) => row.sparse).length,
+    };
+  }, [qaResults]);
+
+  async function onRunTapeQa() {
+    if (!selectedTapeIds.length) {
+      setQaMessage("Select at least one tape");
+      return;
+    }
+    setQaMessage(null);
+    setShowQaModal(true);
+    setQaRunning(true);
+    setQaDoneCount(0);
+    setQaResults([]);
+
+    const tfMinParsed = Math.floor(Number(optTfMin));
+    const tfMin = Number.isFinite(tfMinParsed) && tfMinParsed > 0 ? tfMinParsed : 1;
+    const entryTimeoutSec = 15;
+
+    try {
+      const rows: TapeQaResponse[] = [];
+      for (let i = 0; i < selectedTapeIds.length; i += 1) {
+        const tapeId = selectedTapeIds[i];
+        const row = await getTapeQa(tapeId, tfMin, entryTimeoutSec);
+        rows.push(row);
+        setQaResults([...rows]);
+        setQaDoneCount(i + 1);
+      }
+    } catch (e: any) {
+      setQaMessage(String(e?.message ?? e));
+    } finally {
+      setQaRunning(false);
+    }
+  }
+
   function copyToSettings(row: OptimizationResult) {
     const patch = {
       source: "optimizer",
@@ -718,6 +782,10 @@ export function OptimizerPage() {
               selected tapes: <b>{selectedTapeIds.length}</b>
               {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
             </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <Button size="sm" variant="outline-secondary" onClick={() => void onRunTapeQa()}>Tape QA</Button>
+              {qaMessage ? <span style={{ fontSize: 12, color: "#b00020" }}>{qaMessage}</span> : null}
+            </div>
 
             {jobId ? <ProgressBar now={running ? done : 100} label={`${running ? done.toFixed(2) : "100.00"}%`} title={`progress ${done.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" /> : null}
 
@@ -772,6 +840,53 @@ export function OptimizerPage() {
           </Card.Body>
         </Card>
       </Container>
+
+      <Modal show={showQaModal} onHide={() => { if (!qaRunning) setShowQaModal(false); }}>
+        <Modal.Header closeButton={!qaRunning}>
+          <Modal.Title>Tape QA</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {qaRunning ? <div style={{ fontSize: 12, marginBottom: 8 }}>Analyzing {qaDoneCount}/{selectedTapeIds.length}…</div> : null}
+          {qaRunning ? <div className="spinner-border spinner-border-sm" role="status" aria-hidden="true" style={{ marginBottom: 12 }} /> : null}
+          {qaSummary ? (
+            <div style={{ fontSize: 12, marginBottom: 10 }}>
+              tapesCount: <b>{qaSummary.tapesCount}</b> · totalSymbolsSeen: <b>{qaSummary.totalSymbolsSeen}</b> · avgDurationMin: <b>{qaSummary.avgDurationMin.toFixed(1)}</b> · worstMedianTickIntervalSec: <b>{qaSummary.worstMedianTickIntervalSec == null ? "-" : qaSummary.worstMedianTickIntervalSec.toFixed(2)}</b> · countTooShort: <b>{qaSummary.countTooShort}</b> · countSparse: <b>{qaSummary.countSparse}</b>
+            </div>
+          ) : null}
+          <Table bordered size="sm">
+            <thead>
+              <tr>
+                <th>tapeId</th>
+                <th>durationMin</th>
+                <th>symbolsSeen</th>
+                <th>tickerLines</th>
+                <th>medianTickIntervalSec</th>
+                <th>flags</th>
+              </tr>
+            </thead>
+            <tbody>
+              {qaResults.map((row) => (
+                <tr key={row.tapeId}>
+                  <td style={{ fontSize: 12 }}>{row.tapeId}</td>
+                  <td style={{ fontSize: 12 }}>{row.durationMin.toFixed(1)}</td>
+                  <td style={{ fontSize: 12 }}>{row.symbolsSeen}</td>
+                  <td style={{ fontSize: 12 }}>{row.tickerLines}</td>
+                  <td style={{ fontSize: 12 }}>{row.medianTickIntervalSec == null ? "-" : row.medianTickIntervalSec.toFixed(2)}</td>
+                  <td style={{ fontSize: 12 }}>{[row.tooShortForTf ? "Too short" : null, row.sparse ? "Sparse" : null].filter(Boolean).join(" / ") || "-"}</td>
+                </tr>
+              ))}
+              {!qaResults.length ? (
+                <tr>
+                  <td colSpan={6} style={{ fontSize: 12, opacity: 0.75 }}>No QA results</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </Table>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowQaModal(false)} disabled={qaRunning}>Close</Button>
+        </Modal.Footer>
+      </Modal>
 
       <Modal show={showTapesDirModal} onHide={() => setShowTapesDirModal(false)}>
         <Modal.Header closeButton>
