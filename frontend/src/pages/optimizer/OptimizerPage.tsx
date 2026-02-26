@@ -1,5 +1,5 @@
 import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Card, Container, Form, Modal, Pagination, ProgressBar, Table } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, Card, Col, Container, Form, Modal, Pagination, ProgressBar, Row, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -272,6 +272,14 @@ function formatDuration(sec: number | null): string {
   return `${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
 }
 
+function roundTo2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 function loadStoredPositiveInt(key: string, fallback: string, min: number): string {
   try {
     const raw = localStorage.getItem(key);
@@ -377,8 +385,8 @@ export function OptimizerPage() {
         if (!current.jobId) return;
         setJobId(current.jobId);
         const statusRes = await getJobStatus(current.jobId);
-        setDone((prev) => (Math.abs(prev - statusRes.done) >= 0.01 ? statusRes.done : prev));
-        setTotal((prev) => (Math.abs(prev - statusRes.total) >= 0.01 ? statusRes.total : prev));
+        setDone(statusRes.done);
+        setTotal(statusRes.total);
         if (statusRes.startedAtMs) setJobStartedAtMs(statusRes.startedAtMs);
         if (statusRes.updatedAtMs) setJobUpdatedAtMs(statusRes.updatedAtMs);
         setJobFinishedAtMs(statusRes.finishedAtMs ?? null);
@@ -693,8 +701,8 @@ export function OptimizerPage() {
     const timer = window.setInterval(async () => {
       try {
         const res = await getJobStatus(jobId);
-        setDone((prev) => (Math.abs(prev - res.done) >= 0.01 ? res.done : prev));
-        setTotal((prev) => (Math.abs(prev - res.total) >= 0.01 ? res.total : prev));
+        setDone(res.done);
+        setTotal(res.total);
         if (res.startedAtMs) setJobStartedAtMs(res.startedAtMs);
         if (res.updatedAtMs) setJobUpdatedAtMs(res.updatedAtMs);
         setJobFinishedAtMs(res.finishedAtMs ?? null);
@@ -814,6 +822,8 @@ export function OptimizerPage() {
       : (jobFinishedAtMs ?? jobUpdatedAtMs ?? jobStartedAtMs);
   const elapsedSec = endMs == null || !jobStartedAtMs ? null : Math.max(0, (endMs - jobStartedAtMs) / 1000);
   const etaSec = isRunningStatus && done > 0.01 && elapsedSec != null ? elapsedSec * (100 / done - 1) : null;
+  const hasJobProgress = Boolean(jobId && (jobStatus === "running" || jobStatus === "paused" || jobStatus === "done"));
+  const pct = clamp(roundTo2(jobStatus === "done" ? 100 : done), 0, 100);
 
   return (
     <>
@@ -869,34 +879,37 @@ export function OptimizerPage() {
             />
 
             <h6>Optimization</h6>
-            <div className="d-flex gap-2 align-items-end mb-2 flex-wrap">
-              <Form.Group>
+            <Row className="g-2 align-items-end mb-2">
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>candidates</Form.Label>
                 <Form.Control value={candidates} onChange={(e) => setCandidates(e.currentTarget.value)} type="number" min={1} max={2000} />
-              </Form.Group>
-              <Form.Group>
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>seed</Form.Label>
                 <Form.Control value={seed} onChange={(e) => setSeed(e.currentTarget.value)} type="number" />
-              </Form.Group>
-              <Form.Group>
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>minTrades</Form.Label>
                 <Form.Control value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} />
-              </Form.Group>
-              <Form.Group>
-                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
-              </Form.Group>
-              <Form.Group>
-                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives for this tape" checked={rememberNegatives} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
-              </Form.Group>
-              <Form.Group>
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>direction</Form.Label>
                 <Form.Select value={directionMode} onChange={(e) => setDirectionMode(e.currentTarget.value as "both" | "long" | "short")}>
                   <option value="both">Both</option>
                   <option value="long">Long</option>
                   <option value="short">Short</option>
                 </Form.Select>
-              </Form.Group>
-              <Form.Group>
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
                 <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(e.currentTarget.value)}>
                   <option value="">Auto (tape tf)</option>
@@ -907,26 +920,53 @@ export function OptimizerPage() {
                   <option value="30">30</option>
                   <option value="60">60</option>
                 </Form.Select>
-              </Form.Group>
-              <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || running || Boolean(rangeError)}>
-                Run optimization
-              </Button>
-              {running ? (<>
-                {!optimizerPaused ? <Button variant="outline-warning" onClick={() => void onPauseOptimization()}>Pause</Button> : <Button variant="outline-primary" onClick={() => void onResumeOptimization()}>Resume</Button>}
-                <Button variant="outline-danger" onClick={() => void onStopOptimization()}>Stop</Button>
-              </>) : null}
-              <Form.Group>
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>runsCount</Form.Label>
                 <Form.Control value={loopRunsCount} onChange={(e) => setLoopRunsCount(e.currentTarget.value)} type="number" min={1} step={1} disabled={loopInfinite} />
-              </Form.Group>
-              <Form.Group>
-                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
-              </Form.Group>
-              <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={!selectedTapeIds.length || Boolean(rangeError)}>Start loop</Button>
-              <Button variant="outline-danger" onClick={() => void onStopLoop()}>Stop loop</Button>
-              <Button variant="outline-warning" onClick={() => void onPauseLoop()}>Pause loop</Button>
-              <Button variant="outline-success" onClick={() => void onResumeLoop()}>Resume loop</Button>
-            </div>
+                </Form.Group>
+              </Col>
+              <Col xs={12}>
+                <div className="d-flex flex-wrap gap-3">
+                  <Form.Group>
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives for this tape" checked={rememberNegatives} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
+                  </Form.Group>
+                  <Form.Group>
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
+                  </Form.Group>
+                </div>
+              </Col>
+            </Row>
+            <Row className="g-2 align-items-center mb-2">
+              <Col xs="auto">
+                <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || running || Boolean(rangeError)}>
+                  Run optimization
+                </Button>
+              </Col>
+              {running ? (
+                <Col xs="auto">
+                  <ButtonGroup>
+                    {!optimizerPaused ? <Button variant="outline-warning" onClick={() => void onPauseOptimization()}>Pause</Button> : <Button variant="outline-primary" onClick={() => void onResumeOptimization()}>Resume</Button>}
+                    <Button variant="outline-danger" onClick={() => void onStopOptimization()}>Stop</Button>
+                  </ButtonGroup>
+                </Col>
+              ) : null}
+              <Col xs="auto">
+                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={!selectedTapeIds.length || Boolean(rangeError)}>Start loop</Button>
+              </Col>
+              <Col xs="auto">
+                <ButtonGroup>
+                  <Button variant="outline-warning" onClick={() => void onPauseLoop()}>Pause loop</Button>
+                  <Button variant="outline-success" onClick={() => void onResumeLoop()}>Resume loop</Button>
+                  <Button variant="outline-danger" onClick={() => void onStopLoop()}>Stop loop</Button>
+                </ButtonGroup>
+              </Col>
+            </Row>
 
             <h6>Ranges</h6>
             <Table bordered size="sm" className="mb-2" style={{ maxWidth: 620 }}>
@@ -972,7 +1012,7 @@ export function OptimizerPage() {
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             </div>
 
-            {jobId ? <><ProgressBar now={running ? done : 100} label={`${running ? done.toFixed(2) : "100.00"}%`} title={`progress ${done.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
+            {hasJobProgress ? <><ProgressBar now={pct} label={`${pct.toFixed(2)}%`} title={`progress ${pct.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
             <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec)}</b> · ETA: <b>{isRunningStatus ? formatDuration(etaSec) : "-"}</b></div>
             <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div></> : null}
 
