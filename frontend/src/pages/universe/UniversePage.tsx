@@ -14,7 +14,7 @@ function joinSymbols(symbols: string[]) {
 
 export function UniversePage() {
   const { conn, lastServerTime, wsUrl, streams } = useWsFeed();
-  const { status, busy, start, stop, canStart, canStop } = useSessionRuntime();
+  const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
   const [minTurnoverUsd, setMinTurnoverUsd] = useState<string>("10000000");
   const [minVolPct, setMinVolPct] = useState<string>("10");
@@ -112,6 +112,10 @@ export function UniversePage() {
         busy={busy}
         onStart={() => void start()}
         onStop={() => void stop()}
+        onPause={() => void pause()}
+        onResume={() => void resume()}
+        canPause={canPause}
+        canResume={canResume}
       />
 
       <Container fluid className="py-2 px-2">

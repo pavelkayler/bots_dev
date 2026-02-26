@@ -18,6 +18,13 @@ class TapeRecorder {
   private stream: WriteStream | null = null;
   private meta: RecorderMeta | null = null;
   private lastTickerTsBySymbol = new Map<string, number>();
+  private segmentsBySessionId = new Map<string, number>();
+
+  constructor() {
+    runtime.on("state", () => {
+      this.syncWithRuntime();
+    });
+  }
 
   getState() {
     return {
@@ -27,10 +34,14 @@ class TapeRecorder {
     };
   }
 
-  startRecording() {
+  startRecording(opts?: { forceNew?: boolean }) {
     const st = runtime.getStatus();
     if (st.sessionState !== "RUNNING") {
       throw new Error("session_not_running");
+    }
+
+    if (this.recording && this.meta?.sessionId === st.sessionId && !opts?.forceNew) {
+      return { tapeId: this.currentTape as string };
     }
 
     if (this.recording) {
@@ -40,7 +51,11 @@ class TapeRecorder {
     ensureDir();
 
     const createdAt = Date.now();
-    const tapeId = `tape-${new Date(createdAt).toISOString().replace(/[:.]/g, "-")}`;
+    const sessionIdKey = String(st.sessionId ?? "");
+    const segNo = (this.segmentsBySessionId.get(sessionIdKey) ?? 0) + 1;
+    this.segmentsBySessionId.set(sessionIdKey, segNo);
+    const baseId = `tape-${new Date(createdAt).toISOString().replace(/[:.]/g, "-")}`;
+    const tapeId = segNo > 1 ? `${baseId}-seg${segNo}` : baseId;
     const cfg = configStore.get();
 
     const meta: RecorderMeta = {
@@ -75,6 +90,15 @@ class TapeRecorder {
     this.currentTape = null;
     this.stream = null;
     this.meta = null;
+  }
+
+  syncWithRuntime() {
+    const st = runtime.getStatus();
+    if (st.sessionState === "RUNNING") {
+      this.startRecording({ forceNew: false });
+      return;
+    }
+    this.stopRecording();
   }
 
   recordTicker(ts: number, symbol: string, payload: { markPrice: number; openInterestValue: number; fundingRate: number; nextFundingTime: number }) {

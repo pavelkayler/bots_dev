@@ -8,7 +8,7 @@ import {
   persistSummaryFile
 } from "../paper/summary.js";
 
-export type RuntimeSessionState = "STOPPED" | "RUNNING" | "STOPPING";
+export type RuntimeSessionState = "STOPPED" | "RUNNING" | "STOPPING" | "PAUSING" | "PAUSED";
 
 type Status = {
   sessionState: RuntimeSessionState;
@@ -87,7 +87,7 @@ class Runtime extends EventEmitter {
   }
 
   start(): Status {
-    if (this.sessionState === "RUNNING") {
+    if (this.sessionState !== "STOPPED") {
       this.stop();
     }
 
@@ -180,6 +180,52 @@ class Runtime extends EventEmitter {
         this.summaryFilePath = null;
       }
     }
+
+    const status = this.getStatus();
+    this.emit("state", status);
+    return status;
+  }
+
+  pause(): Status {
+    if (this.sessionState !== "RUNNING") {
+      const status = this.getStatus();
+      this.emit("state", status);
+      return status;
+    }
+
+    this.sessionState = "PAUSING";
+    this.logger?.log({
+      ts: Date.now(),
+      type: "SESSION_STATE",
+      payload: { state: this.sessionState, sessionId: this.sessionId }
+    });
+    this.emit("state", this.getStatus());
+
+    this.sessionState = "PAUSED";
+    this.logger?.log({
+      ts: Date.now(),
+      type: "SESSION_STATE",
+      payload: { state: this.sessionState, sessionId: this.sessionId }
+    });
+
+    const status = this.getStatus();
+    this.emit("state", status);
+    return status;
+  }
+
+  resume(): Status {
+    if (this.sessionState !== "PAUSED") {
+      const status = this.getStatus();
+      this.emit("state", status);
+      return status;
+    }
+
+    this.sessionState = "RUNNING";
+    this.logger?.log({
+      ts: Date.now(),
+      type: "SESSION_STATE",
+      payload: { state: this.sessionState, sessionId: this.sessionId }
+    });
 
     const status = this.getStatus();
     this.emit("state", status);

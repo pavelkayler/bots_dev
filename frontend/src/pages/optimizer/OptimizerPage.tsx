@@ -7,6 +7,8 @@ import {
   getJobResults,
   getJobStatus,
   cancelCurrentJob,
+  pauseCurrentJob,
+  resumeCurrentJob,
   getCurrentJob,
   getSettings,
   getStatus,
@@ -41,6 +43,7 @@ const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
 const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
 const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
 const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
+const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 
@@ -247,6 +250,16 @@ function quantizeByPrecision(value: number, precision: number): number {
   return Number((Math.round(value / step) * step).toFixed(precision));
 }
 
+function formatDuration(sec: number | null): string {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return "-";
+  const total = Math.floor(sec);
+  const hh = Math.floor(total / 3600);
+  const mm = Math.floor((total % 3600) / 60);
+  const ss = total % 60;
+  if (hh > 0) return `${hh.toString().padStart(2, "0")}:${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
+  return `${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
+}
+
 function loadStoredPositiveInt(key: string, fallback: string, min: number): string {
   try {
     const raw = localStorage.getItem(key);
@@ -261,7 +274,7 @@ function loadStoredPositiveInt(key: string, fallback: string, min: number): stri
 
 export function OptimizerPage() {
   const { conn, lastServerTime, wsUrl, streams } = useWsFeed();
-  const { status, busy, start, stop, canStart, canStop } = useSessionRuntime();
+  const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
   const [selectedTapeIds, setSelectedTapeIds] = useState<string[]>([]);
   const [recordingTapeId, setRecordingTapeId] = useState<string | null>(null);
@@ -274,7 +287,11 @@ export function OptimizerPage() {
   const [minTrades, setMinTrades] = useState("1");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState<string>("");
+  const [excludeNegative, setExcludeNegative] = useState(false);
   const [running, setRunning] = useState(false);
+  const [optimizerPaused, setOptimizerPaused] = useState(false);
+  const [jobStartedAtMs, setJobStartedAtMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [jobId, setJobId] = useState<string | null>(null);
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
@@ -321,6 +338,7 @@ export function OptimizerPage() {
       const n = Math.floor(Number(savedMinTrades));
       if (Number.isFinite(n) && n >= 0) setMinTrades(String(n));
     }
+    setExcludeNegative(localStorage.getItem(EXCLUDE_NEGATIVE_STORAGE_KEY) === "1");
     void refreshStatus();
     setTapesRefreshKey((prev) => prev + 1);
     void (async () => {
@@ -339,8 +357,11 @@ export function OptimizerPage() {
         const statusRes = await getJobStatus(current.jobId);
         setDone((prev) => (Math.abs(prev - statusRes.done) >= 0.01 ? statusRes.done : prev));
         setTotal((prev) => (Math.abs(prev - statusRes.total) >= 0.01 ? statusRes.total : prev));
-        if (statusRes.status === "running") {
+        if (statusRes.startedAtMs) setJobStartedAtMs(statusRes.startedAtMs);
+        if (statusRes.status === "running" || statusRes.status === "paused") {
           setRunning(true);
+          setOptimizerPaused(statusRes.status === "paused");
+          await fetchResults(1, sortKey, sortDir, current.jobId);
           return;
         }
         if (statusRes.status === "done" || statusRes.status === "cancelled") {
@@ -389,6 +410,15 @@ export function OptimizerPage() {
     const n = Math.floor(Number(minTrades));
     if (Number.isFinite(n) && n >= 0) localStorage.setItem(MIN_TRADES_STORAGE_KEY, String(n));
   }, [minTrades]);
+
+  useEffect(() => {
+    localStorage.setItem(EXCLUDE_NEGATIVE_STORAGE_KEY, excludeNegative ? "1" : "0");
+  }, [excludeNegative]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   async function onStartRecording() {
     setError(null);
@@ -508,10 +538,13 @@ export function OptimizerPage() {
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
         directionMode,
         ...(optTfMin.trim() ? { optTfMin: Number(optTfMin) } : {}),
+        excludeNegative,
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
       });
       setJobId(runRes.jobId);
+      setJobStartedAtMs(Date.now());
+      setOptimizerPaused(false);
       setJobPrecisionById((prev) => ({ ...prev, [runRes.jobId]: precision }));
       setResults([]);
       setPage(1);
@@ -529,6 +562,9 @@ export function OptimizerPage() {
         const res = await getJobStatus(jobId);
         setDone((prev) => (Math.abs(prev - res.done) >= 0.01 ? res.done : prev));
         setTotal((prev) => (Math.abs(prev - res.total) >= 0.01 ? res.total : prev));
+        if (res.startedAtMs) setJobStartedAtMs(res.startedAtMs);
+        setOptimizerPaused(res.status === "paused");
+        await fetchResults(page, sortKey, sortDir, jobId);
         if (res.status === "error") {
           setRunning(false);
           setError(res.message ?? "Optimization job failed.");
@@ -553,6 +589,27 @@ export function OptimizerPage() {
     setError(null);
     try {
       await cancelCurrentJob();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
+
+
+  async function onPauseOptimization() {
+    setError(null);
+    try {
+      await pauseCurrentJob();
+      setOptimizerPaused(true);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
+
+  async function onResumeOptimization() {
+    setError(null);
+    try {
+      await resumeCurrentJob();
+      setOptimizerPaused(false);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     }
@@ -626,6 +683,10 @@ export function OptimizerPage() {
         busy={busy}
         onStart={() => void start()}
         onStop={() => void stop()}
+        onPause={() => void pause()}
+        onResume={() => void resume()}
+        canPause={canPause}
+        canResume={canResume}
       />
 
       <Container fluid className="py-2 px-2">
@@ -677,6 +738,9 @@ export function OptimizerPage() {
                 <Form.Control value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} />
               </Form.Group>
               <Form.Group>
+                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
+              </Form.Group>
+              <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>direction</Form.Label>
                 <Form.Select value={directionMode} onChange={(e) => setDirectionMode(e.currentTarget.value as "both" | "long" | "short")}>
                   <option value="both">Both</option>
@@ -699,11 +763,10 @@ export function OptimizerPage() {
               <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || running || Boolean(rangeError)}>
                 Run optimization
               </Button>
-              {running ? (
-                <Button variant="outline-danger" onClick={() => void onStopOptimization()}>
-                  Stop
-                </Button>
-              ) : null}
+              {running ? (<>
+                {!optimizerPaused ? <Button variant="outline-warning" onClick={() => void onPauseOptimization()}>Pause</Button> : <Button variant="outline-primary" onClick={() => void onResumeOptimization()}>Resume</Button>}
+                <Button variant="outline-danger" onClick={() => void onStopOptimization()}>Stop</Button>
+              </>) : null}
             </div>
 
             <h6>Ranges</h6>
@@ -746,7 +809,8 @@ export function OptimizerPage() {
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             </div>
 
-            {jobId ? <ProgressBar now={running ? done : 100} label={`${running ? done.toFixed(2) : "100.00"}%`} title={`progress ${done.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" /> : null}
+            {jobId ? <><ProgressBar now={running ? done : 100} label={`${running ? done.toFixed(2) : "100.00"}%`} title={`progress ${done.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
+            <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(jobStartedAtMs ? (nowMs - jobStartedAtMs) / 1000 : null)}</b> · ETA: <b>{done <= 0.01 || !jobStartedAtMs ? "-" : formatDuration(((nowMs - jobStartedAtMs) / 1000) * (100 / done - 1))}</b></div></> : null}
 
             <Table striped bordered hover size="sm">
               <thead>
