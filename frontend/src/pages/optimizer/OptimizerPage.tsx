@@ -372,6 +372,7 @@ export function OptimizerPage() {
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
   const prevLoopJobIdRef = useRef<string | null>(null);
   const prevLoopActiveRef = useRef(false);
+  const activeJobIdRef = useRef<string | null>(null);
 
   const resetJobProgressState = useCallback(() => {
     setDone(0);
@@ -562,17 +563,19 @@ export function OptimizerPage() {
   const [displayJobId, setDisplayJobId] = useState<string | null>(null);
 
   useEffect(() => {
-    const nextJobId = loopActive ? (loopJobId ?? singleJobId) : (singleJobId ?? loopJobId);
+    const nextJobId = loopActive ? loopJobId : singleJobId;
     if (nextJobId) {
       setDisplayJobId((prev) => (prev === nextJobId ? prev : nextJobId));
       return;
     }
-    if (!jobActive && !loopActive) {
-      setDisplayJobId(null);
-    }
-  }, [jobActive, loopActive, loopJobId, singleJobId]);
+    setDisplayJobId(null);
+  }, [loopActive, loopJobId, singleJobId]);
 
   const activeJobId = displayJobId;
+
+  useEffect(() => {
+    activeJobIdRef.current = activeJobId;
+  }, [activeJobId]);
 
   useEffect(() => {
     const prevLoopActive = prevLoopActiveRef.current;
@@ -812,10 +815,13 @@ export function OptimizerPage() {
     let alive = true;
     const timer = window.setInterval(async () => {
       try {
+        const reqJobId = activeJobIdRef.current;
+        if (!reqJobId) return;
         const now = Date.now();
-        if (lastStatusFetchRef.current.jobId === activeJobId && now - lastStatusFetchRef.current.ts < 200) return;
-        lastStatusFetchRef.current = { jobId: activeJobId, ts: now };
-        const res = await getJobStatus(activeJobId);
+        if (lastStatusFetchRef.current.jobId === reqJobId && now - lastStatusFetchRef.current.ts < 200) return;
+        lastStatusFetchRef.current = { jobId: reqJobId, ts: now };
+        const res = await getJobStatus(reqJobId);
+        if (activeJobIdRef.current !== reqJobId) return;
         if (!alive) return;
         setDone((prev) => (prev === res.done ? prev : res.done));
         setTotal((prev) => (prev === res.total ? prev : res.total));
@@ -837,7 +843,8 @@ export function OptimizerPage() {
           const next = res.status === "paused";
           return prev === next ? prev : next;
         });
-        await fetchResults(page, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+        await fetchResults(page, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: loopActive });
+        if (activeJobIdRef.current !== reqJobId) return;
         if (!alive) return;
         if (res.status === "error") {
           setError(res.message ?? "Optimization job failed.");
@@ -845,7 +852,8 @@ export function OptimizerPage() {
         if (res.status === "done" || res.status === "cancelled") {
           window.clearInterval(timer);
           if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
-          await fetchResults(1, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+          await fetchResults(1, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: loopActive });
+          if (activeJobIdRef.current !== reqJobId) return;
           if (!alive) return;
         }
       } catch (e: any) {
@@ -989,7 +997,8 @@ export function OptimizerPage() {
     setPage((prev) => Math.min(prev, totalPages));
   }, [totalPages]);
   const isRunningStatus = jobStatus === "running";
-  const singleJobActive = !loopActive && Boolean(singleJobId) && (jobStatus === "running" || jobStatus === "paused");
+  const hasTapeSelected = selectedTapeIds.length > 0;
+  const singleJobProcessActive = !loopActive && Boolean(singleJobId) && (jobStatus === "running" || jobStatus === "paused");
   const endMs = !jobStartedAtMs
     ? null
     : isRunningStatus
@@ -1006,7 +1015,7 @@ export function OptimizerPage() {
     total > 0
   );
   const showProgressBlock = Boolean(activeJobId) || loopActive || lastJobSnapshotExists;
-  const pct = clamp(roundTo2(jobStatus === "done" ? 100 : done), 0, 100);
+  const pct = clamp(roundTo2(done), 0, 100);
   const loopStartMs = loopStatus?.loop?.createdAtMs ?? null;
   const loopEndMs = !loopStartMs
     ? null
@@ -1151,21 +1160,21 @@ export function OptimizerPage() {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || jobActive || loopActive || Boolean(rangeError)}>
+                <Button onClick={() => void onRunOptimization()} disabled={!hasTapeSelected || jobActive || loopActive || Boolean(rangeError)}>
                   Run optimization
                 </Button>
               </Col>
-              {singleJobActive ? (
-                <Col xs="auto">
-                  <ButtonGroup>
-                    <Button variant="outline-warning" onClick={() => void onPauseOptimization()} disabled={jobStatus !== "running"}>Pause</Button>
-                    <Button variant="outline-primary" onClick={() => void onResumeOptimization()} disabled={jobStatus !== "paused"}>Resume</Button>
-                    <Button variant="outline-danger" onClick={() => void onStopOptimization()} disabled={!singleJobActive}>Stop</Button>
-                  </ButtonGroup>
-                </Col>
-              ) : null}
               <Col xs="auto">
-                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || !selectedTapeIds.length || Boolean(rangeError)}>Start loop</Button>
+                <ButtonGroup>
+                  <Button variant="outline-warning" onClick={() => void onPauseOptimization()} disabled={!hasTapeSelected || !singleJobProcessActive || jobStatus !== "running"}>Pause</Button>
+                  <Button variant="outline-primary" onClick={() => void onResumeOptimization()} disabled={!hasTapeSelected || !singleJobProcessActive || jobStatus !== "paused"}>Resume</Button>
+                  <Button variant="outline-danger" onClick={() => void onStopOptimization()} disabled={!hasTapeSelected || !singleJobProcessActive}>Stop</Button>
+                </ButtonGroup>
+              </Col>
+            </Row>
+            <Row className="g-2 align-items-center mb-2">
+              <Col xs="auto">
+                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || !hasTapeSelected || Boolean(rangeError)}>Start loop</Button>
               </Col>
               <Col xs="auto">
                 <ButtonGroup>

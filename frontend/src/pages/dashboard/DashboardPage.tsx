@@ -139,6 +139,36 @@ export function DashboardPage() {
 
         <BotSummaryBar sessionState={status.sessionState} botStats={botStats} uptimeText={uptimeText} />
 
+        <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} suppressStopRefresh={false} />
+
+        <ConfigPanel sessionState={status.sessionState} onDraftKlineTfMinChange={setDraftKlineTfMin} />
+
+        <Card className="mb-3">
+          <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
+            <b>Live rows (1Hz)</b>
+            <div className="ms-auto d-flex align-items-center gap-2 flex-wrap">
+              <Form.Check type="switch" id="active-only" label="Active only" checked={activeOnly} onChange={(e) => setActiveOnly(e.currentTarget.checked)} />
+              <Badge bg="secondary">rows: {displayedRows.length}</Badge>
+              <span style={{ fontSize: 12, opacity: 0.85 }}>Next candle in: {nextCandle}</span>
+              <Button size="sm" variant="outline-secondary" onClick={() => requestRowsRefresh("tick")}>
+                Refresh rows
+              </Button>
+            </div>
+          </Card.Header>
+          <Card.Body>
+            <LiveRowsTable rows={displayedRows} />
+          </Card.Body>
+        </Card>
+
+        <Card className="mb-3">
+          <Card.Header>
+            <b>Trade stats by symbol</b>
+          </Card.Header>
+          <Card.Body>
+            <TradeStatsTabs rows={rows} />
+          </Card.Body>
+        </Card>
+
         <Card className="mb-3">
           <Card.Header>
             <b>Why no trade / signal breakdown</b>
@@ -168,36 +198,6 @@ export function DashboardPage() {
                 ) : null}
               </tbody>
             </Table>
-          </Card.Body>
-        </Card>
-
-        <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} suppressStopRefresh={false} />
-
-        <ConfigPanel sessionState={status.sessionState} onDraftKlineTfMinChange={setDraftKlineTfMin} />
-
-        <Card className="mb-3">
-          <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
-            <b>Live rows (1Hz)</b>
-            <div className="ms-auto d-flex align-items-center gap-2 flex-wrap">
-              <Form.Check type="switch" id="active-only" label="Active only" checked={activeOnly} onChange={(e) => setActiveOnly(e.currentTarget.checked)} />
-              <Badge bg="secondary">rows: {displayedRows.length}</Badge>
-              <span style={{ fontSize: 12, opacity: 0.85 }}>Next candle in: {nextCandle}</span>
-              <Button size="sm" variant="outline-secondary" onClick={() => requestRowsRefresh("tick")}>
-                Refresh rows
-              </Button>
-            </div>
-          </Card.Header>
-          <Card.Body>
-            <LiveRowsTable rows={displayedRows} />
-          </Card.Body>
-        </Card>
-
-        <Card className="mb-3">
-          <Card.Header>
-            <b>Trade stats by symbol</b>
-          </Card.Header>
-          <Card.Body>
-            <TradeStatsTabs rows={rows} />
           </Card.Body>
         </Card>
 
