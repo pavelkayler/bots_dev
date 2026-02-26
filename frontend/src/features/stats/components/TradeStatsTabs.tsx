@@ -6,10 +6,6 @@ import { getTradeExcursionsBySymbol, getTradeStatsBySymbol, type TradeExcursions
 import { TradeStatsBySymbolTable } from "./TradeStatsBySymbolTable";
 import { TradeExcursionsTable } from "./TradeExcursionsTable";
 
-function toPlaceholder(symbol: string): TradeStatsBySymbolRow {
-  return { symbol, trades: 0, wins: 0, losses: 0, netPnl: 0, fees: 0, funding: 0, lastCloseTs: null, longTrades: 0, longWins: 0, shortTrades: 0, shortWins: 0 };
-}
-
 export function TradeStatsTabs({ rows }: { rows: SymbolRow[] }) {
   const { config } = useRuntimeConfig();
   const [activeTab, setActiveTab] = useState<"both" | "long" | "short" | "excursions">("both");
@@ -19,31 +15,23 @@ export function TradeStatsTabs({ rows }: { rows: SymbolRow[] }) {
   const symbols = useMemo(() => config?.universe?.symbols ?? [], [config]);
 
   useEffect(() => {
-    if (!symbols.length) return;
-    setStatsByMode((prev) => ({
-      both: prev.both.length ? prev.both : symbols.map(toPlaceholder),
-      long: prev.long.length ? prev.long : symbols.map(toPlaceholder),
-      short: prev.short.length ? prev.short : symbols.map(toPlaceholder),
-    }));
-    setExcursions((prev) => (prev.length ? prev : symbols.map((symbol) => ({ symbol, tpTrades: 0, tpWorstMinRoiPct: null, slTrades: 0, slBestMaxRoiPct: null }))));
-  }, [symbols]);
-
-  useEffect(() => {
     let timer: number | null = null;
     let stopped = false;
     const load = async () => {
       if (activeTab === "excursions") {
         const res = await getTradeExcursionsBySymbol();
         if (stopped) return;
-        const by = new Map((res.stats ?? []).map((r) => [r.symbol, r]));
-        setExcursions(symbols.map((s) => by.get(s) ?? { symbol: s, tpTrades: 0, tpWorstMinRoiPct: null, slTrades: 0, slBestMaxRoiPct: null }));
+        setExcursions((res.stats ?? []).filter((r) => r.tpTrades > 0 || r.slTrades > 0));
         return;
       }
       const res = await getTradeStatsBySymbol(activeTab as TradeStatsMode);
       if (stopped) return;
-      const by = new Map((res.stats ?? []).map((r) => [r.symbol, r]));
-      const merged = symbols.map((s) => by.get(s) ?? toPlaceholder(s));
-      setStatsByMode((prev) => ({ ...prev, [activeTab]: merged }));
+      const filtered = (res.stats ?? []).filter((row) => {
+        if (activeTab === "both") return row.trades > 0;
+        if (activeTab === "long") return row.longTrades > 0;
+        return row.shortTrades > 0;
+      });
+      setStatsByMode((prev) => ({ ...prev, [activeTab]: filtered }));
     };
     void load();
     timer = window.setInterval(() => void load(), 1000);
@@ -70,13 +58,13 @@ export function TradeStatsTabs({ rows }: { rows: SymbolRow[] }) {
   return (
     <Tabs activeKey={activeTab} onSelect={(k) => setActiveTab((k as any) ?? "both")} className="mb-2">
       <Tab eventKey="both" title="Both directions">
-        <TradeStatsBySymbolTable stats={enriched} />
+        <TradeStatsBySymbolTable stats={enriched} mode="both" />
       </Tab>
       <Tab eventKey="long" title="Long">
-        <TradeStatsBySymbolTable stats={enriched} />
+        <TradeStatsBySymbolTable stats={enriched} mode="long" />
       </Tab>
       <Tab eventKey="short" title="Short">
-        <TradeStatsBySymbolTable stats={enriched} />
+        <TradeStatsBySymbolTable stats={enriched} mode="short" />
       </Tab>
       <Tab eventKey="excursions" title="Excursions">
         <TradeExcursionsTable rows={excursions} />

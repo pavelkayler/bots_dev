@@ -21,7 +21,7 @@ function finiteNum(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[] }) {
+export function TradeStatsBySymbolTable({ stats, mode }: { stats: TradeStatsBySymbol[]; mode: "both" | "long" | "short" }) {
   const [sortKey, setSortKey] = useState<SortKey>("netPnl");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -81,6 +81,10 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
 
   const thButton: CSSProperties = { cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" };
   const td: CSSProperties = { whiteSpace: "nowrap", fontSize: 13 };
+  const showTrades = mode === "both";
+  const showLongs = mode !== "short";
+  const showShorts = mode !== "long";
+  const emptyColSpan = 8 + (showTrades ? 1 : 0) + (showLongs ? 1 : 0) + (showShorts ? 1 : 0);
 
   return (
     <div style={{ overflowX: "auto" }}>
@@ -90,9 +94,9 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
             <th style={thButton} onClick={() => onSort("symbol")}>Symbol</th>
             <th style={thButton} onClick={() => onSort("turnover24hUsd")}>Turnover 24h</th>
             <th style={thButton} onClick={() => onSort("volatility24hPct")}>Volatility 24h</th>
-            <th style={thButton} onClick={() => onSort("trades")}>Trades</th>
-            <th style={thButton} onClick={() => onSort("longTrades")}>Longs</th>
-            <th style={thButton} onClick={() => onSort("shortTrades")}>Shorts</th>
+            {showTrades ? <th style={thButton} onClick={() => onSort("trades")}>Trades</th> : null}
+            {showLongs ? <th style={thButton} onClick={() => onSort("longTrades")}>Longs</th> : null}
+            {showShorts ? <th style={thButton} onClick={() => onSort("shortTrades")}>Shorts</th> : null}
             <th style={thButton} onClick={() => onSort("winRate")}>W/L/WR</th>
             <th style={thButton} onClick={() => onSort("netPnl")}>Net PnL (realized)</th>
             <th style={thButton} onClick={() => onSort("fees")}>Fees</th>
@@ -108,9 +112,9 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
                 <td style={td}>{row.symbol}</td>
                 <td style={td}>{fmtNum(row.turnover24hUsd ?? Number.NaN)}</td>
                 <td style={td}>{fmtPct(row.volatility24hPct)}</td>
-                <td style={td}>{row.trades}</td>
-                <td style={td}>{sideCell(row.longTrades, row.longWins)}</td>
-                <td style={td}>{sideCell(row.shortTrades, row.shortWins)}</td>
+                {showTrades ? <td style={td}>{row.trades}</td> : null}
+                {showLongs ? <td style={td}>{sideCell(row.longTrades, row.longWins)}</td> : null}
+                {showShorts ? <td style={td}>{sideCell(row.shortTrades, row.shortWins)}</td> : null}
                 <td style={td}>{`${row.wins}/${row.losses}/${winRate.toFixed(2)}%`}</td>
                 <td style={td}>{fmtMoney(row.netPnl)}</td>
                 <td style={td}>{formatFee(row.fees)}</td>
@@ -121,8 +125,8 @@ export function TradeStatsBySymbolTable({ stats }: { stats: TradeStatsBySymbol[]
           })}
           {sorted.length === 0 ? (
             <tr>
-              <td colSpan={11} style={{ opacity: 0.75 }}>
-                No closed trades yet.
+              <td colSpan={emptyColSpan} style={{ opacity: 0.75 }}>
+                No trades yet.
               </td>
             </tr>
           ) : null}
