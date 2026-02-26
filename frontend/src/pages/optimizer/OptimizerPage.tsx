@@ -341,7 +341,7 @@ export function OptimizerPage() {
   const [jobStartedAtMs, setJobStartedAtMs] = useState<number | null>(null);
   const [jobUpdatedAtMs, setJobUpdatedAtMs] = useState<number | null>(null);
   const [jobFinishedAtMs, setJobFinishedAtMs] = useState<number | null>(null);
-  const [jobStatus, setJobStatus] = useState<"running" | "paused" | "done" | "error" | "cancelled" | null>(null);
+  const [jobStatus, setJobStatus] = useState<"idle" | "running" | "paused" | "done" | "error" | "cancelled">("idle");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [singleJobId, setSingleJobId] = useState<string | null>(null);
   const [loopJobId, setLoopJobId] = useState<string | null>(null);
@@ -370,9 +370,10 @@ export function OptimizerPage() {
   const [lastSoak, setLastSoak] = useState<SoakLastStatus["snapshot"]>(null);
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
+  const loopPollTokenRef = useRef(0);
   const prevLoopJobIdRef = useRef<string | null>(null);
   const prevLoopActiveRef = useRef(false);
-  const activeJobIdRef = useRef<string | null>(null);
+  const loopJobIdRef = useRef<string | null>(null);
 
   const resetJobProgressState = useCallback(() => {
     setDone(0);
@@ -380,8 +381,20 @@ export function OptimizerPage() {
     setJobStartedAtMs(null);
     setJobUpdatedAtMs(null);
     setJobFinishedAtMs(null);
-    setJobStatus(null);
+    setJobStatus("idle");
     setOptimizerPaused(false);
+  }, []);
+
+  const clearSingleJobState = useCallback(() => {
+    setSingleJobId(null);
+    setJobStatus("idle");
+    setDone(0);
+    setTotal(0);
+  }, []);
+
+  const isNoCurrentJobError = useCallback((err: unknown): boolean => {
+    const message = String((err as any)?.message ?? err).toLowerCase();
+    return message.includes("404") || message.includes("not found") || message.includes("no current job");
   }, []);
 
   async function refreshStatus() {
@@ -459,6 +472,10 @@ export function OptimizerPage() {
         }
         setError(statusRes.message ?? "Optimization job failed.");
       } catch (e: any) {
+        if (isNoCurrentJobError(e)) {
+          clearSingleJobState();
+          return;
+        }
         setError(String(e?.message ?? e));
       }
     })();
@@ -521,22 +538,27 @@ export function OptimizerPage() {
     return () => window.clearInterval(id);
   }, [jobStatus, loopStatus?.loop?.isRunning]);
 
+  const loopExists = Boolean(loopStatus?.loop);
+  const loopRunning = Boolean(loopStatus?.loop?.isRunning);
+  const loopPaused = Boolean(loopStatus?.loop?.isRunning && loopStatus?.loop?.isPaused);
+  const loopActive = loopRunning || loopPaused;
+  const loopStopped = !loopRunning;
+  const jobActive = jobStatus === "running" || jobStatus === "paused";
+  const activeJobId = loopActive ? loopJobId : singleJobId;
+
   useEffect(() => {
     let timer: number | null = null;
     const refresh = async () => {
       try {
         const next = await getOptimizerLoopStatus();
         setLoopStatus(next);
-        const nextJobId = next.loop?.lastJobId ?? null;
-        if (nextJobId !== loopJobId) {
-          setLoopJobId(nextJobId);
-        }
+        setLoopJobId(next.loop?.lastJobId ?? null);
       } catch {
         return;
       }
     };
     void refresh();
-    if (loopStatus?.loop?.isRunning || loopStatus?.loop?.isPaused) {
+    if (loopActive) {
       timer = window.setInterval(() => {
         void refresh();
       }, 500);
@@ -544,38 +566,19 @@ export function OptimizerPage() {
     return () => {
       if (timer != null) window.clearInterval(timer);
     };
-  }, [loopJobId, loopStatus?.loop?.isPaused, loopStatus?.loop?.isRunning]);
+  }, [loopActive]);
 
   useEffect(() => {
     const prev = prevLoopJobIdRef.current;
-    if (prev !== null && loopJobId !== null && prev !== loopJobId) {
+    if (loopJobId !== null && prev !== loopJobId) {
       resetJobProgressState();
     }
     prevLoopJobIdRef.current = loopJobId;
   }, [loopJobId, resetJobProgressState]);
 
-  const loopExists = Boolean(loopStatus?.loop);
-  const loopRunning = Boolean(loopStatus?.loop?.isRunning);
-  const loopPaused = Boolean(loopStatus?.loop?.isRunning && loopStatus?.loop?.isPaused);
-  const loopActive = loopRunning || loopPaused;
-  const loopStopped = !loopRunning;
-  const jobActive = jobStatus === "running" || jobStatus === "paused";
-  const [displayJobId, setDisplayJobId] = useState<string | null>(null);
-
   useEffect(() => {
-    const nextJobId = loopActive ? loopJobId : singleJobId;
-    if (nextJobId) {
-      setDisplayJobId((prev) => (prev === nextJobId ? prev : nextJobId));
-      return;
-    }
-    setDisplayJobId(null);
-  }, [loopActive, loopJobId, singleJobId]);
-
-  const activeJobId = displayJobId;
-
-  useEffect(() => {
-    activeJobIdRef.current = activeJobId;
-  }, [activeJobId]);
+    loopJobIdRef.current = loopJobId;
+  }, [loopJobId]);
 
   useEffect(() => {
     const prevLoopActive = prevLoopActiveRef.current;
@@ -811,17 +814,16 @@ export function OptimizerPage() {
   }
 
   useEffect(() => {
-    if (!activeJobId || (!jobActive && !loopActive)) return;
+    if (loopActive || !singleJobId || !jobActive) return;
     let alive = true;
     const timer = window.setInterval(async () => {
       try {
-        const reqJobId = activeJobIdRef.current;
-        if (!reqJobId) return;
+        const reqJobId = singleJobId;
         const now = Date.now();
         if (lastStatusFetchRef.current.jobId === reqJobId && now - lastStatusFetchRef.current.ts < 200) return;
         lastStatusFetchRef.current = { jobId: reqJobId, ts: now };
         const res = await getJobStatus(reqJobId);
-        if (activeJobIdRef.current !== reqJobId) return;
+        if (loopActive || singleJobId !== reqJobId) return;
         if (!alive) return;
         setDone((prev) => (prev === res.done ? prev : res.done));
         setTotal((prev) => (prev === res.total ? prev : res.total));
@@ -843,8 +845,8 @@ export function OptimizerPage() {
           const next = res.status === "paused";
           return prev === next ? prev : next;
         });
-        await fetchResults(page, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: loopActive });
-        if (activeJobIdRef.current !== reqJobId) return;
+        await fetchResults(page, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
+        if (loopActive || singleJobId !== reqJobId) return;
         if (!alive) return;
         if (res.status === "error") {
           setError(res.message ?? "Optimization job failed.");
@@ -852,11 +854,15 @@ export function OptimizerPage() {
         if (res.status === "done" || res.status === "cancelled") {
           window.clearInterval(timer);
           if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
-          await fetchResults(1, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: loopActive });
-          if (activeJobIdRef.current !== reqJobId) return;
+          await fetchResults(1, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
+          if (loopActive || singleJobId !== reqJobId) return;
           if (!alive) return;
         }
       } catch (e: any) {
+        if (isNoCurrentJobError(e)) {
+          clearSingleJobState();
+          return;
+        }
         setError(String(e?.message ?? e));
       }
     }, 250);
@@ -865,7 +871,65 @@ export function OptimizerPage() {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [activeJobId, jobActive, loopActive, page, sortDir, sortKey]);
+  }, [clearSingleJobState, isNoCurrentJobError, jobActive, loopActive, page, singleJobId, sortDir, sortKey]);
+
+  useEffect(() => {
+    if (!loopActive || !loopJobId) return;
+    const token = ++loopPollTokenRef.current;
+    let alive = true;
+    const timer = window.setInterval(async () => {
+      const reqJobId = loopJobId;
+      const reqToken = loopPollTokenRef.current;
+      if (!reqJobId || reqToken !== token) return;
+      try {
+        const res = await getJobStatus(reqJobId);
+        if (!alive) return;
+        if (loopPollTokenRef.current !== token) return;
+        if (loopJobIdRef.current !== reqJobId) return;
+        setDone((prev) => (prev === res.done ? prev : res.done));
+        setTotal((prev) => (prev === res.total ? prev : res.total));
+        setJobStartedAtMs((prev) => {
+          const next = res.startedAtMs ?? null;
+          return prev === next ? prev : next;
+        });
+        setJobUpdatedAtMs((prev) => {
+          const next = res.updatedAtMs ?? null;
+          return prev === next ? prev : next;
+        });
+        setJobFinishedAtMs((prev) => {
+          const next = res.finishedAtMs ?? null;
+          return prev === next ? prev : next;
+        });
+        setJobStatus((prev) => (prev === res.status ? prev : res.status));
+        setNowMs(Date.now());
+      } catch {
+        return;
+      }
+    }, 300);
+
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [loopActive, loopJobId]);
+
+  useEffect(() => {
+    if (!loopActive || !loopJobId) return;
+    let alive = true;
+    const timer = window.setInterval(async () => {
+      try {
+        await fetchResults(1, sortKey, sortDir, loopJobId, { keepPreviousIfEmpty: true });
+        if (!alive) return;
+      } catch {
+        return;
+      }
+    }, 1000);
+
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [loopActive, loopJobId, sortDir, sortKey]);
 
 
   async function onStopOptimization() {
@@ -1007,7 +1071,7 @@ export function OptimizerPage() {
   const elapsedSec = endMs == null || !jobStartedAtMs ? null : Math.max(0, (endMs - jobStartedAtMs) / 1000);
   const etaSec = isRunningStatus && done > 0.01 && elapsedSec != null ? elapsedSec * (100 / done - 1) : null;
   const lastJobSnapshotExists = Boolean(
-    jobStatus !== null ||
+    jobStatus !== "idle" ||
     jobStartedAtMs !== null ||
     jobUpdatedAtMs !== null ||
     jobFinishedAtMs !== null ||
@@ -1160,7 +1224,7 @@ export function OptimizerPage() {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button onClick={() => void onRunOptimization()} disabled={!hasTapeSelected || jobActive || loopActive || Boolean(rangeError)}>
+                <Button onClick={() => void onRunOptimization()} disabled={!(hasTapeSelected && !loopActive && !singleJobProcessActive && !rangeError)}>
                   Run optimization
                 </Button>
               </Col>
