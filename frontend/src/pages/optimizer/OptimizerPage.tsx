@@ -341,6 +341,17 @@ export function OptimizerPage() {
   const [doctorBusy, setDoctorBusy] = useState(false);
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
+  const prevLoopJobIdRef = useRef<string | null>(null);
+
+  const resetJobProgressState = useCallback(() => {
+    setDone(0);
+    setTotal(0);
+    setJobStartedAtMs(null);
+    setJobUpdatedAtMs(null);
+    setJobFinishedAtMs(null);
+    setJobStatus(null);
+    setOptimizerPaused(false);
+  }, []);
 
   async function refreshStatus() {
     try {
@@ -506,6 +517,14 @@ export function OptimizerPage() {
       if (timer != null) window.clearInterval(timer);
     };
   }, [loopJobId, loopStatus?.loop?.isPaused, loopStatus?.loop?.isRunning]);
+
+  useEffect(() => {
+    const prev = prevLoopJobIdRef.current;
+    if (prev !== null && loopJobId !== null && prev !== loopJobId) {
+      resetJobProgressState();
+    }
+    prevLoopJobIdRef.current = loopJobId;
+  }, [loopJobId, resetJobProgressState]);
 
   const loopExists = Boolean(loopStatus?.loop);
   const loopRunning = Boolean(loopStatus?.loop?.isRunning);
@@ -682,9 +701,18 @@ export function OptimizerPage() {
     });
   }, []);
 
-  async function fetchResults(nextPage: number, nextSortKey: OptimizerSortKeyExtended, nextSortDir: OptimizerSortDir, activeJobId: string) {
+  async function fetchResults(
+    nextPage: number,
+    nextSortKey: OptimizerSortKeyExtended,
+    nextSortDir: OptimizerSortDir,
+    activeJobId: string,
+    options?: { keepPreviousIfEmpty?: boolean }
+  ) {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
-    setResults(res.results ?? []);
+    const nextResults = res.results ?? [];
+    if (!options?.keepPreviousIfEmpty || nextResults.length > 0) {
+      setResults(nextResults);
+    }
     setPage(res.page);
     setTotalRows(res.totalRows);
   }
@@ -762,7 +790,7 @@ export function OptimizerPage() {
           const next = res.status === "paused";
           return prev === next ? prev : next;
         });
-        await fetchResults(page, sortKey, sortDir, activeJobId);
+        await fetchResults(page, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
         if (res.status === "error") {
           setRunning(false);
           setError(res.message ?? "Optimization job failed.");
