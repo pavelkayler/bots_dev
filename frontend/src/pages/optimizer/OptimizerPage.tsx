@@ -316,7 +316,8 @@ export function OptimizerPage() {
   const [jobFinishedAtMs, setJobFinishedAtMs] = useState<number | null>(null);
   const [jobStatus, setJobStatus] = useState<"running" | "paused" | "done" | "error" | "cancelled" | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [singleJobId, setSingleJobId] = useState<string | null>(null);
+  const [loopJobId, setLoopJobId] = useState<string | null>(null);
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
 
@@ -336,6 +337,7 @@ export function OptimizerPage() {
   const [loopStatus, setLoopStatus] = useState<OptimizerLoopStatus | null>(null);
   const [loopBusy, setLoopBusy] = useState(false);
   const rangesSaveTimerRef = useRef<number | null>(null);
+  const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
 
   async function refreshStatus() {
     try {
@@ -384,7 +386,7 @@ export function OptimizerPage() {
       try {
         const current = await getCurrentJob();
         if (!current.jobId) return;
-        setJobId(current.jobId);
+        setSingleJobId(current.jobId);
         const statusRes = await getJobStatus(current.jobId);
         setDone(statusRes.done);
         setTotal(statusRes.total);
@@ -475,30 +477,8 @@ export function OptimizerPage() {
         const next = await getOptimizerLoopStatus();
         setLoopStatus(next);
         const nextJobId = next.loop?.lastJobId ?? null;
-        if (nextJobId && nextJobId !== jobId) {
-          setJobId(nextJobId);
-          setDone(0);
-          setTotal(100);
-          setJobStartedAtMs(null);
-          setJobUpdatedAtMs(null);
-          setJobFinishedAtMs(null);
-          setOptimizerPaused(false);
-          setJobStatus(null);
-          setRunning(true);
-          try {
-            const statusRes = await getJobStatus(nextJobId);
-            setDone(statusRes.done);
-            setTotal(statusRes.total);
-            setJobStartedAtMs(statusRes.startedAtMs ?? null);
-            setJobUpdatedAtMs(statusRes.updatedAtMs ?? null);
-            setJobFinishedAtMs(statusRes.finishedAtMs ?? null);
-            setJobStatus(statusRes.status);
-            setOptimizerPaused(statusRes.status === "paused");
-            setRunning(statusRes.status === "running" || statusRes.status === "paused");
-            await fetchResults(page, sortKey, sortDir, nextJobId);
-          } catch {
-            return;
-          }
+        if (nextJobId !== loopJobId) {
+          setLoopJobId(nextJobId);
         }
       } catch {
         return;
@@ -513,12 +493,14 @@ export function OptimizerPage() {
     return () => {
       if (timer != null) window.clearInterval(timer);
     };
-  }, [jobId, loopStatus?.loop?.isPaused, loopStatus?.loop?.isRunning, page, sortDir, sortKey]);
+  }, [loopJobId, loopStatus?.loop?.isPaused, loopStatus?.loop?.isRunning]);
 
   const loopExists = Boolean(loopStatus?.loop);
   const loopRunning = Boolean(loopStatus?.loop?.isRunning);
   const loopPaused = Boolean(loopStatus?.loop?.isRunning && loopStatus?.loop?.isPaused);
+  const loopActive = loopRunning || loopPaused;
   const loopStopped = !loopRunning;
+  const activeJobId = loopActive ? loopJobId : singleJobId;
 
   async function onStartLoop() {
     if (!selectedTapeIds.length || rangeError) return;
@@ -724,14 +706,14 @@ export function OptimizerPage() {
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
       });
-      setJobId(runRes.jobId);
+      setSingleJobId(runRes.jobId);
       setJobStartedAtMs(Date.now());
       setJobUpdatedAtMs(Date.now());
       setJobFinishedAtMs(null);
       setJobStatus("running");
       setOptimizerPaused(false);
       setJobPrecisionById((prev) => ({ ...prev, [runRes.jobId]: precision }));
-      setResults([]);
+      if (!excludeNegative && !rememberNegatives) setResults([]);
       setPage(1);
       setTotalRows(0);
     } catch (e: any) {
@@ -741,19 +723,34 @@ export function OptimizerPage() {
   }
 
   useEffect(() => {
-    if (!jobId || !running) return;
+    if (!activeJobId || (!running && !loopActive)) return;
     const timer = window.setInterval(async () => {
       try {
-        const res = await getJobStatus(jobId);
-        setDone(res.done);
-        setTotal(res.total);
-        if (res.startedAtMs) setJobStartedAtMs(res.startedAtMs);
-        if (res.updatedAtMs) setJobUpdatedAtMs(res.updatedAtMs);
-        setJobFinishedAtMs(res.finishedAtMs ?? null);
-        setJobStatus(res.status);
+        const now = Date.now();
+        if (lastStatusFetchRef.current.jobId === activeJobId && now - lastStatusFetchRef.current.ts < 200) return;
+        lastStatusFetchRef.current = { jobId: activeJobId, ts: now };
+        const res = await getJobStatus(activeJobId);
+        setDone((prev) => (prev === res.done ? prev : res.done));
+        setTotal((prev) => (prev === res.total ? prev : res.total));
+        setJobStartedAtMs((prev) => {
+          const next = res.startedAtMs ?? null;
+          return prev === next ? prev : next;
+        });
+        setJobUpdatedAtMs((prev) => {
+          const next = res.updatedAtMs ?? null;
+          return prev === next ? prev : next;
+        });
+        setJobFinishedAtMs((prev) => {
+          const next = res.finishedAtMs ?? null;
+          return prev === next ? prev : next;
+        });
+        setJobStatus((prev) => (prev === res.status ? prev : res.status));
         setNowMs(Date.now());
-        setOptimizerPaused(res.status === "paused");
-        await fetchResults(page, sortKey, sortDir, jobId);
+        setOptimizerPaused((prev) => {
+          const next = res.status === "paused";
+          return prev === next ? prev : next;
+        });
+        await fetchResults(page, sortKey, sortDir, activeJobId);
         if (res.status === "error") {
           setRunning(false);
           setError(res.message ?? "Optimization job failed.");
@@ -762,7 +759,7 @@ export function OptimizerPage() {
           window.clearInterval(timer);
           setRunning(false);
           if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
-          await fetchResults(1, sortKey, sortDir, jobId);
+          await fetchResults(1, sortKey, sortDir, activeJobId);
         }
       } catch (e: any) {
         setRunning(false);
@@ -771,7 +768,7 @@ export function OptimizerPage() {
     }, 250);
 
     return () => window.clearInterval(timer);
-  }, [jobId, running, sortDir, sortKey]);
+  }, [activeJobId, loopActive, page, running, sortDir, sortKey]);
 
 
   async function onStopOptimization() {
@@ -805,19 +802,19 @@ export function OptimizerPage() {
   }
 
   async function onSort(nextSortKey: OptimizerSortKeyExtended) {
-    if (!jobId) return;
+    if (!activeJobId) return;
     const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
     setSortKey(nextSortKey);
     setSortDir(nextSortDir);
-    await fetchResults(1, nextSortKey, nextSortDir, jobId);
+    await fetchResults(1, nextSortKey, nextSortDir, activeJobId);
   }
 
   async function onPageChange(nextPage: number) {
-    if (!jobId) return;
-    await fetchResults(nextPage, sortKey, sortDir, jobId);
+    if (!activeJobId) return;
+    await fetchResults(nextPage, sortKey, sortDir, activeJobId);
   }
 
-  const activePrecision = (jobId ? jobPrecisionById[jobId] : undefined) ?? DEFAULT_PRECISION;
+  const activePrecision = (activeJobId ? jobPrecisionById[activeJobId] : undefined) ?? DEFAULT_PRECISION;
 
 
   function copyToSettings(row: OptimizationResult) {
@@ -825,7 +822,7 @@ export function OptimizerPage() {
       source: "optimizer",
       ts: Date.now(),
       tapeId: selectedTapeIds[0] ?? null,
-      jobId,
+      jobId: activeJobId,
       rank: row.rank,
       patch: {
         signals: {
@@ -866,7 +863,7 @@ export function OptimizerPage() {
       : (jobFinishedAtMs ?? jobUpdatedAtMs ?? jobStartedAtMs);
   const elapsedSec = endMs == null || !jobStartedAtMs ? null : Math.max(0, (endMs - jobStartedAtMs) / 1000);
   const etaSec = isRunningStatus && done > 0.01 && elapsedSec != null ? elapsedSec * (100 / done - 1) : null;
-  const hasJobProgress = Boolean(jobId && (jobStatus === "running" || jobStatus === "paused" || jobStatus === "done"));
+  const hasJobProgress = Boolean(activeJobId && (jobStatus === "running" || jobStatus === "paused" || jobStatus === "done"));
   const pct = clamp(roundTo2(jobStatus === "done" ? 100 : done), 0, 100);
 
   return (
@@ -992,7 +989,7 @@ export function OptimizerPage() {
                   Run optimization
                 </Button>
               </Col>
-              {running ? (
+              {!loopActive && running ? (
                 <Col xs="auto">
                   <ButtonGroup>
                     {!optimizerPaused ? <Button variant="outline-warning" onClick={() => void onPauseOptimization()}>Pause</Button> : <Button variant="outline-primary" onClick={() => void onResumeOptimization()}>Resume</Button>}
