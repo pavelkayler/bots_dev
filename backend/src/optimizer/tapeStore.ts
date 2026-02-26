@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { getTapeRunsTotals } from "./tapeRunsStore.js";
 
 const OPTIMIZER_SETTINGS_PATH = path.resolve(process.cwd(), "data", "optimizer_settings.json");
 const DEFAULT_TAPES_DIR = path.resolve(process.cwd(), "data", "tapes");
@@ -22,6 +23,7 @@ export type TapeListItem = {
   createdAt: number;
   fileSizeBytes: number;
   meta: TapeMetaLine | null;
+  runsTotal: number;
 };
 
 function readSettingsFile(): OptimizerSettings | null {
@@ -97,6 +99,7 @@ export function resolveTapePath(id: string): string {
 export function listTapes(): TapeListItem[] {
   ensureDir();
   const tapesDir = getTapesDir();
+  const runsTotals = getTapeRunsTotals();
   const files = fs.readdirSync(tapesDir).filter((file) => file.endsWith(".jsonl"));
 
   const tapes: TapeListItem[] = [];
@@ -128,6 +131,7 @@ export function listTapes(): TapeListItem[] {
         createdAt: Number.isFinite(createdAt) ? createdAt : stat.mtimeMs,
         fileSizeBytes: stat.size,
         meta,
+        runsTotal: runsTotals[id] ?? 0,
       });
     } catch {
       // ignore
