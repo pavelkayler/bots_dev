@@ -81,12 +81,19 @@ async function analyzeTapeQa(tapePath: string, tfMin: number, entryTimeoutSec: n
   let firstTsMs: number | null = null;
   let lastTsMs: number | null = null;
   let tickerLines = 0;
+  let parseErrors = 0;
   const symbolsSeen = new Set<string>();
   const lastTsBySymbol = new Map<string, number>();
   const deltasBySymbol = new Map<string, number[]>();
 
+  const stream = fs.createReadStream(tapePath, { encoding: "utf8" });
+  let streamError: Error | null = null;
+  stream.on("error", (err) => {
+    streamError = err;
+  });
+
   const rl = readline.createInterface({
-    input: fs.createReadStream(tapePath, { encoding: "utf8" }),
+    input: stream,
     crlfDelay: Infinity,
   });
 
@@ -97,9 +104,11 @@ async function analyzeTapeQa(tapePath: string, tfMin: number, entryTimeoutSec: n
     try {
       parsed = JSON.parse(trimmed);
     } catch {
+      parseErrors += 1;
       continue;
     }
-    if (parsed?.type !== "ticker" || !parsed.payload || typeof parsed.payload !== "object") continue;
+    if (!parsed?.type) continue;
+    if (parsed.type !== "ticker" || !parsed.payload || typeof parsed.payload !== "object") continue;
 
     const payload = parsed.payload as { ts?: unknown; symbol?: unknown };
     const ts = Number(payload.ts);
@@ -127,6 +136,11 @@ async function analyzeTapeQa(tapePath: string, tfMin: number, entryTimeoutSec: n
     lastTsBySymbol.set(symbol, tsMs);
   }
 
+  if (streamError) {
+    const message = (streamError as any)?.code === "ENOENT" ? "tape_not_found" : "tape_read_error";
+    throw new Error(message);
+  }
+
   const durationMs = firstTsMs != null && lastTsMs != null ? Math.max(0, lastTsMs - firstTsMs) : 0;
   const durationSec = durationMs / 1000;
   const durationMin = durationMs / 60000;
@@ -145,6 +159,8 @@ async function analyzeTapeQa(tapePath: string, tfMin: number, entryTimeoutSec: n
     durationSec,
     durationMin,
     medianTickIntervalSec: medianOfMediansSec,
+    noTickerData: tickerLines === 0,
+    parseErrors,
     tooShortForTf: durationMin < tfMin,
     sparse: medianOfMediansSec != null && medianOfMediansSec > entryTimeoutSec,
   };
@@ -459,7 +475,16 @@ const now = Date.now();
 
     try {
       safeId(tapeId);
-      const tapePath = resolveTapePath(tapeId);
+      let tapePath: string;
+      try {
+        tapePath = resolveTapePath(tapeId);
+      } catch (e: any) {
+        if ((e as NodeJS.ErrnoException)?.code === "ENOENT") {
+          reply.code(404);
+          return { error: "tape_not_found" };
+        }
+        throw e;
+      }
       if (!fs.existsSync(tapePath)) {
         reply.code(404);
         return { error: "tape_not_found" };
@@ -474,6 +499,10 @@ const now = Date.now();
       if (String(e?.message ?? e) === "invalid_tape_path") {
         reply.code(400);
         return { error: "invalid_tape_path" };
+      }
+      if (String(e?.message ?? e) === "tape_not_found") {
+        reply.code(404);
+        return { error: "tape_not_found" };
       }
       reply.code(500);
       return { error: "tape_qa_failed", message: String(e?.message ?? e) };
