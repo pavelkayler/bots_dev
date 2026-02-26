@@ -7,7 +7,6 @@ import {
   getJobResults,
   getJobStatus,
   cancelCurrentJob,
-  getTapeQa,
   getCurrentJob,
   getSettings,
   getStatus,
@@ -20,10 +19,9 @@ import {
   type OptimizerPrecision,
   type OptimizerSortDir,
   type OptimizerSortKeyExtended,
-  type TapeQaResponse,
 } from "../../features/optimizer/api/optimizerApi";
 
-type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset";
+type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs";
 type RangeState = Record<RangeKey, { min: string; max: string }>;
 
 const RANGE_DEFAULTS: RangeState = {
@@ -32,6 +30,8 @@ const RANGE_DEFAULTS: RangeState = {
   tp: { min: "2", max: "12" },
   sl: { min: "2", max: "12" },
   offset: { min: "0", max: "1" },
+  timeoutSec: { min: "5", max: "60" },
+  rearmMs: { min: "0", max: "3000" },
 };
 
 const pageSize = 50;
@@ -40,20 +40,12 @@ const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
 const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
 const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
 const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
+const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
-const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3 };
+const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 
 type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number };
 
-
-type TapeQaSummary = {
-  tapesCount: number;
-  totalSymbolsSeen: number;
-  avgDurationMin: number;
-  worstMedianTickIntervalSec: number | null;
-  countTooShort: number;
-  countSparse: number;
-};
 
 const TapeSizeCell = memo(function TapeSizeCell({
   tapeId,
@@ -224,7 +216,7 @@ function parseMaybeNumber(value: string): number | undefined {
 
 function isValidRangeState(value: unknown): value is RangeState {
   if (!value || typeof value !== "object") return false;
-  const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset"];
+  const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"];
   for (const key of keys) {
     const row = (value as Record<string, any>)[key];
     if (!row || typeof row !== "object") return false;
@@ -279,6 +271,7 @@ export function OptimizerPage() {
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
+  const [minTrades, setMinTrades] = useState("1");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState<string>("");
   const [running, setRunning] = useState(false);
@@ -295,11 +288,6 @@ export function OptimizerPage() {
   const [tapesDir, setTapesDir] = useState("");
   const [showTapesDirModal, setShowTapesDirModal] = useState(false);
   const [tapesDirDraft, setTapesDirDraft] = useState("");
-  const [qaMessage, setQaMessage] = useState<string | null>(null);
-  const [showQaModal, setShowQaModal] = useState(false);
-  const [qaRunning, setQaRunning] = useState(false);
-  const [qaDoneCount, setQaDoneCount] = useState(0);
-  const [qaResults, setQaResults] = useState<TapeQaResponse[]>([]);
 
   const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
   const rangesSaveTimerRef = useRef<number | null>(null);
@@ -327,6 +315,11 @@ export function OptimizerPage() {
     if (savedOptTf != null) {
       const n = Math.floor(Number(savedOptTf));
       if (Number.isFinite(n) && n >= 1) setOptTfMin(String(n));
+    }
+    const savedMinTrades = localStorage.getItem(MIN_TRADES_STORAGE_KEY);
+    if (savedMinTrades != null) {
+      const n = Math.floor(Number(savedMinTrades));
+      if (Number.isFinite(n) && n >= 0) setMinTrades(String(n));
     }
     void refreshStatus();
     setTapesRefreshKey((prev) => prev + 1);
@@ -392,6 +385,11 @@ export function OptimizerPage() {
     }
   }, [optTfMin]);
 
+  useEffect(() => {
+    const n = Math.floor(Number(minTrades));
+    if (Number.isFinite(n) && n >= 0) localStorage.setItem(MIN_TRADES_STORAGE_KEY, String(n));
+  }, [minTrades]);
+
   async function onStartRecording() {
     setError(null);
     try {
@@ -418,7 +416,7 @@ export function OptimizerPage() {
   }
 
   const rangeError = useMemo(() => {
-    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset"];
+    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"];
     for (const key of keys) {
       const minText = ranges[key].min;
       const maxText = ranges[key].max;
@@ -433,7 +431,7 @@ export function OptimizerPage() {
 
   function buildRangesPayload() {
     const payload: Partial<Record<RangeKey, { min: number; max: number }>> = {};
-    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset"];
+    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"];
     for (const key of keys) {
       const min = parseMaybeNumber(ranges[key].min);
       const max = parseMaybeNumber(ranges[key].max);
@@ -500,11 +498,14 @@ export function OptimizerPage() {
         tp: Math.max(countDecimals(ranges.tp.min), countDecimals(ranges.tp.max)),
         sl: Math.max(countDecimals(ranges.sl.min), countDecimals(ranges.sl.max)),
         offset: Math.max(countDecimals(ranges.offset.min), countDecimals(ranges.offset.max)),
+        timeoutSec: Math.max(countDecimals(ranges.timeoutSec.min), countDecimals(ranges.timeoutSec.max)),
+        rearmMs: Math.max(countDecimals(ranges.rearmMs.min), countDecimals(ranges.rearmMs.max)),
       };
       const runRes = await runOptimizationJob({
         tapeIds: selectedTapeIds,
         candidates: Number(candidates),
         seed: Number(seed),
+        minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
         directionMode,
         ...(optTfMin.trim() ? { optTfMin: Number(optTfMin) } : {}),
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
@@ -572,52 +573,6 @@ export function OptimizerPage() {
 
   const activePrecision = (jobId ? jobPrecisionById[jobId] : undefined) ?? DEFAULT_PRECISION;
 
-  const qaSummary = useMemo<TapeQaSummary | null>(() => {
-    if (!qaResults.length) return null;
-    const totalSymbolsSeen = qaResults.reduce((acc, row) => acc + row.symbolsSeen, 0);
-    const avgDurationMin = qaResults.reduce((acc, row) => acc + row.durationMin, 0) / qaResults.length;
-    const medians = qaResults.map((row) => row.medianTickIntervalSec).filter((value): value is number => value != null);
-    const worstMedianTickIntervalSec = medians.length ? Math.max(...medians) : null;
-    return {
-      tapesCount: qaResults.length,
-      totalSymbolsSeen,
-      avgDurationMin,
-      worstMedianTickIntervalSec,
-      countTooShort: qaResults.filter((row) => row.tooShortForTf).length,
-      countSparse: qaResults.filter((row) => row.sparse).length,
-    };
-  }, [qaResults]);
-
-  async function onRunTapeQa() {
-    if (!selectedTapeIds.length) {
-      setQaMessage("Select at least one tape");
-      return;
-    }
-    setQaMessage(null);
-    setShowQaModal(true);
-    setQaRunning(true);
-    setQaDoneCount(0);
-    setQaResults([]);
-
-    const tfMinParsed = Math.floor(Number(optTfMin));
-    const tfMin = Number.isFinite(tfMinParsed) && tfMinParsed > 0 ? tfMinParsed : 1;
-    const entryTimeoutSec = 15;
-
-    try {
-      const rows: TapeQaResponse[] = [];
-      for (let i = 0; i < selectedTapeIds.length; i += 1) {
-        const tapeId = selectedTapeIds[i];
-        const row = await getTapeQa(tapeId, tfMin, entryTimeoutSec);
-        rows.push(row);
-        setQaResults([...rows]);
-        setQaDoneCount(i + 1);
-      }
-    } catch (e: any) {
-      setQaMessage(String(e?.message ?? e));
-    } finally {
-      setQaRunning(false);
-    }
-  }
 
   function copyToSettings(row: OptimizationResult) {
     const patch = {
@@ -635,6 +590,8 @@ export function OptimizerPage() {
           tpRoiPct: quantizeByPrecision(row.params.tpRoiPct, activePrecision.tp),
           slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
           entryOffsetPct: quantizeByPrecision(row.params.entryOffsetPct, activePrecision.offset),
+          entryTimeoutSec: quantizeByPrecision(row.params.timeoutSec, activePrecision.timeoutSec),
+          rearmDelayMs: quantizeByPrecision(row.params.rearmMs, activePrecision.rearmMs),
         },
       },
     };
@@ -716,6 +673,10 @@ export function OptimizerPage() {
                 <Form.Control value={seed} onChange={(e) => setSeed(e.currentTarget.value)} type="number" />
               </Form.Group>
               <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>minTrades</Form.Label>
+                <Form.Control value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} />
+              </Form.Group>
+              <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>direction</Form.Label>
                 <Form.Select value={directionMode} onChange={(e) => setDirectionMode(e.currentTarget.value as "both" | "long" | "short")}>
                   <option value="both">Both</option>
@@ -755,7 +716,7 @@ export function OptimizerPage() {
                 </tr>
               </thead>
               <tbody>
-                {(["priceTh", "oivTh", "tp", "sl", "offset"] as RangeKey[]).map((key) => (
+                {(["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"] as RangeKey[]).map((key) => (
                   <tr key={key}>
                     <td>{key}</td>
                     <td>
@@ -783,8 +744,6 @@ export function OptimizerPage() {
               {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-              <Button size="sm" variant="outline-secondary" onClick={() => void onRunTapeQa()}>Tape QA</Button>
-              {qaMessage ? <span style={{ fontSize: 12, color: "#b00020" }}>{qaMessage}</span> : null}
             </div>
 
             {jobId ? <ProgressBar now={running ? done : 100} label={`${running ? done.toFixed(2) : "100.00"}%`} title={`progress ${done.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" /> : null}
@@ -796,11 +755,19 @@ export function OptimizerPage() {
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("netPnl")}>netPnl</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("trades")}>trades</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("winRatePct")}>winRate</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("expectancy")}>expectancy</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("profitFactor")}>profitFactor</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("maxDrawdownUsdt")}>maxDD</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("ordersPlaced")}>placed</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("ordersFilled")}>filled</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("ordersExpired")}>expired</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("priceTh")}>priceTh</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("oivTh")}>oivTh</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("tp")}>tp</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("sl")}>sl</th>
                   <th style={{ cursor: "pointer" }} onClick={() => void onSort("offset")}>offset</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("timeoutSec")}>timeoutSec</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("rearmMs")}>rearmMs</th>
                   <th>action</th>
                 </tr>
               </thead>
@@ -812,11 +779,19 @@ export function OptimizerPage() {
                       <td>{r.netPnl.toFixed(4)}</td>
                       <td>{r.trades}</td>
                       <td>{r.winRatePct.toFixed(2)}%</td>
+                      <td>{r.expectancy.toFixed(4)}</td>
+                      <td>{r.profitFactor.toFixed(3)}</td>
+                      <td>{r.maxDrawdownUsdt.toFixed(4)}</td>
+                      <td>{r.ordersPlaced}</td>
+                      <td>{r.ordersFilled}</td>
+                      <td>{r.ordersExpired}</td>
                       <td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td>
                       <td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td>
                       <td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td>
                       <td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td>
                       <td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td>
+                      <td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
+                      <td>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
                       <td>
                         <Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button>
                       </td>
@@ -825,7 +800,7 @@ export function OptimizerPage() {
                 })}
                 {!results.length ? (
                   <tr>
-                    <td colSpan={10} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
+                    <td colSpan={19} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -840,54 +815,6 @@ export function OptimizerPage() {
           </Card.Body>
         </Card>
       </Container>
-
-      <Modal show={showQaModal} onHide={() => { if (!qaRunning) setShowQaModal(false); }}>
-        <Modal.Header closeButton={!qaRunning}>
-          <Modal.Title>Tape QA</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          {qaRunning ? <div style={{ fontSize: 12, marginBottom: 8 }}>Analyzing {qaDoneCount}/{selectedTapeIds.length}…</div> : null}
-          {qaRunning ? <div className="spinner-border spinner-border-sm" role="status" aria-hidden="true" style={{ marginBottom: 12 }} /> : null}
-          {qaSummary ? (
-            <div style={{ fontSize: 12, marginBottom: 10 }}>
-              tapesCount: <b>{qaSummary.tapesCount}</b> · totalSymbolsSeen: <b>{qaSummary.totalSymbolsSeen}</b> · avgDurationMin: <b>{qaSummary.avgDurationMin.toFixed(1)}</b> · worstMedianTickIntervalSec: <b>{qaSummary.worstMedianTickIntervalSec == null ? "-" : qaSummary.worstMedianTickIntervalSec.toFixed(2)}</b> · countTooShort: <b>{qaSummary.countTooShort}</b> · countSparse: <b>{qaSummary.countSparse}</b>
-            </div>
-          ) : null}
-          <Table bordered size="sm">
-            <thead>
-              <tr>
-                <th>tapeId</th>
-                <th>durationMin</th>
-                <th>symbolsSeen</th>
-                <th>tickerLines</th>
-                <th>medianTickIntervalSec</th>
-                <th>flags</th>
-              </tr>
-            </thead>
-            <tbody>
-              {qaResults.map((row) => (
-                <tr key={row.tapeId}>
-                  <td style={{ fontSize: 12 }}>{row.tapeId}</td>
-                  <td style={{ fontSize: 12 }}>{row.durationMin.toFixed(1)}</td>
-                  <td style={{ fontSize: 12 }}>{row.symbolsSeen}</td>
-                  <td style={{ fontSize: 12 }}>{row.tickerLines}</td>
-                  <td style={{ fontSize: 12 }}>{row.medianTickIntervalSec == null ? "-" : row.medianTickIntervalSec.toFixed(2)}</td>
-                  <td style={{ fontSize: 12 }}>{[row.tooShortForTf ? "Too short" : null, row.sparse ? "Sparse" : null].filter(Boolean).join(" / ") || "-"}</td>
-                </tr>
-              ))}
-              {!qaResults.length ? (
-                <tr>
-                  <td colSpan={6} style={{ fontSize: 12, opacity: 0.75 }}>No QA results</td>
-                </tr>
-              ) : null}
-            </tbody>
-          </Table>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowQaModal(false)} disabled={qaRunning}>Close</Button>
-        </Modal.Footer>
-      </Modal>
-
       <Modal show={showTapesDirModal} onHide={() => setShowTapesDirModal(false)}>
         <Modal.Header closeButton>
           <Modal.Title>Tapes directory</Modal.Title>

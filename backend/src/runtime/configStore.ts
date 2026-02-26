@@ -67,6 +67,7 @@ const paperSchema = z
     applyFunding: z.boolean(),
 
     rearmDelayMs: z.number().finite().min(0).max(60_000),
+    maxDailyLossUSDT: z.number().finite().min(0).max(1_000_000_000),
   })
   .strict();
 
@@ -139,6 +140,7 @@ function migrateLoaded(raw: any): any {
     if (raw.paper.directionMode == null) {
       raw.paper.directionMode = raw.paper.longOnly === true ? "long" : "both";
     }
+    if (raw.paper.maxDailyLossUSDT == null) raw.paper.maxDailyLossUSDT = CONFIG.paper.maxDailyLossUSDT;
     delete raw.paper.longOnly;
   }
 
@@ -256,6 +258,7 @@ class ConfigStore extends EventEmitter {
         applyFunding: p.paper?.applyFunding ?? this.cfg.paper.applyFunding,
 
         rearmDelayMs: p.paper?.rearmDelayMs ?? this.cfg.paper.rearmDelayMs,
+        maxDailyLossUSDT: p.paper?.maxDailyLossUSDT ?? this.cfg.paper.maxDailyLossUSDT,
       },
     };
 

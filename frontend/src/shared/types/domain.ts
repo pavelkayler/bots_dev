@@ -41,6 +41,7 @@ export type RuntimeConfig = {
     applyFunding: boolean;
 
     rearmDelayMs: number;
+    maxDailyLossUSDT: number;
   };
 };
 
