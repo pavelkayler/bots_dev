@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Container, Form, Modal, Spinner, Table } from "react-bootstrap";
 import { Link } from "react-router-dom";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
-import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
+import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
 import { createUniverse, deleteUniverse, listUniverses, readUniverse } from "../../features/universe/api";
 import type { UniverseFile, UniverseMeta } from "../../features/universe/types";
@@ -13,7 +13,7 @@ function joinSymbols(symbols: string[]) {
 }
 
 export function UniversePage() {
-  const { conn, lastServerTime, wsUrl, streams } = useWsFeed();
+  const { conn, lastServerTime, wsUrl, streams } = useWsFeedLite();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
   const [minTurnoverUsd, setMinTurnoverUsd] = useState<string>("10000000");
@@ -127,9 +127,9 @@ export function UniversePage() {
           </span>
 
           <div className="ms-auto d-flex align-items-center gap-2">
-            <Button as={Link} to="/" size="sm" variant="outline-secondary">
+            <Link to="/" className="btn btn-sm btn-outline-secondary">
               Back to dashboard
-            </Button>
+            </Link>
 
             <Button size="sm" variant="outline-secondary" onClick={() => void refresh()} disabled={loading || creating}>
               Refresh list

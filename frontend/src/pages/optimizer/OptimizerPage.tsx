@@ -1,7 +1,7 @@
 import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, ButtonGroup, Card, Col, Container, Form, Modal, Pagination, ProgressBar, Row, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
-import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
+import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
 import {
   getJobResults,
@@ -15,8 +15,8 @@ import {
   listTapes,
   runOptimizationJob,
   setSettings,
-  startTape,
-  stopTape,
+  getJobExportUrl,
+  getCurrentJobExportUrl,
   startOptimizerLoop,
   stopOptimizerLoop,
   pauseOptimizerLoop,
@@ -321,7 +321,7 @@ function loadStoredPositiveInt(key: string, fallback: string, min: number): stri
 }
 
 export function OptimizerPage() {
-  const { conn, lastServerTime, wsUrl, streams } = useWsFeed();
+  const { conn, lastServerTime, wsUrl, streams } = useWsFeedLite();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
   const [selectedTapeIds, setSelectedTapeIds] = useState<string[]>([]);
@@ -659,30 +659,6 @@ export function OptimizerPage() {
     }
   }
 
-  async function onStartRecording() {
-    setError(null);
-    try {
-      const res = await startTape();
-      setIsRecording(true);
-      setRecordingTapeId(res.tapeId);
-      setSelectedTapeIds((prev) => (prev.includes(res.tapeId) ? prev : [...prev, res.tapeId]));
-      setTapesRefreshKey((prev) => prev + 1);
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    }
-  }
-
-  async function onStopRecording() {
-    setError(null);
-    try {
-      await stopTape();
-      setIsRecording(false);
-      setRecordingTapeId(null);
-      setTapesRefreshKey((prev) => prev + 1);
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    }
-  }
 
   const rangeError = useMemo(() => {
     const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"];
@@ -1063,8 +1039,6 @@ export function OptimizerPage() {
 
             <h6>Tape recording</h6>
             <div className="d-flex align-items-center gap-2 mb-2">
-              <Button size="sm" onClick={() => void onStartRecording()} disabled={isRecording}>Start recording</Button>
-              <Button size="sm" variant="outline-danger" onClick={() => void onStopRecording()} disabled={!isRecording}>Stop recording</Button>
               <Button size="sm" variant="outline-secondary" onClick={() => { setTapesDirDraft(tapesDir); setShowTapesDirModal(true); }}>
                 Tapes directory
               </Button>
@@ -1072,6 +1046,7 @@ export function OptimizerPage() {
                 recording: <b>{isRecording ? "ON" : "OFF"}</b>
                 {recordingTapeId ? ` · ${recordingTapeId}` : ""}
               </span>
+              <span style={{ fontSize: 12, opacity: 0.8 }}>Recording is controlled by Session RUNNING state.</span>
             </div>
             <div style={{ fontSize: 12, marginBottom: 8 }}>tapesDir: <b>{tapesDir || "-"}</b></div>
 
@@ -1242,6 +1217,25 @@ export function OptimizerPage() {
               <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec ?? 0)}</b> · ETA: <b>{isRunningStatus ? formatDuration(etaSec) : "-"}</b></div>
               <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div>
             </> : null}
+
+            <div className="d-flex align-items-center gap-2 mb-2">
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                onClick={() => window.open(singleJobId ? getJobExportUrl(singleJobId, "json", sortKey, sortDir) : getCurrentJobExportUrl("json", sortKey, sortDir), "_blank", "noopener,noreferrer")}
+                disabled={!singleJobId && !activeJobId}
+              >
+                Export JSON
+              </Button>
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                onClick={() => window.open(singleJobId ? getJobExportUrl(singleJobId, "csv", sortKey, sortDir) : getCurrentJobExportUrl("csv", sortKey, sortDir), "_blank", "noopener,noreferrer")}
+                disabled={!singleJobId && !activeJobId}
+              >
+                Export CSV
+              </Button>
+            </div>
 
             <Table striped bordered hover size="sm">
               <thead>

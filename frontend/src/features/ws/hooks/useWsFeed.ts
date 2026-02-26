@@ -45,6 +45,7 @@ type WsFeedState = {
 
 const wsUrl = getWsUrl();
 const listeners = new Set<(state: WsFeedState) => void>();
+const liteListeners = new Set<(state: WsFeedState) => void>();
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let started = false;
@@ -65,13 +66,29 @@ let state: WsFeedState = {
   eventStream: [],
 };
 
-function emit() {
+function emitFull() {
   for (const listener of listeners) listener(state);
 }
 
+function emitLite() {
+  for (const listener of liteListeners) listener(state);
+}
+
 function patchState(patch: Partial<WsFeedState>) {
+  const prev = state;
   state = { ...state, ...patch };
-  emit();
+  emitFull();
+
+  const liteChanged =
+    prev.conn !== state.conn ||
+    prev.lastServerTime !== state.lastServerTime ||
+    prev.wsSessionState !== state.wsSessionState ||
+    prev.wsSessionId !== state.wsSessionId ||
+    prev.streams !== state.streams ||
+    prev.universeSelectedId !== state.universeSelectedId ||
+    prev.universeSymbolsCount !== state.universeSymbolsCount;
+
+  if (liteChanged) emitLite();
 }
 
 function send(msg: ClientWsMessage) {
@@ -183,6 +200,31 @@ function ensureStarted() {
   if (started) return;
   started = true;
   connect("CONNECTING");
+}
+
+
+export function useWsFeedLite() {
+  const [localState, setLocalState] = useState<WsFeedState>(state);
+
+  useEffect(() => {
+    ensureStarted();
+    liteListeners.add(setLocalState);
+    setLocalState(state);
+    return () => {
+      liteListeners.delete(setLocalState);
+    };
+  }, []);
+
+  return {
+    conn: localState.conn,
+    lastServerTime: localState.lastServerTime,
+    wsSessionState: localState.wsSessionState,
+    wsSessionId: localState.wsSessionId,
+    wsUrl,
+    streams: localState.streams,
+    universeSelectedId: localState.universeSelectedId,
+    universeSymbolsCount: localState.universeSymbolsCount,
+  };
 }
 
 export function useWsFeed() {

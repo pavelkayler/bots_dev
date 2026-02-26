@@ -31,3 +31,18 @@ export function getEventsDownloadUrl(): string {
   const api = getApiBase();
   return `${api}/api/session/events/download`;
 }
+
+export function getRunPackManifestUrl(): string {
+  const api = getApiBase();
+  return `${api}/api/session/run-pack`;
+}
+
+export function getRunPackConfigUrl(): string {
+  const api = getApiBase();
+  return `${api}/api/session/run-pack/config/download`;
+}
+
+export function getRunPackUniverseUrl(): string {
+  const api = getApiBase();
+  return `${api}/api/session/run-pack/universe/download`;
+}

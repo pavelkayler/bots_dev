@@ -41,7 +41,7 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
 - Header shows:
   - CONNECTED (UI ↔ backend `/ws`)
   - Streams status (Bybit upstream)
-  - Session status (RUNNING/STOPPING/STOPPED)
+  - Session status (RUNNING/STOPPING/STOPPED/PAUSING/PAUSED/RESUMING)
 - WS connection is stable across client-side route changes (no reconnect on navigation).
 - Live rows (1Hz) card:
   - Active only toggle + rows count
@@ -107,6 +107,7 @@ High-level:
 - **Tape recording (RUNNING-only) is automatic**:
   - starts on every transition into `RUNNING`
   - stops on non-RUNNING (STOPPING/STOPPED/PAUSED)
+  - manual start/stop endpoints are disabled (`tape_recording_lifecycle_managed`)
   - configurable server directory (`tapesDir`)
   - ticker writes are full-only and per-symbol throttled (>= 5s)
   - **rotation:** max 90 MB per tape segment; creates `-seg2`, `-seg3`, ...

@@ -8,7 +8,7 @@ import {
   persistSummaryFile
 } from "../paper/summary.js";
 
-export type RuntimeSessionState = "STOPPED" | "RUNNING" | "STOPPING" | "PAUSING" | "PAUSED";
+export type RuntimeSessionState = "STOPPED" | "RUNNING" | "STOPPING" | "PAUSING" | "PAUSED" | "RESUMING";
 
 type Status = {
   sessionState: RuntimeSessionState;
@@ -123,6 +123,14 @@ class Runtime extends EventEmitter {
 
     const cfg = configStore.get();
     this.paper = new PaperBroker(cfg.paper, this.logger);
+
+    this.sessionState = "RESUMING";
+    this.logger?.log({
+      ts: Date.now(),
+      type: "SESSION_STATE",
+      payload: { state: this.sessionState, sessionId: this.sessionId }
+    });
+    this.emit("state", this.getStatus());
 
     this.sessionState = "RUNNING";
 
