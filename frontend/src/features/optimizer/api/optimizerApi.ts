@@ -72,8 +72,18 @@ export type DoctorStatus = {
   nowMs: number;
   ports: { http: number };
   disk: { dataDir: string; freeBytes: number | null };
+  dataDirBytesFree: number | null;
   paths: { tapesDir: string; checkpointsDir: string; blacklistsDir: string };
   warnings: string[];
+};
+
+export type SoakLastStatus = {
+  snapshot: null | {
+    tsMs: number;
+    state: string;
+    memory: { rss: number; heapUsed: number; heapTotal: number };
+    dataDirFreeBytes: number | null;
+  };
 };
 
 export type OptimizerSortKeyExtended =
@@ -228,4 +238,9 @@ export async function getOptimizerLoopStatus(): Promise<OptimizerLoopStatus> {
 export async function getDoctorStatus(): Promise<DoctorStatus> {
   const base = getApiBase();
   return await getJson<DoctorStatus>(`${base}/api/doctor`);
+}
+
+export async function getLastSoakSnapshot(): Promise<SoakLastStatus> {
+  const base = getApiBase();
+  return await getJson<SoakLastStatus>(`${base}/api/soak/last`);
 }

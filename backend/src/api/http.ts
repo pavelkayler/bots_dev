@@ -17,7 +17,6 @@ import { readLoopState, recoverLoopStateOnBoot, type OptimizerLoopRunPayload, ty
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 import {
   DEFAULT_OPTIMIZER_PRECISION,
-  runOptimization,
   sortOptimizationResults,
   type OptimizerPrecision,
   type OptimizerRanges,
@@ -25,6 +24,8 @@ import {
   type OptimizerSortDir,
   type OptimizerSortKey,
 } from "../optimizer/runner.js";
+import { optimizerWorkerManager } from "../optimizer/worker/workerManager.js";
+import { getDataDirPath, isLowDiskBestEffort, MIN_FREE_BYTES, readFreeBytesBestEffort } from "../utils/diskGuard.js";
 
 type OptimizerJob = {
   status: "running" | "paused" | "done" | "error" | "cancelled";
@@ -72,6 +73,11 @@ let latestOptimizerJobId: string | null = null;
 const checkpointDir = path.resolve(process.cwd(), "data/optimizer_checkpoints");
 const optimizerBlacklistsDir = path.resolve(process.cwd(), "data/optimizer_blacklists");
 const MAX_CHECKPOINT_FILES = 5;
+const MIN_CHECKPOINT_INTERVAL_MS = 2_000;
+const SOAK_SNAPSHOT_PATH = path.resolve(process.cwd(), "data", "soak_snapshots.jsonl");
+const dataDir = getDataDirPath();
+let lastSoakSnapshot: any = null;
+const lastCheckpointWriteMs = new Map<string, number>();
 let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
 
 
@@ -105,7 +111,7 @@ function pruneOldCheckpoints() {
   }
 }
 
-function writeCheckpoint(jobId: string, job: OptimizerJob) {
+function writeCheckpoint(jobId: string, job: OptimizerJob, opts?: { force?: boolean }) {
   const checkpoint: OptimizerCheckpoint = {
     jobId,
     createdAt: job.startedAtMs,
@@ -123,7 +129,16 @@ function writeCheckpoint(jobId: string, job: OptimizerJob) {
     runKey: job.runKey,
     finishedAtMs: job.finishedAtMs,
   };
+  const now = Date.now();
+  const lastWrite = lastCheckpointWriteMs.get(jobId) ?? 0;
+  if (!opts?.force && now - lastWrite < MIN_CHECKPOINT_INTERVAL_MS) return;
+  const disk = isLowDiskBestEffort(dataDir);
+  if (disk.lowDisk) {
+    job.message = [job.message, "checkpoint skipped: low_disk"].filter(Boolean).join(" | ");
+    return;
+  }
   writeFileAtomic(checkpointPath(jobId), JSON.stringify(checkpoint, null, 2));
+  lastCheckpointWriteMs.set(jobId, now);
   pruneOldCheckpoints();
 }
 
@@ -378,17 +393,6 @@ function ensureWritableDir(dirPath: string): string | null {
   }
 }
 
-function readFreeBytesBestEffort(dirPath: string): number | null {
-  try {
-    const stat = fs.statfsSync(dirPath);
-    const bsize = Number((stat as any).bsize);
-    const bavail = Number((stat as any).bavail);
-    if (!Number.isFinite(bsize) || !Number.isFinite(bavail)) return null;
-    return Math.max(0, Math.floor(bsize * bavail));
-  } catch {
-    return null;
-  }
-}
 
 export function registerHttpRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ ok: true }));
@@ -398,6 +402,49 @@ export function registerHttpRoutes(app: FastifyInstance) {
   }, 500);
   app.addHook("onClose", async () => {
     clearInterval(loopTimer);
+  });
+
+  let soakTimer: NodeJS.Timeout | null = null;
+  const writeSoakSnapshot = () => {
+    const status = runtime.getStatus();
+    const mem = process.memoryUsage();
+    const freeBytes = readFreeBytesBestEffort(dataDir);
+    const currentJobId = resolveCurrentOptimizerJobId();
+    const currentJob = currentJobId ? optimizerJobs.get(currentJobId) : null;
+    const snapshot = {
+      tsMs: Date.now(),
+      sessionId: status.sessionId,
+      state: status.sessionState,
+      memory: { rss: mem.rss, heapUsed: mem.heapUsed, heapTotal: mem.heapTotal },
+      uptimeSec: Math.floor(process.uptime()),
+      activeTapeId: tapeRecorder.getState().currentTapeId,
+      dataDirFreeBytes: freeBytes,
+      optimizerLoopStatus: optimizerLoopState?.isRunning ? (optimizerLoopState?.isPaused ? "paused" : "running") : "stopped",
+      currentJobStatus: currentJob?.status ?? null,
+    };
+    fs.mkdirSync(path.dirname(SOAK_SNAPSHOT_PATH), { recursive: true });
+    fs.appendFileSync(SOAK_SNAPSHOT_PATH, `${JSON.stringify(snapshot)}\n`, "utf8");
+    lastSoakSnapshot = snapshot;
+  };
+  const syncSoakTimer = () => {
+    const st = runtime.getStatus();
+    if (st.sessionState === "RUNNING") {
+      if (!soakTimer) {
+        writeSoakSnapshot();
+        soakTimer = setInterval(writeSoakSnapshot, 60_000);
+      }
+      return;
+    }
+    if (soakTimer) {
+      clearInterval(soakTimer);
+      soakTimer = null;
+    }
+  };
+  runtime.on("state", syncSoakTimer);
+  syncSoakTimer();
+  app.addHook("onClose", async () => {
+    runtime.off("state", syncSoakTimer);
+    if (soakTimer) clearInterval(soakTimer);
   });
 
   app.get("/api/session/status", async () => runtime.getStatus());
@@ -412,17 +459,33 @@ export function registerHttpRoutes(app: FastifyInstance) {
     if (checkpointWarning) warnings.push(`checkpointsDir not writable: ${checkpointWarning}`);
     const blacklistWarning = ensureWritableDir(optimizerBlacklistsDir);
     if (blacklistWarning) warnings.push(`blacklistsDir not writable: ${blacklistWarning}`);
+    const freeBytes = readFreeBytesBestEffort(dataDir);
+    if (freeBytes != null && freeBytes < MIN_FREE_BYTES) warnings.push("low_disk");
     return {
       ok: warnings.length === 0,
       nowMs: Date.now(),
       ports: { http: Number(process.env.PORT ?? 8080) },
-      disk: { dataDir: path.resolve(process.cwd(), "data"), freeBytes: readFreeBytesBestEffort(path.resolve(process.cwd(), "data")) },
+      disk: { dataDir, freeBytes },
+      dataDirBytesFree: freeBytes,
       paths: {
         tapesDir,
         checkpointsDir: checkpointDir,
         blacklistsDir: optimizerBlacklistsDir,
       },
       warnings,
+    };
+  });
+
+
+  app.get("/api/soak/last", async () => {
+    if (!lastSoakSnapshot) return { snapshot: null };
+    return {
+      snapshot: {
+        tsMs: lastSoakSnapshot.tsMs,
+        state: lastSoakSnapshot.state,
+        memory: lastSoakSnapshot.memory,
+        dataDirFreeBytes: lastSoakSnapshot.dataDirFreeBytes,
+      },
     };
   });
 
@@ -741,92 +804,83 @@ const now = Date.now();
     rememberOptimizerJob(jobId);
     writeCheckpoint(jobId, job);
 
-    setTimeout(() => {
-      void (async () => {
-        try {
-          let lastCheckpointMs = Date.now();
-          const output = await runOptimization({
-            tapeIds,
-            candidates: totalCandidates,
-            seed: Number.isFinite(seed) ? seed : 1,
-            ...(ranges ? { ranges } : {}),
-            ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
-            directionMode: directionMode as "both" | "long" | "short",
-            ...(optTfMin !== undefined ? { optTfMin } : {}),
-            excludeNegative,
-            rememberNegatives,
-            onProgress: (done, totalDone, partialResults) => {
-              const rawPct = totalDone > 0 ? (done / totalDone) * 100 : 0;
-              const pct2 = Math.max(0, Math.min(100, Math.round(rawPct * 100) / 100));
-              job.lastPct = pct2;
-              job.done = pct2;
-              job.total = 100;
-              job.processedCandidates = done;
-              job.totalCandidates = totalDone;
-              job.updatedAtMs = Date.now();
-              job.results = partialResults.filter((r) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 200);
-              job.finishedAtMs = null;
-              const now = Date.now();
-              if (done % 20 === 0 || now - lastCheckpointMs >= 10_000 || pct2 >= 100) {
-                writeCheckpoint(jobId, job);
-                lastCheckpointMs = now;
-              }
-            },
-            shouldStop: () => job.cancelRequested,
-            shouldPause: () => job.pauseRequested,
-            waitWhilePaused: async () => {
-              job.status = "paused";
-              job.paused = true;
-              job.pauseRequested = false;
-              job.updatedAtMs = Date.now();
-              writeCheckpoint(jobId, job);
-              while (true) {
-                if (job.cancelRequested) return "cancelled" as const;
-                if (job.resumeRequested) {
-                  job.resumeRequested = false;
-                  job.paused = false;
-                  job.status = "running";
-                  job.updatedAtMs = Date.now();
-                  return "resumed" as const;
-                }
-                await new Promise((r) => setTimeout(r, 250));
-              }
-            },
-          });
-
-          job.results = (output.results ?? []).filter((r) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 2000);
+    try {
+      optimizerWorkerManager.start(jobId, {
+        tapeIds,
+        candidates: totalCandidates,
+        seed: Number.isFinite(seed) ? seed : 1,
+        ...(ranges ? { ranges } : {}),
+        ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
+        directionMode: directionMode as "both" | "long" | "short",
+        ...(optTfMin !== undefined ? { optTfMin } : {}),
+        excludeNegative,
+        rememberNegatives,
+      }, {
+        onProgress: (msg) => {
+          const pct2 = Number(msg.donePercent) || 0;
+          job.lastPct = pct2;
+          job.done = pct2;
+          job.total = 100;
+          job.processedCandidates = Number(msg.done) || 0;
+          job.totalCandidates = Number(msg.total) || totalCandidates;
           job.updatedAtMs = Date.now();
-          if (output.cancelled || job.cancelRequested) {
+          const preview = Array.isArray(msg.previewResults) ? msg.previewResults : [];
+          job.results = preview.filter((r: any) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 200);
+          if (typeof msg.messageAppend === "string" && msg.messageAppend) {
+            job.message = [job.message, msg.messageAppend].filter(Boolean).join(" | ");
+          }
+          if (job.pauseRequested && job.status === "running") {
+            job.pauseRequested = false;
+            job.paused = true;
+            job.status = "paused";
+            optimizerWorkerManager.pause(jobId);
+          }
+          if (job.resumeRequested && job.status === "paused") {
+            job.resumeRequested = false;
+            job.paused = false;
+            job.status = "running";
+            optimizerWorkerManager.resume(jobId);
+          }
+          if (job.cancelRequested) optimizerWorkerManager.cancel(jobId);
+          writeCheckpoint(jobId, job);
+        },
+        onCheckpoint: () => {
+          writeCheckpoint(jobId, job);
+        },
+        onDone: (msg) => {
+          const finalResults = Array.isArray(msg.finalResults) ? msg.finalResults : [];
+          job.results = finalResults.filter((r: any) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 2000);
+          job.updatedAtMs = Date.now();
+          if (job.cancelRequested) {
             job.status = "cancelled";
-            if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
             job.message = "Optimization cancelled.";
           } else {
             job.lastPct = 100;
             job.done = 100;
             job.total = 100;
             job.status = "done";
-            if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
             const totalStored = Array.isArray(job.results) ? job.results.length : 0;
             const tradedCandidates = totalStored > 0 ? job.results.filter((r) => (r?.trades ?? 0) > 0).length : 0;
-            const tradedSummary = `Min trades filter: ${minTrades} | Candidates with trades>0: ${tradedCandidates}/${totalStored}`;
-            if (output.diagnostics && output.diagnostics.decisionsOk === 0 && output.diagnostics.decisionsNoRefs > 0) {
-              job.message = `Replay diagnostics: decisionsOk=0, decisionsNoRefs=${output.diagnostics.decisionsNoRefs}.`;
-            }
-            const blacklistSummary = output.blacklist ? `Blacklisted: ${output.blacklist.count} (skipped ${output.blacklist.skipped})` : null;
-            const seedSummary = `Effective seed: ${output.seedInfo.effectiveSeed} (base ${output.seedInfo.baseSeed} + idx ${output.seedInfo.runIndex})`;
-            const summaryParts = [job.message, tradedSummary, blacklistSummary, seedSummary].filter(Boolean);
-            job.message = summaryParts.join(" | ");
+            job.message = `Min trades filter: ${minTrades} | Candidates with trades>0: ${tradedCandidates}/${totalStored}`;
           }
-          writeCheckpoint(jobId, job);
-        } catch (e: any) {
-          job.status = "error";
           if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
+          writeCheckpoint(jobId, job, { force: true });
+          void tickOptimizerLoop(app);
+        },
+        onError: (msg) => {
+          job.status = "error";
           job.updatedAtMs = Date.now();
-          job.message = String(e?.message ?? e);
-          writeCheckpoint(jobId, job);
-        }
-      })();
-    }, 0);
+          if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
+          job.message = String(msg?.errorMessage ?? "worker_error");
+          writeCheckpoint(jobId, job, { force: true });
+          void tickOptimizerLoop(app);
+        },
+      });
+    } catch (e: any) {
+      job.status = "error";
+      job.message = String(e?.message ?? e);
+      writeCheckpoint(jobId, job, { force: true });
+    }
 
     return { jobId };
   });
@@ -888,6 +942,7 @@ const now = Date.now();
       if (job && (job.status === "running" || job.status === "paused")) {
         job.cancelRequested = true;
         job.updatedAtMs = Date.now();
+        optimizerWorkerManager.cancel(state.lastJobId);
         writeCheckpoint(state.lastJobId, job);
       }
     }
@@ -904,6 +959,8 @@ const now = Date.now();
       if (job && job.status === "running") {
         job.pauseRequested = true;
         job.updatedAtMs = Date.now();
+        optimizerWorkerManager.pause(state.lastJobId);
+        job.status = "paused";
       }
     }
     return { ok: true };
@@ -921,6 +978,8 @@ const now = Date.now();
       if (job && job.status === "paused") {
         job.resumeRequested = true;
         job.updatedAtMs = Date.now();
+        optimizerWorkerManager.resume(state.lastJobId);
+        job.status = "running";
       }
     }
     await tickOptimizerLoop(app);
@@ -950,6 +1009,7 @@ const now = Date.now();
     }
     job.cancelRequested = true;
     job.updatedAtMs = Date.now();
+    optimizerWorkerManager.cancel(jobId);
     writeCheckpoint(jobId, job);
     return { ok: true };
   });
@@ -967,6 +1027,8 @@ const now = Date.now();
     }
     job.pauseRequested = true;
     job.updatedAtMs = Date.now();
+    optimizerWorkerManager.pause(jobId);
+    job.status = "paused";
     return { ok: true };
   });
 
@@ -983,6 +1045,8 @@ const now = Date.now();
     }
     job.resumeRequested = true;
     job.updatedAtMs = Date.now();
+    optimizerWorkerManager.resume(jobId);
+    job.status = "running";
     return { ok: true };
   });
 

@@ -285,7 +285,7 @@ function buildCandidateParams(
   };
 }
 
-export async function runOptimization(args: {
+export type RunOptimizationArgs = {
   tapeIds: string[];
   candidates: number;
   seed: number;
@@ -299,7 +299,18 @@ export async function runOptimization(args: {
   waitWhilePaused?: () => Promise<"resumed" | "cancelled">;
   excludeNegative?: boolean;
   rememberNegatives?: boolean;
-}): Promise<{
+};
+
+export type RunOptimizationHooks = {
+  shouldPause?: () => boolean;
+  shouldCancel?: () => boolean;
+  waitWhilePaused?: () => Promise<"resumed" | "cancelled">;
+  onProgress?: (done: number, total: number, partialResults: OptimizerResult[]) => void;
+  onBlacklistUpdate?: (summary: { count: number; skipped: number }) => void;
+  onCheckpoint?: (summary: { done: number; total: number; donePercent: number; partialResults: OptimizerResult[] }) => void;
+};
+
+export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: RunOptimizationHooks): Promise<{
   tapeIds: string[];
   metaByTapeId: Record<string, TapeMeta | null>;
   results: OptimizerResult[];
@@ -364,7 +375,7 @@ export async function runOptimization(args: {
   const durationMinByTapeId: Record<string, number> = {};
 
   for (let i = 0; i < args.candidates; i += 1) {
-    if (args.shouldStop?.()) {
+    if (hooks?.shouldCancel?.()) {
       cancelled = true;
       break;
     }
@@ -387,7 +398,7 @@ export async function runOptimization(args: {
     if (blacklistState && blacklistState.negativeSet.has(paramSig)) {
       skippedBlacklisted += 1;
       const done = i + 1;
-      if (args.onProgress) args.onProgress(done, args.candidates, results);
+      hooks?.onProgress?.(done, args.candidates, results);
       continue;
     }
 
@@ -483,12 +494,12 @@ export async function runOptimization(args: {
         if (ts > lastEventTs) lastEventTs = ts;
         eventCounter += 1;
         if (eventCounter % 5000 === 0) {
-          if (args.shouldStop?.()) {
+          if (hooks?.shouldCancel?.()) {
             cancelled = true;
             break;
           }
-          if (args.shouldPause?.()) {
-            const pauseOutcome = await args.waitWhilePaused?.();
+          if (hooks?.shouldPause?.()) {
+            const pauseOutcome = await hooks?.waitWhilePaused?.();
             if (pauseOutcome === "cancelled") {
               cancelled = true;
               break;
@@ -637,9 +648,9 @@ export async function runOptimization(args: {
 
     const done = i + 1;
     const pct = args.candidates > 0 ? Math.floor((done / args.candidates) * 100) : 0;
-    if (args.onProgress) {
-      args.onProgress(done, args.candidates, results);
-    }
+    hooks?.onProgress?.(done, args.candidates, results);
+    hooks?.onCheckpoint?.({ done, total: args.candidates, donePercent: pct, partialResults: results });
+    hooks?.onBlacklistUpdate?.({ count: blacklistState?.negativeSet.size ?? 0, skipped: skippedBlacklisted });
     if (pct > lastPctLocal) {
       lastPctLocal = pct;
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -680,6 +691,16 @@ export async function runOptimization(args: {
       runIndex,
     },
   };
+}
+
+
+export async function runOptimization(args: RunOptimizationArgs) {
+  const hooks: RunOptimizationHooks = {};
+  if (args.onProgress) hooks.onProgress = args.onProgress;
+  if (args.shouldStop) hooks.shouldCancel = args.shouldStop;
+  if (args.shouldPause) hooks.shouldPause = args.shouldPause;
+  if (args.waitWhilePaused) hooks.waitWhilePaused = args.waitWhilePaused;
+  return runOptimizationCore(args, hooks);
 }
 
 type NegativeBlacklistFile = {
