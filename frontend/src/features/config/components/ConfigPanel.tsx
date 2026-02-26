@@ -19,6 +19,8 @@ type Props = {
 type NumericDraft = {
   signalsPriceThresholdPct: string;
   signalsOivThresholdPct: string;
+  signalsDailyTriggerMin: string;
+  signalsDailyTriggerMax: string;
   fundingBeforeMin: string;
   fundingAfterMin: string;
   paperMarginUSDT: string;
@@ -35,6 +37,8 @@ function toNumericDraft(cfg: RuntimeConfig): NumericDraft {
   return {
     signalsPriceThresholdPct: String(cfg.signals.priceThresholdPct),
     signalsOivThresholdPct: String(cfg.signals.oivThresholdPct),
+    signalsDailyTriggerMin: String(cfg.signals.dailyTriggerMin),
+    signalsDailyTriggerMax: String(cfg.signals.dailyTriggerMax),
     fundingBeforeMin: String(cfg.fundingCooldown.beforeMin),
     fundingAfterMin: String(cfg.fundingCooldown.afterMin),
     paperMarginUSDT: String(cfg.paper.marginUSDT),
@@ -65,34 +69,38 @@ function parseNumber(v: string, label: string): number {
 function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft | null): { ok: true; parsed: RuntimeConfig } | { ok: false } {
   if (!draft || !numericDraft) return { ok: false };
   try {
-    return {
-      ok: true,
-      parsed: {
-        ...draft,
-        signals: {
-          ...draft.signals,
-          priceThresholdPct: parseNumber(numericDraft.signalsPriceThresholdPct, "priceThresholdPct"),
-          oivThresholdPct: parseNumber(numericDraft.signalsOivThresholdPct, "oivThresholdPct"),
-          requireFundingSign: true,
-        },
-        fundingCooldown: {
-          ...draft.fundingCooldown,
-          beforeMin: parseNumber(numericDraft.fundingBeforeMin, "beforeMin"),
-          afterMin: parseNumber(numericDraft.fundingAfterMin, "afterMin"),
-        },
-        paper: {
-          ...draft.paper,
-          marginUSDT: parseNumber(numericDraft.paperMarginUSDT, "marginUSDT"),
-          leverage: parseNumber(numericDraft.paperLeverage, "leverage"),
-          entryOffsetPct: parseNumber(numericDraft.paperEntryOffsetPct, "entryOffsetPct"),
-          entryTimeoutSec: parseNumber(numericDraft.paperEntryTimeoutSec, "entryTimeoutSec"),
-          tpRoiPct: parseNumber(numericDraft.paperTpRoiPct, "tpRoiPct"),
-          slRoiPct: parseNumber(numericDraft.paperSlRoiPct, "slRoiPct"),
-          makerFeeRate: parseNumber(numericDraft.paperMakerFeeRate, "makerFeeRate"),
-          rearmDelayMs: parseNumber(numericDraft.paperRearmDelayMs, "rearmDelayMs"),
-        },
+    const parsed: RuntimeConfig = {
+      ...draft,
+      signals: {
+        ...draft.signals,
+        priceThresholdPct: parseNumber(numericDraft.signalsPriceThresholdPct, "priceThresholdPct"),
+        oivThresholdPct: parseNumber(numericDraft.signalsOivThresholdPct, "oivThresholdPct"),
+        dailyTriggerMin: parseNumber(numericDraft.signalsDailyTriggerMin, "dailyTriggerMin"),
+        dailyTriggerMax: parseNumber(numericDraft.signalsDailyTriggerMax, "dailyTriggerMax"),
+        requireFundingSign: true,
+      },
+      fundingCooldown: {
+        ...draft.fundingCooldown,
+        beforeMin: parseNumber(numericDraft.fundingBeforeMin, "beforeMin"),
+        afterMin: parseNumber(numericDraft.fundingAfterMin, "afterMin"),
+      },
+      paper: {
+        ...draft.paper,
+        marginUSDT: parseNumber(numericDraft.paperMarginUSDT, "marginUSDT"),
+        leverage: parseNumber(numericDraft.paperLeverage, "leverage"),
+        entryOffsetPct: parseNumber(numericDraft.paperEntryOffsetPct, "entryOffsetPct"),
+        entryTimeoutSec: parseNumber(numericDraft.paperEntryTimeoutSec, "entryTimeoutSec"),
+        tpRoiPct: parseNumber(numericDraft.paperTpRoiPct, "tpRoiPct"),
+        slRoiPct: parseNumber(numericDraft.paperSlRoiPct, "slRoiPct"),
+        makerFeeRate: parseNumber(numericDraft.paperMakerFeeRate, "makerFeeRate"),
+        rearmDelayMs: parseNumber(numericDraft.paperRearmDelayMs, "rearmDelayMs"),
       },
     };
+    const min = parsed.signals.dailyTriggerMin;
+    const max = parsed.signals.dailyTriggerMax;
+    if (!Number.isInteger(min) || min < 1) return { ok: false };
+    if (!Number.isInteger(max) || max < min) return { ok: false };
+    return { ok: true, parsed };
   } catch {
     return { ok: false };
   }
@@ -212,6 +220,8 @@ export function ConfigPanel({ sessionState, rebooting, onApplyAndReboot, onDraft
           ...draft.signals,
           priceThresholdPct: Number(patch?.signals?.priceThresholdPct ?? draft.signals.priceThresholdPct),
           oivThresholdPct: Number(patch?.signals?.oivThresholdPct ?? draft.signals.oivThresholdPct),
+          dailyTriggerMin: Number(patch?.signals?.dailyTriggerMin ?? draft.signals.dailyTriggerMin),
+          dailyTriggerMax: Number(patch?.signals?.dailyTriggerMax ?? draft.signals.dailyTriggerMax),
           requireFundingSign: true,
         },
         paper: {
@@ -454,6 +464,8 @@ function buildConfigForApply(): RuntimeConfig {
                 <h6>Signals</h6>
                 <Form.Group className="mb-2"><Form.Label>priceThresholdPct</Form.Label><Form.Control type="number" step="0.001" value={numericDraft.signalsPriceThresholdPct} onChange={(e) => setNumericField("signalsPriceThresholdPct", e.currentTarget.value)} /></Form.Group>
                 <Form.Group className="mb-2"><Form.Label>oivThresholdPct</Form.Label><Form.Control type="number" step="0.001" value={numericDraft.signalsOivThresholdPct} onChange={(e) => setNumericField("signalsOivThresholdPct", e.currentTarget.value)} /></Form.Group>
+                <Form.Group className="mb-2"><Form.Label>dailyTriggerMin</Form.Label><Form.Control type="number" step="1" min={1} value={numericDraft.signalsDailyTriggerMin} onChange={(e) => setNumericField("signalsDailyTriggerMin", e.currentTarget.value)} /></Form.Group>
+                <Form.Group className="mb-2"><Form.Label>dailyTriggerMax</Form.Label><Form.Control type="number" step="1" min={1} value={numericDraft.signalsDailyTriggerMax} onChange={(e) => setNumericField("signalsDailyTriggerMax", e.currentTarget.value)} /></Form.Group>
               </Col>
 
               <Col md={4}>

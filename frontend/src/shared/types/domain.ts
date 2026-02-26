@@ -22,6 +22,8 @@ export type RuntimeConfig = {
     priceThresholdPct: number;
     oivThresholdPct: number;
     requireFundingSign: boolean;
+    dailyTriggerMin: number;
+    dailyTriggerMax: number;
   };
   paper: {
     enabled: boolean;

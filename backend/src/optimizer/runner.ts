@@ -198,6 +198,7 @@ export async function runOptimization(args: {
   ranges?: OptimizerRanges;
   precision?: Partial<OptimizerPrecision>;
   onProgress?: (done: number, total: number) => void;
+  directionMode?: "both" | "long" | "short";
 }): Promise<{ tapeIds: string[]; metaByTapeId: Record<string, TapeMeta | null>; results: OptimizerResult[] }> {
   const requestedTapeIds = (args.tapeIds && args.tapeIds.length ? args.tapeIds : [args.tapeId]).filter((v): v is string => typeof v === "string" && v.trim().length > 0);
   const tapeIds = requestedTapeIds.map((id) => safeId(id));
@@ -224,7 +225,7 @@ export async function runOptimization(args: {
       },
       paper: {
         enabled: baseConfig.paper.enabled,
-        directionMode: baseConfig.paper.directionMode,
+        directionMode: args.directionMode ?? baseConfig.paper.directionMode,
         marginUSDT: baseConfig.paper.marginUSDT,
         leverage: baseConfig.paper.leverage,
         entryOffsetPct: params.entryOffsetPct,
@@ -263,6 +264,15 @@ export async function runOptimization(args: {
 
       const paper = new PaperBroker(candidateConfig.paper, logger as any);
       let lastEventTs = 0;
+      const tfMinRaw = Number(tape.meta?.klineTfMin ?? baseConfig.universe.klineTfMin);
+      const tfMs = Math.max(1, Number.isFinite(tfMinRaw) ? tfMinRaw : baseConfig.universe.klineTfMin) * 60_000;
+      const fallbackBySymbol = new Map<string, {
+        lastBucketId: number | null;
+        lastMarkPrice: number | null;
+        lastOiv: number | null;
+        prevCandleClose: number | null;
+        prevCandleOivClose: number | null;
+      }>();
 
       for (const event of tape.events) {
         const ts = Number(event.ts) || 0;
@@ -278,8 +288,28 @@ export async function runOptimization(args: {
           const nextFundingTime = Number(row?.nextFundingTime ?? 0);
 
           const refs = candles.getRefs(event.symbol);
-          const priceMovePct = refs.prevCandleClose == null || markPrice <= 0 ? null : pctChange(markPrice, refs.prevCandleClose);
-          const oivMovePct = refs.prevCandleOivClose == null || openInterestValue <= 0 ? null : pctChange(openInterestValue, refs.prevCandleOivClose);
+
+          const bucketId = Math.floor(ts / tfMs);
+          const fallbackState = fallbackBySymbol.get(event.symbol) ?? {
+            lastBucketId: null,
+            lastMarkPrice: null,
+            lastOiv: null,
+            prevCandleClose: null,
+            prevCandleOivClose: null,
+          };
+          if (fallbackState.lastBucketId != null && fallbackState.lastBucketId !== bucketId) {
+            fallbackState.prevCandleClose = fallbackState.lastMarkPrice;
+            fallbackState.prevCandleOivClose = fallbackState.lastOiv;
+          }
+          fallbackState.lastBucketId = bucketId;
+          if (Number.isFinite(markPrice) && markPrice > 0) fallbackState.lastMarkPrice = markPrice;
+          if (Number.isFinite(openInterestValue) && openInterestValue > 0) fallbackState.lastOiv = openInterestValue;
+          fallbackBySymbol.set(event.symbol, fallbackState);
+
+          const priceRef = refs.prevCandleClose ?? fallbackState.prevCandleClose;
+          const oivRef = refs.prevCandleOivClose ?? fallbackState.prevCandleOivClose;
+          const priceMovePct = priceRef == null || markPrice <= 0 ? null : pctChange(markPrice, priceRef);
+          const oivMovePct = oivRef == null || openInterestValue <= 0 ? null : pctChange(openInterestValue, oivRef);
 
           const cooldownState = fundingGate.state(nextFundingTime || null, ts);
           const decision = signalEngine.decide({

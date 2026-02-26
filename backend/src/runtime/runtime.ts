@@ -17,6 +17,42 @@ type Status = {
   summaryFile: string | null;
 };
 
+
+type ClosedTrade = {
+  symbol: string;
+  side: "LONG" | "SHORT";
+  realizedPnl: number;
+  feesPaid: number;
+  fundingAccrued: number;
+  closedAt: number;
+  closeType: "TP" | "SL" | "FORCE";
+  minRoiPct: number | null;
+  maxRoiPct: number | null;
+};
+
+type TradeStatsBySymbolRow = {
+  symbol: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  netPnl: number;
+  fees: number;
+  funding: number;
+  lastCloseTs: number | null;
+  longTrades: number;
+  longWins: number;
+  shortTrades: number;
+  shortWins: number;
+};
+
+type TradeExcursionsRow = {
+  symbol: string;
+  tpTrades: number;
+  tpWorstMinRoiPct: number | null;
+  slTrades: number;
+  slBestMaxRoiPct: number | null;
+};
+
 function newSessionId() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
@@ -31,6 +67,7 @@ class Runtime extends EventEmitter {
   private summaryFilePath: string | null = null;
 
   private getMarkPrice: ((symbol: string) => number | null) | null = null;
+  private closedTrades: ClosedTrade[] = [];
 
   attachMarkPriceProvider(fn: (symbol: string) => number | null) {
     this.getMarkPrice = fn;
@@ -57,7 +94,30 @@ class Runtime extends EventEmitter {
     this.sessionId = newSessionId();
     this.summaryFilePath = null;
 
+    this.closedTrades = [];
+
     this.logger = new EventLogger(this.sessionId, (ev: LogEvent) => {
+      const eventType = String(ev?.type ?? "");
+      if (eventType === "POSITION_CLOSE_TP" || eventType === "POSITION_CLOSE_SL" || eventType === "POSITION_FORCE_CLOSE") {
+        const payload = (ev?.payload ?? {}) as any;
+        const side = String(payload.side ?? "").toUpperCase() === "SHORT" ? "SHORT" : "LONG";
+        const closedAtRaw = Number(payload.closedAt ?? payload.closedTs ?? ev.ts ?? Date.now());
+        const closedAt = Number.isFinite(closedAtRaw) ? closedAtRaw : Date.now();
+        const minRoi = Number(payload.minRoiPct);
+        const maxRoi = Number(payload.maxRoiPct);
+
+        this.closedTrades.push({
+          symbol: String(ev.symbol ?? "").trim(),
+          side,
+          realizedPnl: Number(payload.realizedPnl ?? 0) || 0,
+          feesPaid: Number(payload.feesPaid ?? 0) || 0,
+          fundingAccrued: Number(payload.fundingAccrued ?? 0) || 0,
+          closedAt,
+          closeType: eventType === "POSITION_CLOSE_TP" ? "TP" : eventType === "POSITION_CLOSE_SL" ? "SL" : "FORCE",
+          minRoiPct: Number.isFinite(minRoi) ? minRoi : null,
+          maxRoiPct: Number.isFinite(maxRoi) ? maxRoi : null,
+        });
+      }
       this.emit("event", ev);
     });
 
@@ -173,6 +233,95 @@ class Runtime extends EventEmitter {
     if (!this.paper || !this.isRunning()) return;
     this.paper.tick(args);
   }
+
+  getTradeStatsBySymbol(mode: "both" | "long" | "short", symbols: string[]): TradeStatsBySymbolRow[] {
+    const rows = new Map<string, TradeStatsBySymbolRow>();
+    for (const symbol of symbols) {
+      rows.set(symbol, {
+        symbol,
+        trades: 0,
+        wins: 0,
+        losses: 0,
+        netPnl: 0,
+        fees: 0,
+        funding: 0,
+        lastCloseTs: null,
+        longTrades: 0,
+        longWins: 0,
+        shortTrades: 0,
+        shortWins: 0,
+      });
+    }
+
+    for (const trade of this.closedTrades) {
+      if (!rows.has(trade.symbol)) continue;
+      if (mode === "long" && trade.side !== "LONG") continue;
+      if (mode === "short" && trade.side !== "SHORT") continue;
+      const row = rows.get(trade.symbol)!;
+      row.trades += 1;
+      if (trade.realizedPnl > 0) row.wins += 1;
+      else row.losses += 1;
+      row.netPnl += trade.realizedPnl;
+      row.fees += trade.feesPaid;
+      row.funding += trade.fundingAccrued;
+      row.lastCloseTs = row.lastCloseTs == null ? trade.closedAt : Math.max(row.lastCloseTs, trade.closedAt);
+      if (trade.side === "LONG") {
+        row.longTrades += 1;
+        if (trade.realizedPnl > 0) row.longWins += 1;
+      } else {
+        row.shortTrades += 1;
+        if (trade.realizedPnl > 0) row.shortWins += 1;
+      }
+    }
+
+    if (mode === "long") {
+      for (const row of rows.values()) {
+        row.shortTrades = 0;
+        row.shortWins = 0;
+      }
+    }
+    if (mode === "short") {
+      for (const row of rows.values()) {
+        row.longTrades = 0;
+        row.longWins = 0;
+      }
+    }
+
+    return symbols.map((symbol) => rows.get(symbol)!);
+  }
+
+  getTradeExcursionsBySymbol(symbols: string[]): TradeExcursionsRow[] {
+    const rows = new Map<string, TradeExcursionsRow>();
+    for (const symbol of symbols) {
+      rows.set(symbol, {
+        symbol,
+        tpTrades: 0,
+        tpWorstMinRoiPct: null,
+        slTrades: 0,
+        slBestMaxRoiPct: null,
+      });
+    }
+
+    for (const trade of this.closedTrades) {
+      if (!rows.has(trade.symbol)) continue;
+      const row = rows.get(trade.symbol)!;
+      if (trade.closeType === "TP") {
+        row.tpTrades += 1;
+        if (trade.minRoiPct != null) {
+          row.tpWorstMinRoiPct = row.tpWorstMinRoiPct == null ? trade.minRoiPct : Math.min(row.tpWorstMinRoiPct, trade.minRoiPct);
+        }
+      }
+      if (trade.closeType === "SL") {
+        row.slTrades += 1;
+        if (trade.maxRoiPct != null) {
+          row.slBestMaxRoiPct = row.slBestMaxRoiPct == null ? trade.maxRoiPct : Math.max(row.slBestMaxRoiPct, trade.maxRoiPct);
+        }
+      }
+    }
+
+    return symbols.map((symbol) => rows.get(symbol)!);
+  }
+
 }
 
 export const runtime = new Runtime();

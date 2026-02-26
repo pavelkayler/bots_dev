@@ -73,6 +73,7 @@ export async function runOptimizationJob(payload: {
   seed: number;
   ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset", { min: number; max: number }>>;
   precision?: Partial<OptimizerPrecision>;
+  directionMode?: "both" | "long" | "short";
 }): Promise<{ jobId: string }> {
   const base = getApiBase();
   return await postJson<{ jobId: string }>(`${base}/api/optimizer/run`, payload);

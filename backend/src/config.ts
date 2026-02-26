@@ -15,7 +15,9 @@ export const CONFIG = {
     signals: {
         priceThresholdPct: 0.01,
         oivThresholdPct: 0.01,
-        requireFundingSign: true
+        requireFundingSign: true,
+        dailyTriggerMin: 1,
+        dailyTriggerMax: 999
     },
 
     paper: {

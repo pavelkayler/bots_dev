@@ -35,6 +35,7 @@ const pageSize = 50;
 const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
 const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
+const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3 };
 
@@ -264,6 +265,7 @@ export function OptimizerPage() {
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
+  const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [running, setRunning] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [done, setDone] = useState(0);
@@ -299,6 +301,8 @@ export function OptimizerPage() {
     setRanges(loadSavedRanges());
     setCandidates(loadStoredPositiveInt(CANDIDATES_STORAGE_KEY, "200", 1));
     setSeed(loadStoredPositiveInt(SEED_STORAGE_KEY, "1", 0));
+    const savedDirection = localStorage.getItem(DIRECTION_STORAGE_KEY);
+    if (savedDirection === "long" || savedDirection === "short" || savedDirection === "both") setDirectionMode(savedDirection);
     void refreshStatus();
     setTapesRefreshKey((prev) => prev + 1);
     void (async () => {
@@ -345,6 +349,10 @@ export function OptimizerPage() {
     if (!Number.isFinite(n) || n < 0) return;
     localStorage.setItem(SEED_STORAGE_KEY, String(n));
   }, [seed]);
+
+  useEffect(() => {
+    localStorage.setItem(DIRECTION_STORAGE_KEY, directionMode);
+  }, [directionMode]);
 
   async function onStartRecording() {
     setError(null);
@@ -459,6 +467,7 @@ export function OptimizerPage() {
         tapeIds: selectedTapeIds,
         candidates: Number(candidates),
         seed: Number(seed),
+        directionMode,
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
       });
@@ -609,6 +618,14 @@ export function OptimizerPage() {
               <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>seed</Form.Label>
                 <Form.Control value={seed} onChange={(e) => setSeed(e.currentTarget.value)} type="number" />
+              </Form.Group>
+              <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>direction</Form.Label>
+                <Form.Select value={directionMode} onChange={(e) => setDirectionMode(e.currentTarget.value as "both" | "long" | "short")}>
+                  <option value="both">Both</option>
+                  <option value="long">Long</option>
+                  <option value="short">Short</option>
+                </Form.Select>
               </Form.Group>
               <Button onClick={() => void onRunOptimization()} disabled={!selectedTapeIds.length || running || Boolean(rangeError)}>
                 Run optimization

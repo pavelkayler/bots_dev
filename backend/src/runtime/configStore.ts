@@ -25,6 +25,11 @@ const signalsSchema = z
     priceThresholdPct: z.number().finite().min(0),
     oivThresholdPct: z.number().finite().min(0),
     requireFundingSign: z.boolean(),
+    dailyTriggerMin: z.number().int().min(1),
+    dailyTriggerMax: z.number().int().min(1),
+  })
+  .refine((v) => v.dailyTriggerMax >= v.dailyTriggerMin, {
+    message: "dailyTriggerMax must be greater than or equal to dailyTriggerMin",
   })
   .strict();
 
@@ -132,6 +137,8 @@ function migrateLoaded(raw: any): any {
     raw.signals = { ...CONFIG.signals, requireFundingSign: true };
   } else {
     raw.signals.requireFundingSign = true;
+    if (raw.signals.dailyTriggerMin == null) raw.signals.dailyTriggerMin = CONFIG.signals.dailyTriggerMin;
+    if (raw.signals.dailyTriggerMax == null) raw.signals.dailyTriggerMax = CONFIG.signals.dailyTriggerMax;
   }
 
   return raw;
@@ -171,6 +178,8 @@ function normalizeIncomingPatch(rawPatch: unknown): unknown {
   const signals = (patch as any).signals;
   if (signals && typeof signals === "object") {
     (signals as any).requireFundingSign = true;
+    if ((signals as any).dailyTriggerMin == null) (signals as any).dailyTriggerMin = CONFIG.signals.dailyTriggerMin;
+    if ((signals as any).dailyTriggerMax == null) (signals as any).dailyTriggerMax = CONFIG.signals.dailyTriggerMax;
   }
 
   return patch;
@@ -218,6 +227,8 @@ class ConfigStore extends EventEmitter {
         priceThresholdPct: p.signals?.priceThresholdPct ?? this.cfg.signals.priceThresholdPct,
         oivThresholdPct: p.signals?.oivThresholdPct ?? this.cfg.signals.oivThresholdPct,
         requireFundingSign: true,
+        dailyTriggerMin: p.signals?.dailyTriggerMin ?? this.cfg.signals.dailyTriggerMin,
+        dailyTriggerMax: p.signals?.dailyTriggerMax ?? this.cfg.signals.dailyTriggerMax,
       },
       paper: {
         enabled: p.paper?.enabled ?? this.cfg.paper.enabled,
