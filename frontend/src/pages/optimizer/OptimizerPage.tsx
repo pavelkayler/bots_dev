@@ -558,7 +558,20 @@ export function OptimizerPage() {
   const loopPaused = Boolean(loopStatus?.loop?.isRunning && loopStatus?.loop?.isPaused);
   const loopActive = loopRunning || loopPaused;
   const loopStopped = !loopRunning;
-  const activeJobId = loopActive ? loopJobId : singleJobId;
+  const [displayJobId, setDisplayJobId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const nextJobId = loopActive ? (loopJobId ?? singleJobId) : (singleJobId ?? loopJobId);
+    if (nextJobId) {
+      setDisplayJobId((prev) => (prev === nextJobId ? prev : nextJobId));
+      return;
+    }
+    if (!running && !loopActive) {
+      setDisplayJobId(null);
+    }
+  }, [loopActive, loopJobId, running, singleJobId]);
+
+  const activeJobId = displayJobId;
 
   async function onStartLoop() {
     if (!selectedTapeIds.length || rangeError) return;
@@ -986,7 +999,15 @@ export function OptimizerPage() {
       : (jobFinishedAtMs ?? jobUpdatedAtMs ?? jobStartedAtMs);
   const elapsedSec = endMs == null || !jobStartedAtMs ? null : Math.max(0, (endMs - jobStartedAtMs) / 1000);
   const etaSec = isRunningStatus && done > 0.01 && elapsedSec != null ? elapsedSec * (100 / done - 1) : null;
-  const hasJobProgress = Boolean(activeJobId && (jobStatus === "running" || jobStatus === "paused" || jobStatus === "done"));
+  const lastJobSnapshotExists = Boolean(
+    jobStatus !== null ||
+    jobStartedAtMs !== null ||
+    jobUpdatedAtMs !== null ||
+    jobFinishedAtMs !== null ||
+    done > 0 ||
+    total > 0
+  );
+  const showProgressBlock = Boolean(activeJobId) || loopActive || lastJobSnapshotExists;
   const pct = clamp(roundTo2(jobStatus === "done" ? 100 : done), 0, 100);
   const loopStartMs = loopStatus?.loop?.createdAtMs ?? null;
   const loopEndMs = !loopStartMs
@@ -1200,9 +1221,11 @@ export function OptimizerPage() {
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             </div>
 
-            {hasJobProgress ? <><ProgressBar now={pct} label={`${pct.toFixed(2)}%`} title={`progress ${pct.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
-            <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec)}</b> · ETA: <b>{isRunningStatus ? formatDuration(etaSec) : "-"}</b></div>
-            <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div></> : null}
+            {showProgressBlock ? <>
+              <ProgressBar now={pct} label={`${pct.toFixed(2)}%`} title={`progress ${pct.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
+              <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec ?? 0)}</b> · ETA: <b>{isRunningStatus ? formatDuration(etaSec) : "-"}</b></div>
+              <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div>
+            </> : null}
 
             <Table striped bordered hover size="sm">
               <thead>
