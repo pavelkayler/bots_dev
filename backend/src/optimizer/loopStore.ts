@@ -24,6 +24,7 @@ export type OptimizerLoopState = {
   runIndex: number;
   createdAtMs: number;
   updatedAtMs: number;
+  finishedAtMs: number | null;
   lastJobId: string | null;
   runPayload: OptimizerLoopRunPayload;
 };
@@ -38,9 +39,21 @@ export function readLoopState(): OptimizerLoopState | null {
   if (!fs.existsSync(LOOP_STATE_PATH)) return null;
   try {
     const raw = fs.readFileSync(LOOP_STATE_PATH, "utf8");
-    const parsed = JSON.parse(raw) as OptimizerLoopState;
+    const parsed = JSON.parse(raw) as Partial<OptimizerLoopState>;
     if (!parsed || typeof parsed.loopId !== "string" || !parsed.runPayload || !Array.isArray(parsed.runPayload.tapeIds)) return null;
-    return parsed;
+    return {
+      loopId: parsed.loopId,
+      isRunning: Boolean(parsed.isRunning),
+      isPaused: Boolean(parsed.isPaused),
+      isInfinite: Boolean(parsed.isInfinite),
+      runsCount: Math.max(1, Math.floor(Number(parsed.runsCount) || 1)),
+      runIndex: Math.max(0, Math.floor(Number(parsed.runIndex) || 0)),
+      createdAtMs: Number(parsed.createdAtMs) || Date.now(),
+      updatedAtMs: Number(parsed.updatedAtMs) || Date.now(),
+      finishedAtMs: typeof parsed.finishedAtMs === "number" ? parsed.finishedAtMs : null,
+      lastJobId: typeof parsed.lastJobId === "string" ? parsed.lastJobId : null,
+      runPayload: parsed.runPayload as OptimizerLoopRunPayload,
+    };
   } catch {
     return null;
   }
@@ -62,6 +75,7 @@ export function recoverLoopStateOnBoot() {
   const recovered: OptimizerLoopState = {
     ...state,
     isPaused: true,
+    finishedAtMs: null,
     updatedAtMs: Date.now(),
   };
   writeLoopState(recovered);
