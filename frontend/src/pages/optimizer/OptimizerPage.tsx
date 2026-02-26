@@ -334,6 +334,7 @@ export function OptimizerPage() {
   const [loopRunsCount, setLoopRunsCount] = useState("3");
   const [loopInfinite, setLoopInfinite] = useState(false);
   const [loopStatus, setLoopStatus] = useState<OptimizerLoopStatus | null>(null);
+  const [loopBusy, setLoopBusy] = useState(false);
   const rangesSaveTimerRef = useRef<number | null>(null);
 
   async function refreshStatus() {
@@ -473,6 +474,32 @@ export function OptimizerPage() {
       try {
         const next = await getOptimizerLoopStatus();
         setLoopStatus(next);
+        const nextJobId = next.loop?.lastJobId ?? null;
+        if (nextJobId && nextJobId !== jobId) {
+          setJobId(nextJobId);
+          setDone(0);
+          setTotal(100);
+          setJobStartedAtMs(null);
+          setJobUpdatedAtMs(null);
+          setJobFinishedAtMs(null);
+          setOptimizerPaused(false);
+          setJobStatus(null);
+          setRunning(true);
+          try {
+            const statusRes = await getJobStatus(nextJobId);
+            setDone(statusRes.done);
+            setTotal(statusRes.total);
+            setJobStartedAtMs(statusRes.startedAtMs ?? null);
+            setJobUpdatedAtMs(statusRes.updatedAtMs ?? null);
+            setJobFinishedAtMs(statusRes.finishedAtMs ?? null);
+            setJobStatus(statusRes.status);
+            setOptimizerPaused(statusRes.status === "paused");
+            setRunning(statusRes.status === "running" || statusRes.status === "paused");
+            await fetchResults(page, sortKey, sortDir, nextJobId);
+          } catch {
+            return;
+          }
+        }
       } catch {
         return;
       }
@@ -486,11 +513,17 @@ export function OptimizerPage() {
     return () => {
       if (timer != null) window.clearInterval(timer);
     };
-  }, [loopStatus?.loop?.isPaused, loopStatus?.loop?.isRunning]);
+  }, [jobId, loopStatus?.loop?.isPaused, loopStatus?.loop?.isRunning, page, sortDir, sortKey]);
+
+  const loopExists = Boolean(loopStatus?.loop);
+  const loopRunning = Boolean(loopStatus?.loop?.isRunning);
+  const loopPaused = Boolean(loopStatus?.loop?.isRunning && loopStatus?.loop?.isPaused);
+  const loopStopped = !loopRunning;
 
   async function onStartLoop() {
     if (!selectedTapeIds.length || rangeError) return;
     setError(null);
+    setLoopBusy(true);
     try {
       const rangePayload = buildRangesPayload();
       const precision: OptimizerPrecision = {
@@ -521,39 +554,50 @@ export function OptimizerPage() {
       setRunning(true);
     } catch (e: any) {
       setError(String(e?.message ?? e));
+    } finally {
+      setLoopBusy(false);
     }
   }
 
   async function onStopLoop() {
     setError(null);
+    setLoopBusy(true);
     try {
       await stopOptimizerLoop();
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
     } catch (e: any) {
       setError(String(e?.message ?? e));
+    } finally {
+      setLoopBusy(false);
     }
   }
 
   async function onPauseLoop() {
     setError(null);
+    setLoopBusy(true);
     try {
       await pauseOptimizerLoop();
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
     } catch (e: any) {
       setError(String(e?.message ?? e));
+    } finally {
+      setLoopBusy(false);
     }
   }
 
   async function onResumeLoop() {
     setError(null);
+    setLoopBusy(true);
     try {
       await resumeOptimizerLoop();
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
     } catch (e: any) {
       setError(String(e?.message ?? e));
+    } finally {
+      setLoopBusy(false);
     }
   }
 
@@ -957,13 +1001,13 @@ export function OptimizerPage() {
                 </Col>
               ) : null}
               <Col xs="auto">
-                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={!selectedTapeIds.length || Boolean(rangeError)}>Start loop</Button>
+                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || !selectedTapeIds.length || Boolean(rangeError)}>Start loop</Button>
               </Col>
               <Col xs="auto">
                 <ButtonGroup>
-                  <Button variant="outline-warning" onClick={() => void onPauseLoop()}>Pause loop</Button>
-                  <Button variant="outline-success" onClick={() => void onResumeLoop()}>Resume loop</Button>
-                  <Button variant="outline-danger" onClick={() => void onStopLoop()}>Stop loop</Button>
+                  <Button variant="outline-warning" onClick={() => void onPauseLoop()} disabled={loopBusy || loopStopped || loopPaused}>Pause loop</Button>
+                  <Button variant="outline-success" onClick={() => void onResumeLoop()} disabled={loopBusy || loopStopped || !loopPaused}>Resume loop</Button>
+                  <Button variant="outline-danger" onClick={() => void onStopLoop()} disabled={loopBusy || loopStopped}>Stop loop</Button>
                 </ButtonGroup>
               </Col>
             </Row>
@@ -1006,8 +1050,8 @@ export function OptimizerPage() {
               {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
             </div>
             <div style={{ fontSize: 12, marginBottom: 8 }}>
-              Loop: <b>{loopStatus?.loop?.isRunning ? (loopStatus?.loop?.isPaused ? "paused" : "running") : "stopped"}</b>
-              {loopStatus?.loop ? ` · Run ${loopStatus.runsCompleted ?? loopStatus.loop.runIndex}/${loopStatus.runsTotal == null ? "∞" : loopStatus.runsTotal}` : ""}
+              Loop: <b>{loopRunning ? (loopPaused ? "paused" : "running") : "stopped"}</b>
+              {loopExists && loopStatus?.loop ? ` · Run ${loopStatus.runsCompleted ?? loopStatus.loop.runIndex}/${loopStatus.runsTotal == null ? "∞" : loopStatus.runsTotal}` : ""}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             </div>
