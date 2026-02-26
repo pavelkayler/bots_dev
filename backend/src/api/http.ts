@@ -480,9 +480,13 @@ const now = Date.now();
             job.done = 100;
             job.total = 100;
             job.status = "done";
+            const totalCandidates = Array.isArray(job.results) ? job.results.length : 0;
+            const tradedCandidates = totalCandidates > 0 ? job.results.filter((r) => (r?.trades ?? 0) > 0).length : 0;
+            const tradedSummary = `Candidates with trades>0: ${tradedCandidates}/${totalCandidates}`;
             if (output.diagnostics && output.diagnostics.decisionsOk === 0 && output.diagnostics.decisionsNoRefs > 0) {
               job.message = `Replay diagnostics: decisionsOk=0, decisionsNoRefs=${output.diagnostics.decisionsNoRefs}.`;
             }
+            job.message = job.message ? `${job.message} | ${tradedSummary}` : tradedSummary;
           }
         } catch (e: any) {
           job.status = "error";
