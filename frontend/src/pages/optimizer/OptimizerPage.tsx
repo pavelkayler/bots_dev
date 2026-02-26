@@ -337,7 +337,7 @@ export function OptimizerPage() {
   const [optTfMin, setOptTfMin] = useState<string>("");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
-  const [optimizerPaused, setOptimizerPaused] = useState(false);
+  const [, setOptimizerPaused] = useState(false);
   const [jobStartedAtMs, setJobStartedAtMs] = useState<number | null>(null);
   const [jobUpdatedAtMs, setJobUpdatedAtMs] = useState<number | null>(null);
   const [jobFinishedAtMs, setJobFinishedAtMs] = useState<number | null>(null);
@@ -371,6 +371,7 @@ export function OptimizerPage() {
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
   const prevLoopJobIdRef = useRef<string | null>(null);
+  const prevLoopActiveRef = useRef(false);
 
   const resetJobProgressState = useCallback(() => {
     setDone(0);
@@ -572,6 +573,14 @@ export function OptimizerPage() {
   }, [jobActive, loopActive, loopJobId, singleJobId]);
 
   const activeJobId = displayJobId;
+
+  useEffect(() => {
+    const prevLoopActive = prevLoopActiveRef.current;
+    if (prevLoopActive && !loopActive && loopAggRows.length > 0) {
+      setSingleJobId(null);
+    }
+    prevLoopActiveRef.current = loopActive;
+  }, [loopActive, loopAggRows.length]);
 
   async function onStartLoop() {
     if (!selectedTapeIds.length || rangeError) return;
@@ -800,12 +809,14 @@ export function OptimizerPage() {
 
   useEffect(() => {
     if (!activeJobId || (!jobActive && !loopActive)) return;
+    let alive = true;
     const timer = window.setInterval(async () => {
       try {
         const now = Date.now();
         if (lastStatusFetchRef.current.jobId === activeJobId && now - lastStatusFetchRef.current.ts < 200) return;
         lastStatusFetchRef.current = { jobId: activeJobId, ts: now };
         const res = await getJobStatus(activeJobId);
+        if (!alive) return;
         setDone((prev) => (prev === res.done ? prev : res.done));
         setTotal((prev) => (prev === res.total ? prev : res.total));
         setJobStartedAtMs((prev) => {
@@ -827,6 +838,7 @@ export function OptimizerPage() {
           return prev === next ? prev : next;
         });
         await fetchResults(page, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+        if (!alive) return;
         if (res.status === "error") {
           setError(res.message ?? "Optimization job failed.");
         }
@@ -834,13 +846,17 @@ export function OptimizerPage() {
           window.clearInterval(timer);
           if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
           await fetchResults(1, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+          if (!alive) return;
         }
       } catch (e: any) {
         setError(String(e?.message ?? e));
       }
     }, 250);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
   }, [activeJobId, jobActive, loopActive, page, sortDir, sortKey]);
 
 
@@ -973,6 +989,7 @@ export function OptimizerPage() {
     setPage((prev) => Math.min(prev, totalPages));
   }, [totalPages]);
   const isRunningStatus = jobStatus === "running";
+  const singleJobActive = !loopActive && Boolean(singleJobId) && (jobStatus === "running" || jobStatus === "paused");
   const endMs = !jobStartedAtMs
     ? null
     : isRunningStatus
@@ -1138,11 +1155,12 @@ export function OptimizerPage() {
                   Run optimization
                 </Button>
               </Col>
-              {!loopActive && jobActive ? (
+              {singleJobActive ? (
                 <Col xs="auto">
                   <ButtonGroup>
-                    {!optimizerPaused ? <Button variant="outline-warning" onClick={() => void onPauseOptimization()}>Pause</Button> : <Button variant="outline-primary" onClick={() => void onResumeOptimization()}>Resume</Button>}
-                    <Button variant="outline-danger" onClick={() => void onStopOptimization()}>Stop</Button>
+                    <Button variant="outline-warning" onClick={() => void onPauseOptimization()} disabled={jobStatus !== "running"}>Pause</Button>
+                    <Button variant="outline-primary" onClick={() => void onResumeOptimization()} disabled={jobStatus !== "paused"}>Resume</Button>
+                    <Button variant="outline-danger" onClick={() => void onStopOptimization()} disabled={!singleJobActive}>Stop</Button>
                   </ButtonGroup>
                 </Col>
               ) : null}
