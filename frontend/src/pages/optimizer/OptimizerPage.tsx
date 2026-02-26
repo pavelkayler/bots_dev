@@ -31,6 +31,8 @@ import {
   type OptimizerSortKeyExtended,
 } from "../../features/optimizer/api/optimizerApi";
 
+type OptimizerResultRow = OptimizationResult;
+
 type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs";
 type RangeState = Record<RangeKey, { min: string; max: string }>;
 
@@ -281,6 +283,29 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function toSigValue(value: number | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  return String(value);
+}
+
+function makeResultSignature(row: OptimizerResultRow): string {
+  return [
+    `priceTh=${toSigValue(row.params.priceThresholdPct)}`,
+    `oivTh=${toSigValue(row.params.oivThresholdPct)}`,
+    `tp=${toSigValue(row.params.tpRoiPct)}`,
+    `sl=${toSigValue(row.params.slRoiPct)}`,
+    `offset=${toSigValue(row.params.entryOffsetPct)}`,
+    `timeoutSec=${toSigValue(row.params.timeoutSec)}`,
+    `rearmMs=${toSigValue(row.params.rearmMs)}`,
+  ].join("|");
+}
+
+function isBetterResult(next: OptimizerResultRow, prev: OptimizerResultRow): boolean {
+  if (next.netPnl !== prev.netPnl) return next.netPnl > prev.netPnl;
+  if (next.trades !== prev.trades) return next.trades > prev.trades;
+  return next.winRatePct > prev.winRatePct;
+}
+
 function loadStoredPositiveInt(key: string, fallback: string, min: number): string {
   try {
     const raw = localStorage.getItem(key);
@@ -323,6 +348,8 @@ export function OptimizerPage() {
   const [total, setTotal] = useState(0);
 
   const [results, setResults] = useState<OptimizationResult[]>([]);
+  const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>([]);
+  const [loopAggMap, setLoopAggMap] = useState<Map<string, OptimizerResultRow>>(new Map());
   const [page, setPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
@@ -562,6 +589,8 @@ export function OptimizerPage() {
         runsCount: Math.max(1, Math.floor(Number(loopRunsCount) || 1)),
         infinite: loopInfinite,
       });
+      setLoopAggRows([]);
+      setLoopAggMap(new Map());
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
       setRunning(true);
@@ -710,10 +739,29 @@ export function OptimizerPage() {
   ) {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
     const nextResults = res.results ?? [];
-    const keepPreviousIfEmpty = options?.keepPreviousIfEmpty ?? loopActive;
-    if (keepPreviousIfEmpty && nextResults.length === 0) {
+    if (loopActive) {
+      const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
+      const merged = new Map(loopAggMap);
+      for (const row of nextResults) {
+        if (excludeNegative && row.netPnl < 0) continue;
+        if (minTradesLimit > 0 && row.trades < minTradesLimit) continue;
+        const signature = makeResultSignature(row);
+        const existing = merged.get(signature);
+        if (!existing || isBetterResult(row, existing)) {
+          merged.set(signature, row);
+        }
+      }
+      const sortedRows = Array.from(merged.values()).sort((a, b) => {
+        if (b.netPnl !== a.netPnl) return b.netPnl - a.netPnl;
+        return b.trades - a.trades;
+      });
+      setLoopAggMap(merged);
+      setLoopAggRows(sortedRows);
+      setTotalRows(sortedRows.length);
       return;
     }
+    const keepPreviousIfEmpty = options?.keepPreviousIfEmpty ?? false;
+    if (keepPreviousIfEmpty && nextResults.length === 0) return;
     setResults(nextResults);
     setPage(res.page);
     setTotalRows(res.totalRows);
@@ -852,6 +900,10 @@ export function OptimizerPage() {
   }
 
   async function onPageChange(nextPage: number) {
+    if (isLoopDisplay) {
+      setPage(nextPage);
+      return;
+    }
     if (!activeJobId) return;
     await fetchResults(nextPage, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
   }
@@ -910,7 +962,22 @@ export function OptimizerPage() {
     }
   }
 
-  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const isLoopDisplay = loopActive || (!singleJobId && loopAggRows.length > 0);
+  const displayedRows = loopActive
+    ? loopAggRows
+    : singleJobId
+      ? results
+      : (loopAggRows.length > 0 ? loopAggRows : results);
+  const loopDisplayRows = useMemo(() => {
+    if (!isLoopDisplay) return displayedRows;
+    const start = (page - 1) * pageSize;
+    return displayedRows.slice(start, start + pageSize);
+  }, [displayedRows, isLoopDisplay, page]);
+  const totalPages = Math.max(1, Math.ceil((isLoopDisplay ? displayedRows.length : totalRows) / pageSize));
+
+  useEffect(() => {
+    setPage((prev) => Math.min(prev, totalPages));
+  }, [totalPages]);
   const isRunningStatus = jobStatus === "running";
   const endMs = !jobStartedAtMs
     ? null
@@ -1161,7 +1228,7 @@ export function OptimizerPage() {
                 </tr>
               </thead>
               <tbody>
-                {results.map((r) => {
+                {loopDisplayRows.map((r) => {
                   return (
                     <tr key={`${r.rank}-${r.netPnl}`}>
                       <td>{r.rank}</td>
@@ -1187,14 +1254,14 @@ export function OptimizerPage() {
                     </tr>
                   );
                 })}
-                {!results.length ? (
+                {!loopDisplayRows.length ? (
                   <tr>
                     <td colSpan={19} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
                   </tr>
                 ) : null}
               </tbody>
             </Table>
-            {results.length ? (
+            {displayedRows.length ? (
               <Pagination>
                 <Pagination.Prev onClick={() => void onPageChange(Math.max(1, page - 1))} disabled={page <= 1} />
                 <Pagination.Item active>{page}</Pagination.Item>
