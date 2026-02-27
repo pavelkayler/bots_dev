@@ -71,12 +71,29 @@ export function clearLoopState() {
 
 export function recoverLoopStateOnBoot() {
   const state = readLoopState();
-  if (!state || !state.isRunning) return state;
+  if (!state) return state;
   const now = Date.now();
+  if (!state.isRunning) {
+    const normalizedStopped: OptimizerLoopState = {
+      ...state,
+      isRunning: false,
+      isPaused: false,
+      runIndex: 0,
+      lastJobId: null,
+      createdAtMs: now,
+      updatedAtMs: now,
+      finishedAtMs: now,
+    };
+    writeLoopState(normalizedStopped);
+    return normalizedStopped;
+  }
   const recovered: OptimizerLoopState = {
     ...state,
     isRunning: false,
     isPaused: false,
+    runIndex: 0,
+    lastJobId: null,
+    createdAtMs: now,
     finishedAtMs: state.finishedAtMs ?? now,
     updatedAtMs: now,
   };

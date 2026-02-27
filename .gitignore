@@ -8,3 +8,6 @@ yarn-error.log*
 # local tapes / recordings
 backend/data/tapes/
 *.jsonl
+backend/data/optimizer_loops/current.json
+backend/data/optimizer_checkpoints/job-*.json
+backend/data/optimizer_job_history.json

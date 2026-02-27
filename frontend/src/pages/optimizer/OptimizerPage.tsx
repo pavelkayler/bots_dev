@@ -1,5 +1,5 @@
-import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, ButtonGroup, Card, Col, Container, Form, Modal, Pagination, ProgressBar, Row, Table } from "react-bootstrap";
+import { Fragment, memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Modal, Pagination, ProgressBar, Row, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -24,7 +24,9 @@ import {
   getOptimizerLoopStatus,
   getDoctorStatus,
   getLastSoakSnapshot,
+  getOptimizerJobHistory,
   type DoctorStatus,
+  type OptimizerJobHistoryRecord,
   type OptimizerLoopStatus,
   type OptimizationResult,
   type SoakLastStatus,
@@ -277,6 +279,16 @@ function formatDuration(sec: number | null): string {
   return `${hh.toString().padStart(2, "0")}:${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
 }
 
+function formatEta(sec: number | null): string {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return "-";
+  const total = Math.floor(sec);
+  const hh = Math.floor(total / 3600);
+  const mm = Math.floor((total % 3600) / 60);
+  const ss = total % 60;
+  if (hh > 0) return `${hh.toString().padStart(2, "0")}:${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
+  return `${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
+}
+
 function roundTo2(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -368,6 +380,10 @@ export function OptimizerPage() {
   const [doctorStatus, setDoctorStatus] = useState<DoctorStatus | null>(null);
   const [doctorBusy, setDoctorBusy] = useState(false);
   const [lastSoak, setLastSoak] = useState<SoakLastStatus["snapshot"]>(null);
+  const [jobHistory, setJobHistory] = useState<OptimizerJobHistoryRecord[]>([]);
+  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
+  const [historyResults, setHistoryResults] = useState<Record<string, OptimizationResult[]>>({});
+  const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
   const loopPollTokenRef = useRef(0);
@@ -444,6 +460,7 @@ export function OptimizerPage() {
     setLoopRunsCount(loadStoredPositiveInt(LOOP_RUNS_COUNT_STORAGE_KEY, "3", 1));
     setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
     void refreshStatus();
+    void refreshJobHistory();
     setTapesRefreshKey((prev) => prev + 1);
     void (async () => {
       try {
@@ -496,6 +513,13 @@ export function OptimizerPage() {
   }, []);
 
   useEffect(() => {
+    const id = window.setInterval(() => {
+      void refreshJobHistory();
+    }, 8000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     const n = Math.floor(Number(candidates));
     if (!Number.isFinite(n) || n < 1) return;
     localStorage.setItem(CANDIDATES_STORAGE_KEY, String(n));
@@ -543,10 +567,10 @@ export function OptimizerPage() {
   }, [loopInfinite]);
 
   useEffect(() => {
-    if (jobStatus !== "running" && !loopStatus?.loop?.isRunning) return;
-    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    if (jobStatus !== "running") return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 500);
     return () => window.clearInterval(id);
-  }, [jobStatus, loopStatus?.loop?.isRunning]);
+  }, [jobStatus]);
 
   const loopExists = Boolean(loopStatus?.loop);
   const loopRunning = Boolean(loopStatus?.loop?.isRunning);
@@ -594,6 +618,7 @@ export function OptimizerPage() {
     const prevLoopActive = prevLoopActiveRef.current;
     if (prevLoopActive && !loopActive && loopAggRows.length > 0) {
       setSingleJobId(null);
+      void refreshJobHistory();
     }
     prevLoopActiveRef.current = loopActive;
   }, [loopActive, loopAggRows.length]);
@@ -869,8 +894,12 @@ export function OptimizerPage() {
           window.clearInterval(timer);
           if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
           await fetchResults(1, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
+          await refreshJobHistory();
           if (loopActive || singleJobId !== reqJobId) return;
           if (!alive) return;
+        }
+        if (res.status === "error") {
+          await refreshJobHistory();
         }
       } catch (e: any) {
         if (isNoCurrentJobError(e)) {
@@ -1044,6 +1073,30 @@ export function OptimizerPage() {
     }
   }
 
+  async function refreshJobHistory() {
+    try {
+      const res = await getOptimizerJobHistory(50);
+      setJobHistory(Array.isArray(res.records) ? res.records : []);
+    } catch {
+      return;
+    }
+  }
+
+  async function toggleHistoryRow(jobId: string) {
+    const nextExpanded = !expandedHistory[jobId];
+    setExpandedHistory((prev) => ({ ...prev, [jobId]: nextExpanded }));
+    if (!nextExpanded || historyResults[jobId] != null || historyLoading[jobId]) return;
+    setHistoryLoading((prev) => ({ ...prev, [jobId]: true }));
+    try {
+      const res = await getJobResults(jobId, { page: 1, sortKey: sortKey, sortDir: sortDir, positiveOnly: true });
+      setHistoryResults((prev) => ({ ...prev, [jobId]: Array.isArray(res.results) ? res.results : [] }));
+    } catch {
+      setHistoryResults((prev) => ({ ...prev, [jobId]: [] }));
+    } finally {
+      setHistoryLoading((prev) => ({ ...prev, [jobId]: false }));
+    }
+  }
+
   async function onCheckDoctor() {
     setDoctorBusy(true);
     setError(null);
@@ -1079,7 +1132,10 @@ export function OptimizerPage() {
       ? nowMs
       : (jobFinishedAtMs ?? jobUpdatedAtMs ?? jobStartedAtMs);
   const elapsedSec = endMs == null || !jobStartedAtMs ? null : Math.max(0, (endMs - jobStartedAtMs) / 1000);
-  const etaSec = isRunningStatus && done > 0.01 && elapsedSec != null ? elapsedSec * (100 / done - 1) : null;
+  const pctDone = clamp(roundTo2(done), 0, 100);
+  const etaSec = isRunningStatus && elapsedSec != null && jobStartedAtMs != null && pctDone > 0.1
+    ? (elapsedSec * (100 - pctDone)) / pctDone
+    : null;
   const lastJobSnapshotExists = Boolean(
     jobStatus !== "idle" ||
     jobStartedAtMs !== null ||
@@ -1089,7 +1145,7 @@ export function OptimizerPage() {
     total > 0
   );
   const showProgressBlock = Boolean(activeJobId) || loopActive || lastJobSnapshotExists;
-  const pct = clamp(roundTo2(done), 0, 100);
+  const pct = pctDone;
   const loopStartMs = loopStatus?.loop?.createdAtMs ?? null;
   const loopEndMs = !loopStartMs
     ? null
@@ -1220,13 +1276,13 @@ export function OptimizerPage() {
               <Col xs={12}>
                 <div className="d-flex flex-wrap gap-3">
                   <Form.Group>
-                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} disabled={loopActive} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
                   </Form.Group>
                   <Form.Group>
-                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives for this tape" checked={rememberNegatives} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives for this tape" checked={rememberNegatives} disabled={loopActive} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
                   </Form.Group>
                   <Form.Group>
-                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} disabled={loopActive} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
                   </Form.Group>
                 </div>
               </Col>
@@ -1305,7 +1361,7 @@ export function OptimizerPage() {
 
             {showProgressBlock ? <>
               <ProgressBar now={pct} label={`${pct.toFixed(2)}%`} title={`progress ${pct.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
-              <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec ?? 0)}</b> · ETA: <b>{isRunningStatus ? formatDuration(etaSec) : "-"}</b></div>
+              <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec ?? 0)}</b> · ETA: <b>{isRunningStatus ? formatEta(etaSec) : "-"}</b></div>
               <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div>
             </> : null}
 
@@ -1392,6 +1448,103 @@ export function OptimizerPage() {
                 <Pagination.Next onClick={() => void onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} />
               </Pagination>
             ) : null}
+          </Card.Body>
+        </Card>
+
+        <Card>
+          <Card.Header><b>Completed / Stopped runs</b></Card.Header>
+          <Card.Body>
+            <Table striped bordered hover size="sm">
+              <thead>
+                <tr>
+                  <th>runId</th>
+                  <th>endedAt</th>
+                  <th>status</th>
+                  <th>mode</th>
+                  <th>tapes</th>
+                  <th>tfMin</th>
+                  <th>candidates</th>
+                  <th>seed</th>
+                  <th>minTrades</th>
+                  <th>direction</th>
+                  <th>rememberNegatives</th>
+                  <th>hideNegativeNetPnl</th>
+                  <th>bestNetPnl</th>
+                  <th>bestTrades</th>
+                  <th>bestWinRate</th>
+                  <th>bestProfitFactor</th>
+                  <th>bestMaxDD</th>
+                  <th>rowsPositive</th>
+                  <th>rowsTotal</th>
+                  <th>View</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobHistory.map((row) => {
+                  const isOpen = Boolean(expandedHistory[row.jobId]);
+                  const detailsRows = historyResults[row.jobId] ?? [];
+                  return (
+                    <Fragment key={row.jobId}>
+                      <tr>
+                        <td>{row.jobId.slice(-8)}</td>
+                        <td>{new Date(row.endedAtMs).toLocaleString()}</td>
+                        <td>{row.status.toUpperCase()}</td>
+                        <td>{row.mode ?? "-"}</td>
+                        <td title={row.runPayload.tapeIds.join(",")}>{row.runPayload.tapeIds.length}</td>
+                        <td>{row.runPayload.optTfMin ?? "-"}</td>
+                        <td>{row.runPayload.candidates}</td>
+                        <td>{row.runPayload.seed}</td>
+                        <td>{row.runPayload.minTrades}</td>
+                        <td>{row.runPayload.directionMode}</td>
+                        <td>{row.runPayload.rememberNegatives ? "true" : "false"}</td>
+                        <td>{row.runPayload.excludeNegative ? "true" : "false"}</td>
+                        <td>{row.summary.bestNetPnl == null ? "-" : row.summary.bestNetPnl.toFixed(4)}</td>
+                        <td>{row.summary.bestTrades ?? "-"}</td>
+                        <td>{row.summary.bestWinRate == null ? "-" : `${row.summary.bestWinRate.toFixed(2)}%`}</td>
+                        <td>{row.summary.bestProfitFactor == null ? "-" : row.summary.bestProfitFactor.toFixed(3)}</td>
+                        <td>{row.summary.bestMaxDD == null ? "-" : row.summary.bestMaxDD.toFixed(4)}</td>
+                        <td>{row.summary.rowsPositive}</td>
+                        <td>{row.summary.rowsTotal}</td>
+                        <td><Button size="sm" variant="outline-secondary" onClick={() => void toggleHistoryRow(row.jobId)}>{isOpen ? "Hide" : "View"}</Button></td>
+                      </tr>
+                      <tr>
+                        <td colSpan={20} style={{ padding: 0, borderTop: 0 }}>
+                          <Collapse in={isOpen}>
+                            <div style={{ padding: isOpen ? 8 : 0 }}>
+                              {historyLoading[row.jobId] ? <div style={{ fontSize: 12 }}>Loading...</div> : null}
+                              {!historyLoading[row.jobId] && row.summary.rowsPositive === 0 ? <div style={{ fontSize: 12 }}>No positive results</div> : null}
+                              {!historyLoading[row.jobId] && row.summary.rowsPositive > 0 ? (
+                                <Table striped bordered hover size="sm" className="mb-0">
+                                  <thead>
+                                    <tr>
+                                      <th>Rank</th><th>netPnl</th><th>trades</th><th>winRate</th><th>expectancy</th><th>profitFactor</th><th>maxDD</th>
+                                      <th>placed</th><th>filled</th><th>expired</th><th>priceTh</th><th>oivTh</th><th>tp</th><th>sl</th><th>offset</th><th>timeoutSec</th><th>rearmMs</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {detailsRows.map((r) => (
+                                      <tr key={`${row.jobId}-${r.rank}-${r.netPnl}`}>
+                                        <td>{r.rank}</td><td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
+                                        <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </Table>
+                              ) : null}
+                            </div>
+                          </Collapse>
+                        </td>
+                      </tr>
+                    </Fragment>
+                  );
+                })}
+                {!jobHistory.length ? (
+                  <tr>
+                    <td colSpan={20} style={{ fontSize: 12, opacity: 0.75 }}>No completed runs</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </Table>
           </Card.Body>
         </Card>
       </Container>

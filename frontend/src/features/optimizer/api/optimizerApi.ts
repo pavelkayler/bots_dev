@@ -86,6 +86,32 @@ export type SoakLastStatus = {
   };
 };
 
+export type OptimizerJobHistoryRecord = {
+  jobId: string;
+  mode?: "loop" | "single";
+  endedAtMs: number;
+  status: "done" | "cancelled" | "stopped" | "error";
+  runPayload: {
+    tapeIds: string[];
+    optTfMin?: number;
+    candidates: number;
+    seed: number;
+    minTrades: number;
+    directionMode: "both" | "long" | "short";
+    rememberNegatives: boolean;
+    excludeNegative: boolean;
+  };
+  summary: {
+    bestNetPnl: number | null;
+    bestTrades: number | null;
+    bestWinRate: number | null;
+    bestProfitFactor: number | null;
+    bestMaxDD: number | null;
+    rowsPositive: number;
+    rowsTotal: number;
+  };
+};
+
 export type OptimizerSortKeyExtended =
   | OptimizerSortKey
   | "priceTh"
@@ -161,7 +187,7 @@ export async function getCurrentJob(): Promise<{ jobId: string | null }> {
 
 export async function getJobResults(
   jobId: string,
-  query: { page: number; sortKey: OptimizerSortKeyExtended; sortDir: OptimizerSortDir }
+  query: { page: number; sortKey: OptimizerSortKeyExtended; sortDir: OptimizerSortDir; positiveOnly?: boolean }
 ): Promise<{
   status: "running" | "paused" | "done" | "error" | "cancelled";
   page: number;
@@ -177,7 +203,13 @@ export async function getJobResults(
     sortKey: query.sortKey,
     sortDir: query.sortDir,
   });
+  if (query.positiveOnly) params.set("positiveOnly", "1");
   return await getJson(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/results?${params.toString()}`);
+}
+
+export async function getOptimizerJobHistory(limit = 50): Promise<{ records: OptimizerJobHistoryRecord[] }> {
+  const base = getApiBase();
+  return await getJson<{ records: OptimizerJobHistoryRecord[] }>(`${base}/api/optimizer/jobs/history?limit=${encodeURIComponent(String(limit))}`);
 }
 
 export function getJobExportUrl(jobId: string, format: "json" | "csv" = "json", sortKey?: OptimizerSortKeyExtended, sortDir?: OptimizerSortDir): string {
