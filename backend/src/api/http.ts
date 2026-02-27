@@ -604,7 +604,7 @@ export function registerHttpRoutes(app: FastifyInstance) {
     if (isDemo && demoKeysPresent) {
       try {
         const demoRest = new BybitDemoRestClient();
-        await demoRest.getWalletBalance();
+        await demoRest.getPositionsLinear({ settleCoin: "USDT" });
         demoAuthOk = true;
       } catch {
         demoAuthOk = false;

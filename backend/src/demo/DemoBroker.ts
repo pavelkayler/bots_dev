@@ -10,6 +10,10 @@ export type DemoStats = {
   openOrders: number;
   pendingEntries: number;
   lastReconcileAtMs: number;
+  tradesCount: number;
+  realizedPnlUsdt: number;
+  feesUsdt: number;
+  lastExecTimeMs: number | null;
 };
 
 type TickInput = {
@@ -50,7 +54,9 @@ export class DemoBroker {
   private readonly rest = new BybitDemoRestClient();
   private readonly map = new Map<string, SymbolState>();
   private reconcileTimer: NodeJS.Timeout | null = null;
+  private executionsTimer: NodeJS.Timeout | null = null;
   private reconcileBusy = false;
+  private executionsBusy = false;
   private missingKeysLogged = false;
   private openOrdersCache: Array<{ symbol: string; orderLinkId: string }> = [];
   private metaBySymbol = new Map<string, LinearInstrumentMeta>();
@@ -59,6 +65,12 @@ export class DemoBroker {
   private lastReconcileAtMs = 0;
   private openOrdersCount = 0;
   private openPositionsCount = 0;
+  private lastExecTimeMs: number | null = null;
+  private execSeenIds = new Set<string>();
+  private execSeenQueue: string[] = [];
+  private demoTradesCount = 0;
+  private demoRealizedPnlUsdt = 0;
+  private demoFeesUsdt = 0;
   public sessionStartBalanceUsdt: number | null = null;
   public sessionEndBalanceUsdt: number | null = null;
 
@@ -116,12 +128,21 @@ export class DemoBroker {
     this.reconcileTimer = setInterval(() => {
       void this.reconcile();
     }, 1500);
+    if (!this.executionsTimer) {
+      this.executionsTimer = setInterval(() => {
+        void this.pollExecutions();
+      }, 5000);
+    }
   }
 
   stop() {
     if (this.reconcileTimer) {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
+    }
+    if (this.executionsTimer) {
+      clearInterval(this.executionsTimer);
+      this.executionsTimer = null;
     }
   }
 
@@ -136,7 +157,61 @@ export class DemoBroker {
       openOrders: this.openOrdersCount,
       pendingEntries,
       lastReconcileAtMs: this.lastReconcileAtMs,
+      tradesCount: this.demoTradesCount,
+      realizedPnlUsdt: this.demoRealizedPnlUsdt,
+      feesUsdt: this.demoFeesUsdt,
+      lastExecTimeMs: this.lastExecTimeMs,
     };
+  }
+
+  private parseNumber(value: unknown): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  private trackExecSeen(execId: string) {
+    if (!execId || this.execSeenIds.has(execId)) return;
+    this.execSeenIds.add(execId);
+    this.execSeenQueue.push(execId);
+    if (this.execSeenQueue.length > 2000) {
+      const removed = this.execSeenQueue.shift();
+      if (removed) this.execSeenIds.delete(removed);
+    }
+  }
+
+  private async pollExecutions() {
+    if (this.executionsBusy || !this.rest.hasCredentials()) return;
+    this.executionsBusy = true;
+    const nowMs = Date.now();
+    try {
+      const startTime = this.lastExecTimeMs != null ? this.lastExecTimeMs - 2000 : nowMs - (15 * 60 * 1000);
+      const resp = await this.rest.getExecutionsLinear({ startTime, limit: 100 });
+      const list = Array.isArray(resp.list) ? resp.list : [];
+      for (const exec of list) {
+        const execId = String(exec.execId ?? "");
+        if (!execId || this.execSeenIds.has(execId)) continue;
+        this.trackExecSeen(execId);
+        this.demoTradesCount += 1;
+        this.demoRealizedPnlUsdt += this.parseNumber(exec.closedPnl);
+        this.demoFeesUsdt += this.parseNumber(exec.execFee);
+        const execTimeMs = Number(exec.execTime ?? 0);
+        if (Number.isFinite(execTimeMs) && execTimeMs > 0) {
+          this.lastExecTimeMs = this.lastExecTimeMs == null ? execTimeMs : Math.max(this.lastExecTimeMs, execTimeMs);
+        }
+      }
+    } catch (err: any) {
+      this.logger.log({
+        ts: nowMs,
+        type: "DEMO_ORDER_ERROR",
+        payload: {
+          stage: "executions",
+          retCode: err?.retCode,
+          retMsg: err?.retMsg,
+        },
+      });
+    } finally {
+      this.executionsBusy = false;
+    }
   }
 
   async getWalletUsdtBalance(): Promise<number | null> {
@@ -303,16 +378,22 @@ export class DemoBroker {
     const nowMs = Date.now();
 
     try {
-      const [positionsResp, openOrdersResp] = await Promise.all([this.rest.getPositionsLinear(), this.rest.getOpenOrdersLinear()]);
+      const [positionsResp, openOrdersResp] = await Promise.all([
+        this.rest.getPositionsLinear({ settleCoin: "USDT" }),
+        this.rest.getOpenOrdersLinear({ settleCoin: "USDT" }),
+      ]);
 
-      const openOrders = Array.isArray(openOrdersResp.list) ? openOrdersResp.list : [];
+      const universeSymbols = new Set(Array.from(this.map.keys()));
+      const allOpenOrders = Array.isArray(openOrdersResp.list) ? openOrdersResp.list : [];
+      const openOrders = allOpenOrders.filter((o) => universeSymbols.size === 0 || universeSymbols.has(String(o.symbol ?? "")));
       this.lastReconcileAtMs = nowMs;
       this.openOrdersCount = openOrders.length;
       this.openOrdersCache = openOrders
         .map((o) => ({ symbol: String(o.symbol ?? ""), orderLinkId: String(o.orderLinkId ?? "") }))
         .filter((o) => o.symbol.length > 0 && o.orderLinkId.length > 0);
 
-      const positions = (Array.isArray(positionsResp.list) ? positionsResp.list : []).filter((p) => Number(p.size ?? "0") > 0);
+      const allPositions = (Array.isArray(positionsResp.list) ? positionsResp.list : []).filter((p) => Number(p.size ?? "0") > 0);
+      const positions = allPositions.filter((p) => universeSymbols.size === 0 || universeSymbols.has(String(p.symbol ?? "")));
       this.openPositionsCount = positions.length;
       const positionBySymbol = new Map(positions.map((p) => [String(p.symbol ?? ""), p]));
 

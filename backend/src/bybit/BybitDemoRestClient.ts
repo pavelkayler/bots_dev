@@ -44,6 +44,32 @@ type OpenOrder = {
   qty?: string;
 };
 
+type Execution = {
+  execId?: string;
+  symbol?: string;
+  execTime?: string;
+  execFee?: string;
+  feeRate?: string;
+  closedSize?: string;
+  execQty?: string;
+  execValue?: string;
+  side?: string;
+  orderId?: string;
+  orderLinkId?: string;
+  orderPrice?: string;
+  markPrice?: string;
+  isMaker?: boolean;
+  execType?: string;
+  seq?: string;
+  feeCurrency?: string;
+  extraFees?: string;
+  leavesQty?: string;
+  orderType?: string;
+  stopOrderType?: string;
+  leverage?: string;
+  closedPnl?: string;
+};
+
 export class BybitDemoRestClient {
   readonly baseUrl: string;
   readonly apiKey: string;
@@ -126,14 +152,14 @@ export class BybitDemoRestClient {
     });
   }
 
-  async getOpenOrdersLinear(params: { symbol?: string } = {}): Promise<{ list: OpenOrder[] }> {
+  async getOpenOrdersLinear(params: { symbol?: string; settleCoin?: string } = {}): Promise<{ list: OpenOrder[] }> {
     return this.request("GET", "/v5/order/realtime", {
       category: "linear",
       ...params,
     });
   }
 
-  async getPositionsLinear(params: { symbol?: string } = {}): Promise<{ list: Position[] }> {
+  async getPositionsLinear(params: { symbol?: string; settleCoin?: string } = {}): Promise<{ list: Position[] }> {
     return this.request("GET", "/v5/position/list", {
       category: "linear",
       ...params,
@@ -146,6 +172,17 @@ export class BybitDemoRestClient {
       ...params,
     });
     return Array.isArray(result?.list) ? result.list : [];
+  }
+
+  async getExecutionsLinear(params: { symbol?: string; startTime?: number; endTime?: number; limit?: number; cursor?: string } = {}): Promise<{ list: Execution[]; nextPageCursor?: string }> {
+    const result = await this.request<{ list?: Execution[]; nextPageCursor?: string }>("GET", "/v5/execution/list", {
+      category: "linear",
+      ...params,
+    });
+    return {
+      list: Array.isArray(result?.list) ? result.list : [],
+      ...(result?.nextPageCursor ? { nextPageCursor: result.nextPageCursor } : {}),
+    };
   }
 
   getWalletBalance(params: { coin?: string } = {}) {
