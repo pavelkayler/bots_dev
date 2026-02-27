@@ -68,6 +68,32 @@ type OptimizerCheckpoint = {
   finishedAtMs: number | null;
 };
 
+type OptimizerJobHistoryRecord = {
+  jobId: string;
+  mode?: "loop" | "single";
+  endedAtMs: number;
+  status: "done" | "cancelled" | "error" | "stopped";
+  runPayload: {
+    tapeIds: string[];
+    optTfMin?: number;
+    candidates: number;
+    seed: number;
+    minTrades: number;
+    directionMode: "both" | "long" | "short";
+    rememberNegatives: boolean;
+    excludeNegative: boolean;
+  };
+  summary: {
+    bestNetPnl: number | null;
+    bestTrades: number | null;
+    bestWinRate: number | null;
+    bestProfitFactor: number | null;
+    bestMaxDD: number | null;
+    rowsPositive: number;
+    rowsTotal: number;
+  };
+};
+
 const optimizerJobs = new Map<string, OptimizerJob>();
 const optimizerJobStartedAt = new Map<string, number>();
 let latestOptimizerJobId: string | null = null;
@@ -76,10 +102,72 @@ const optimizerBlacklistsDir = path.resolve(process.cwd(), "data/optimizer_black
 const MAX_CHECKPOINT_FILES = 5;
 const MIN_CHECKPOINT_INTERVAL_MS = 2_000;
 const SOAK_SNAPSHOT_PATH = path.resolve(process.cwd(), "data", "soak_snapshots.jsonl");
+const OPTIMIZER_JOB_HISTORY_PATH = path.resolve(process.cwd(), "data", "optimizer_job_history.json");
 const dataDir = getDataDirPath();
 let lastSoakSnapshot: any = null;
 const lastCheckpointWriteMs = new Map<string, number>();
 let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
+
+function readOptimizerJobHistory(): OptimizerJobHistoryRecord[] {
+  if (!fs.existsSync(OPTIMIZER_JOB_HISTORY_PATH)) return [];
+  try {
+    const raw = fs.readFileSync(OPTIMIZER_JOB_HISTORY_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as OptimizerJobHistoryRecord[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeOptimizerJobHistory(records: OptimizerJobHistoryRecord[]) {
+  fs.mkdirSync(path.dirname(OPTIMIZER_JOB_HISTORY_PATH), { recursive: true });
+  writeFileAtomic(OPTIMIZER_JOB_HISTORY_PATH, `${JSON.stringify(records, null, 2)}\n`);
+}
+
+function toHistoryRunPayload(runPayload: Record<string, unknown> | null): OptimizerJobHistoryRecord["runPayload"] {
+  const rawTapeIds = Array.isArray((runPayload as any)?.tapeIds) ? (runPayload as any).tapeIds : [];
+  const tapeIds = rawTapeIds.map((id: unknown) => String(id ?? "")).filter(Boolean);
+  return {
+    tapeIds,
+    ...(Number.isFinite(Number((runPayload as any)?.optTfMin)) ? { optTfMin: Math.floor(Number((runPayload as any)?.optTfMin)) } : {}),
+    candidates: Math.max(0, Math.floor(Number((runPayload as any)?.candidates) || 0)),
+    seed: Number((runPayload as any)?.seed) || 1,
+    minTrades: Math.max(0, Math.floor(Number((runPayload as any)?.minTrades) || 0)),
+    directionMode: ["both", "long", "short"].includes(String((runPayload as any)?.directionMode)) ? String((runPayload as any)?.directionMode) as "both" | "long" | "short" : "both",
+    rememberNegatives: Boolean((runPayload as any)?.rememberNegatives),
+    excludeNegative: Boolean((runPayload as any)?.excludeNegative),
+  };
+}
+
+function appendOptimizerJobHistory(jobId: string, job: OptimizerJob) {
+  if (!(job.status === "done" || job.status === "cancelled" || job.status === "error")) return;
+  const sorted = sortOptimizationResults(Array.isArray(job.results) ? job.results : [], "netPnl", "desc");
+  const best = sorted[0] ?? null;
+  const rowsTotal = sorted.length;
+  const rowsPositive = sorted.filter((row) => (row?.netPnl ?? 0) > 0).length;
+  const endedAtMs = job.finishedAtMs ?? Date.now();
+  const mode: "single" | "loop" = optimizerLoopState?.loopId && optimizerLoopState.lastJobId === jobId ? "loop" : "single";
+  const historyStatus: OptimizerJobHistoryRecord["status"] = job.status === "cancelled" && !(optimizerLoopState?.isRunning) ? "stopped" : job.status;
+  const nextRecord: OptimizerJobHistoryRecord = {
+    jobId,
+    mode,
+    endedAtMs,
+    status: historyStatus,
+    runPayload: toHistoryRunPayload(job.runPayload),
+    summary: {
+      bestNetPnl: best ? best.netPnl : null,
+      bestTrades: best ? best.trades : null,
+      bestWinRate: best ? best.winRatePct : null,
+      bestProfitFactor: best ? best.profitFactor : null,
+      bestMaxDD: best ? best.maxDrawdownUsdt : null,
+      rowsPositive,
+      rowsTotal,
+    },
+  };
+  const prev = readOptimizerJobHistory().filter((row) => row.jobId !== jobId);
+  prev.unshift(nextRecord);
+  writeOptimizerJobHistory(prev.slice(0, 500));
+}
 
 
 function ensureCheckpointDir() {
@@ -902,6 +990,7 @@ const now = Date.now();
             job.message = `Min trades filter: ${minTrades} | Candidates with trades>0: ${tradedCandidates}/${totalStored}`;
           }
           if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
+          appendOptimizerJobHistory(jobId, job);
           writeCheckpoint(jobId, job, { force: true });
           void tickOptimizerLoop(app);
         },
@@ -910,6 +999,7 @@ const now = Date.now();
           job.updatedAtMs = Date.now();
           if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
           job.message = String(msg?.errorMessage ?? "worker_error");
+          appendOptimizerJobHistory(jobId, job);
           writeCheckpoint(jobId, job, { force: true });
           void tickOptimizerLoop(app);
         },
@@ -917,6 +1007,8 @@ const now = Date.now();
     } catch (e: any) {
       job.status = "error";
       job.message = String(e?.message ?? e);
+      if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
+      appendOptimizerJobHistory(jobId, job);
       writeCheckpoint(jobId, job, { force: true });
     }
 
@@ -1123,7 +1215,9 @@ const now = Date.now();
 
     const page = Math.max(1, Math.floor(Number(query.page) || 1));
     const pageSize = 50;
-    const { sorted, sortKey, sortDir } = getOptimizerJobResultsSorted(job, query);
+    const { sorted: unsafelySorted, sortKey, sortDir } = getOptimizerJobResultsSorted(job, query);
+    const positiveOnly = String(query.positiveOnly ?? "") === "1";
+    const sorted = positiveOnly ? unsafelySorted.filter((row) => (row?.netPnl ?? 0) > 0) : unsafelySorted;
     const start = (page - 1) * pageSize;
     const pageRows = sorted.slice(start, start + pageSize).map((result, index) => ({
       rank: start + index + 1,
@@ -1139,6 +1233,15 @@ const now = Date.now();
       sortDir,
       results: pageRows,
     };
+  });
+
+  app.get("/api/optimizer/jobs/history", async (req) => {
+    const query = (req.query ?? {}) as any;
+    const limit = Math.max(1, Math.min(500, Math.floor(Number(query.limit) || 50)));
+    const history = readOptimizerJobHistory()
+      .sort((a, b) => (Number(b.endedAtMs) || 0) - (Number(a.endedAtMs) || 0))
+      .slice(0, limit);
+    return { records: history };
   });
 
 
