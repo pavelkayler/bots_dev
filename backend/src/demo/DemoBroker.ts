@@ -18,6 +18,9 @@ export type DemoStats = {
   realizedPnlUsdt: number;
   feesUsdt: number;
   lastExecTimeMs: number | null;
+  startBalanceUsdt?: number | null;
+  currentBalanceUsdt?: number | null;
+  currentBalanceUpdatedAtMs?: number | null;
 };
 
 type TickInput = {
@@ -77,6 +80,9 @@ export class DemoBroker {
   private demoTradesCount = 0;
   private demoRealizedPnlUsdt = 0;
   private demoFeesUsdt = 0;
+  private currentBalanceUsdt: number | null = null;
+  private currentBalanceUpdatedAtMs: number | null = null;
+  private balancePollTimer: NodeJS.Timeout | null = null;
   public sessionStartBalanceUsdt: number | null = null;
   public sessionEndBalanceUsdt: number | null = null;
 
@@ -139,6 +145,7 @@ export class DemoBroker {
         void this.pollExecutions();
       }, 5000);
     }
+    this.startBalancePolling();
   }
 
   stop() {
@@ -150,6 +157,7 @@ export class DemoBroker {
       clearInterval(this.executionsTimer);
       this.executionsTimer = null;
     }
+    this.stopBalancePolling();
   }
 
   getStats(): DemoStats {
@@ -171,7 +179,38 @@ export class DemoBroker {
       realizedPnlUsdt: this.demoRealizedPnlUsdt,
       feesUsdt: this.demoFeesUsdt,
       lastExecTimeMs: this.lastExecTimeMs,
+      currentBalanceUsdt: this.currentBalanceUsdt,
+      currentBalanceUpdatedAtMs: this.currentBalanceUpdatedAtMs,
     };
+  }
+
+  getCurrentBalance(): { currentBalanceUsdt: number | null; currentBalanceUpdatedAtMs: number | null } {
+    return {
+      currentBalanceUsdt: this.currentBalanceUsdt,
+      currentBalanceUpdatedAtMs: this.currentBalanceUpdatedAtMs,
+    };
+  }
+
+  private startBalancePolling() {
+    if (this.balancePollTimer) return;
+    const poll = async () => {
+      try {
+        const balance = await this.getWalletUsdtBalance();
+        this.currentBalanceUsdt = balance;
+        this.currentBalanceUpdatedAtMs = Date.now();
+      } catch {
+      }
+    };
+    void poll();
+    this.balancePollTimer = setInterval(() => {
+      void poll();
+    }, 60_000);
+  }
+
+  private stopBalancePolling() {
+    if (!this.balancePollTimer) return;
+    clearInterval(this.balancePollTimer);
+    this.balancePollTimer = null;
   }
 
   private parseNumber(value: unknown): number {

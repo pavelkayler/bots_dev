@@ -86,6 +86,9 @@ export type BotStats = {
     realizedPnlUsdt: number;
     feesUsdt: number;
     lastExecTimeMs: number | null;
+    startBalanceUsdt?: number | null;
+    currentBalanceUsdt?: number | null;
+    currentBalanceUpdatedAtMs?: number | null;
   };
 };
 

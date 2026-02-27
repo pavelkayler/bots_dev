@@ -15,7 +15,12 @@ function pct(v: number): string {
 function timeAgo(tsMs: number): string {
   if (!Number.isFinite(tsMs) || tsMs <= 0) return "-";
   const deltaSec = Math.max(0, Math.floor((Date.now() - tsMs) / 1000));
+  if (deltaSec >= 60) return `${Math.floor(deltaSec / 60)}m ago`;
   return `${deltaSec}s ago`;
+}
+
+function fmtUsdt(value: number | null | undefined): string {
+  return value == null ? "-" : `${value.toFixed(2)} USDT`;
 }
 
 export function BotSummaryBar({ sessionState, botStats, uptimeText }: Props) {
@@ -51,6 +56,18 @@ export function BotSummaryBar({ sessionState, botStats, uptimeText }: Props) {
               <div>
                 <div style={{ opacity: 0.75, fontSize: 12 }}>Last reconcile</div>
                 <div>{timeAgo(botStats.demoStats?.lastReconcileAtMs ?? 0)}</div>
+              </div>
+              <div>
+                <div style={{ opacity: 0.75, fontSize: 12 }}>Start balance</div>
+                <div>{fmtUsdt(botStats.demoStats?.startBalanceUsdt)}</div>
+              </div>
+              <div>
+                <div style={{ opacity: 0.75, fontSize: 12 }}>Current balance</div>
+                <div>{fmtUsdt(botStats.demoStats?.currentBalanceUsdt)}</div>
+              </div>
+              <div>
+                <div style={{ opacity: 0.75, fontSize: 12 }}>Balance updated</div>
+                <div>{timeAgo(botStats.demoStats?.currentBalanceUpdatedAtMs ?? 0)}</div>
               </div>
             </>
           ) : (

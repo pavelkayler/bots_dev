@@ -307,6 +307,7 @@ class Runtime extends EventEmitter {
   getBotStats(): RuntimeBotStats {
     if (this.demo) {
       const demoStats = this.demo.getStats();
+      const balanceSnapshot = this.demo.getCurrentBalance();
       return {
         openPositions: 0,
         pendingOrders: 0,
@@ -330,6 +331,9 @@ class Runtime extends EventEmitter {
           realizedPnlUsdt: demoStats.realizedPnlUsdt,
           feesUsdt: demoStats.feesUsdt,
           lastExecTimeMs: demoStats.lastExecTimeMs,
+          startBalanceUsdt: this.demo.sessionStartBalanceUsdt,
+          currentBalanceUsdt: balanceSnapshot.currentBalanceUsdt,
+          currentBalanceUpdatedAtMs: balanceSnapshot.currentBalanceUpdatedAtMs,
         },
       };
     }
