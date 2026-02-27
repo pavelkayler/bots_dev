@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { configStore } from "./configStore.js";
 import { EventLogger, type LogEvent } from "../logging/EventLogger.js";
 import { PaperBroker, type PaperStats, type PaperView } from "../paper/PaperBroker.js";
-import { DemoBroker } from "../demo/DemoBroker.js";
+import { DemoBroker, type DemoStats } from "../demo/DemoBroker.js";
 import {
   computePaperSummaryFromEvents,
   getSummaryFilePathFromEventsFile,
@@ -10,6 +10,11 @@ import {
 } from "../paper/summary.js";
 
 export type RuntimeSessionState = "STOPPED" | "RUNNING" | "STOPPING" | "PAUSING" | "PAUSED" | "RESUMING";
+
+export type RuntimeBotStats = PaperStats & {
+  executionMode: "paper" | "demo";
+  demoStats?: Omit<DemoStats, "mode">;
+};
 
 type Status = {
   sessionState: RuntimeSessionState;
@@ -257,9 +262,28 @@ class Runtime extends EventEmitter {
   }
 
 
-  getBotStats(): PaperStats {
-    if (this.demo) return this.demo.getStats();
-    if (this.paper) return this.paper.getStats();
+  getBotStats(): RuntimeBotStats {
+    if (this.demo) {
+      const demoStats = this.demo.getStats();
+      return {
+        openPositions: 0,
+        pendingOrders: 0,
+        closedTrades: 0,
+        wins: 0,
+        losses: 0,
+        netRealized: 0,
+        feesPaid: 0,
+        fundingAccrued: 0,
+        executionMode: "demo",
+        demoStats: {
+          openPositions: demoStats.openPositions,
+          openOrders: demoStats.openOrders,
+          pendingEntries: demoStats.pendingEntries,
+          lastReconcileAtMs: demoStats.lastReconcileAtMs,
+        },
+      };
+    }
+    if (this.paper) return { ...this.paper.getStats(), executionMode: "paper" };
     return {
       openPositions: 0,
       pendingOrders: 0,
@@ -268,7 +292,8 @@ class Runtime extends EventEmitter {
       losses: 0,
       netRealized: 0,
       feesPaid: 0,
-      fundingAccrued: 0
+      fundingAccrued: 0,
+      executionMode: "paper",
     };
   }
 

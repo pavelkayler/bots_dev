@@ -26,6 +26,7 @@ const EMPTY_BOT_STATS: BotStats = {
   netRealized: 0,
   feesPaid: 0,
   fundingAccrued: 0,
+  executionMode: "paper",
 };
 
 type WsFeedState = {
