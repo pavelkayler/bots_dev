@@ -1,0 +1,195 @@
+{
+  "summary": {
+    "generatedAt": 1771954331848,
+    "sessionId": "2026-02-24T17-27-41-913Z",
+    "startTs": 1771954061913,
+    "endTs": 1771954331847,
+    "durationSec": 269.934,
+    "trades": {
+      "total": 7,
+      "wins": 3,
+      "losses": 4,
+      "winRate": 0.428571,
+      "avgWin": 2.61475058,
+      "avgLoss": -3.132594,
+      "expectancy": -0.66944632,
+      "avgHoldSec": 88.42
+    },
+    "pnl": {
+      "netRealized": -4.68612424,
+      "grossFromMove": -1.88212939,
+      "funding": 0,
+      "fees": 2.80399485
+    },
+    "equity": {
+      "maxDrawdown": 12.53037599,
+      "peak": 4.599,
+      "trough": -7.93137599
+    },
+    "perSymbol": [
+      {
+        "symbol": "AZTECUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -5.40099999999991
+      },
+      {
+        "symbol": "PIPPINUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 4.5989999999999105
+      },
+      {
+        "symbol": "PROMPTUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -3.421818286398846
+      },
+      {
+        "symbol": "TRIAUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 3.0372685278796165
+      },
+      {
+        "symbol": "DEXEUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -2.302077663655208
+      },
+      {
+        "symbol": "FOGOUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -1.4054800415315096
+      },
+      {
+        "symbol": "WHITEWHALEUSDT",
+        "trades": 1,
+        "wins": 1,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 0.20798321999859154
+      }
+    ]
+  },
+  "trades": [
+    {
+      "symbol": "PIPPINUSDT",
+      "side": "LONG",
+      "openedAt": 1771954069162,
+      "closedAt": 1771954207671,
+      "entryPrice": 0.779802012,
+      "closePrice": 0.7837010220599999,
+      "qty": 1282.376788738011,
+      "closeType": "TP",
+      "pnlFromMove": 4.99999999999991,
+      "fundingAccrued": 0,
+      "feesPaid": 0.401,
+      "realizedPnl": 4.5989999999999105,
+      "holdMs": 138509
+    },
+    {
+      "symbol": "AZTECUSDT",
+      "side": "SHORT",
+      "openedAt": 1771954262851,
+      "closedAt": 1771954317009,
+      "entryPrice": 0.0256995697,
+      "closePrice": 0.0258280675485,
+      "qty": 38911.15733350197,
+      "closeType": "SL",
+      "pnlFromMove": -4.99999999999991,
+      "fundingAccrued": 0,
+      "feesPaid": 0.401,
+      "realizedPnl": -5.40099999999991,
+      "holdMs": 54158
+    },
+    {
+      "symbol": "DEXEUSDT",
+      "side": "SHORT",
+      "openedAt": 1771954201660,
+      "closedAt": 1771954331845,
+      "entryPrice": 3.49704967,
+      "closePrice": 3.5037,
+      "qty": 285.95533217004606,
+      "closeType": "FORCE",
+      "pnlFromMove": -1.9016973241903696,
+      "fundingAccrued": 0,
+      "feesPaid": 0.4003803394648381,
+      "realizedPnl": -2.302077663655208,
+      "holdMs": 130185
+    },
+    {
+      "symbol": "FOGOUSDT",
+      "side": "SHORT",
+      "openedAt": 1771954305994,
+      "closedAt": 1771954331845,
+      "entryPrice": 0.027142714000000002,
+      "closePrice": 0.02717,
+      "qty": 36842.29955781135,
+      "closeType": "FORCE",
+      "pnlFromMove": -1.005278985734363,
+      "fundingAccrued": 0,
+      "feesPaid": 0.4002010557971469,
+      "realizedPnl": -1.4054800415315096,
+      "holdMs": 25851
+    },
+    {
+      "symbol": "PROMPTUSDT",
+      "side": "SHORT",
+      "openedAt": 1771954128370,
+      "closedAt": 1771954331845,
+      "entryPrice": 0.044854485,
+      "closePrice": 0.04499,
+      "qty": 22294.31460421405,
+      "closeType": "FORCE",
+      "pnlFromMove": -3.0212140435901276,
+      "fundingAccrued": 0,
+      "feesPaid": 0.4006042428087181,
+      "realizedPnl": -3.421818286398846,
+      "holdMs": 203475
+    },
+    {
+      "symbol": "TRIAUSDT",
+      "side": "LONG",
+      "openedAt": 1771954315007,
+      "closedAt": 1771954331845,
+      "entryPrice": 0.0194730525,
+      "closePrice": 0.01954,
+      "qty": 51353.017201591785,
+      "closeType": "FORCE",
+      "pnlFromMove": 3.4379561191034376,
+      "fundingAccrued": 0,
+      "feesPaid": 0.4006875912238207,
+      "realizedPnl": 3.0372685278796165,
+      "holdMs": 16838
+    },
+    {
+      "symbol": "WHITEWHALEUSDT",
+      "side": "LONG",
+      "openedAt": 1771954281935,
+      "closedAt": 1771954331845,
+      "entryPrice": 0.059044095,
+      "closePrice": 0.05908,
+      "qty": 16936.494665554615,
+      "closeType": "FORCE",
+      "pnlFromMove": 0.6081048409667849,
+      "fundingAccrued": 0,
+      "feesPaid": 0.40012162096819337,
+      "realizedPnl": 0.20798321999859154,
+      "holdMs": 49910
+    }
+  ]
+}

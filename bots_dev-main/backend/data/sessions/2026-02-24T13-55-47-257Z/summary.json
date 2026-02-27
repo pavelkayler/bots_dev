@@ -1,0 +1,95 @@
+{
+  "summary": {
+    "generatedAt": 1771941675056,
+    "sessionId": "2026-02-24T13-55-47-257Z",
+    "startTs": 1771941347257,
+    "endTs": 1771941652470,
+    "durationSec": 305.213,
+    "trades": {
+      "total": 3,
+      "wins": 2,
+      "losses": 1,
+      "winRate": 0.666667,
+      "avgWin": 0.6002,
+      "avgLoss": -1.3998,
+      "expectancy": -0.06646667,
+      "avgHoldSec": 138.19
+    },
+    "pnl": {
+      "netRealized": -0.1994,
+      "grossFromMove": 1,
+      "funding": 0,
+      "fees": 1.1994
+    },
+    "equity": {
+      "maxDrawdown": 1.3998,
+      "peak": 0.6002,
+      "trough": -0.7996
+    },
+    "perSymbol": [
+      {
+        "symbol": "BTCUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -1.3997999999999833
+      },
+      {
+        "symbol": "ETHUSDT",
+        "trades": 2,
+        "wins": 2,
+        "losses": 0,
+        "winRate": 1,
+        "netRealized": 1.2004000000000308
+      }
+    ]
+  },
+  "trades": [
+    {
+      "symbol": "ETHUSDT",
+      "side": "SHORT",
+      "openedAt": 1771941433074,
+      "closedAt": 1771941535728,
+      "entryPrice": 1817.441726,
+      "closePrice": 1815.624284274,
+      "qty": 0.5502239690517593,
+      "closeType": "TP",
+      "pnlFromMove": 0.9999999999999835,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39980000000000004,
+      "realizedPnl": 0.6001999999999834,
+      "holdMs": 102654
+    },
+    {
+      "symbol": "BTCUSDT",
+      "side": "LONG",
+      "openedAt": 1771941357638,
+      "closedAt": 1771941574948,
+      "entryPrice": 62953.50402,
+      "closePrice": 62890.55051598,
+      "qty": 0.015884739309861215,
+      "closeType": "SL",
+      "pnlFromMove": -0.9999999999999832,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39980000000000004,
+      "realizedPnl": -1.3997999999999833,
+      "holdMs": 217310
+    },
+    {
+      "symbol": "ETHUSDT",
+      "side": "SHORT",
+      "openedAt": 1771941537744,
+      "closedAt": 1771941632338,
+      "entryPrice": 1815.441526,
+      "closePrice": 1813.626084474,
+      "qty": 0.55083018961416,
+      "closeType": "TP",
+      "pnlFromMove": 1.0000000000000473,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3998,
+      "realizedPnl": 0.6002000000000474,
+      "holdMs": 94594
+    }
+  ]
+}

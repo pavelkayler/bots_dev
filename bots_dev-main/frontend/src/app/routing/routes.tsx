@@ -1,0 +1,19 @@
+import { createBrowserRouter, Navigate } from "react-router-dom";
+import { DashboardPage } from "../../pages/dashboard/DashboardPage";
+import { UniversePage } from "../../pages/universe/UniversePage";
+import { OptimizerPage } from "../../pages/optimizer/OptimizerPage";
+
+export const router = createBrowserRouter(
+  [
+    { path: "/", element: <DashboardPage /> },
+    { path: "/universe", element: <UniversePage /> },
+    { path: "/optimizer", element: <OptimizerPage /> },
+    { path: "*", element: <Navigate to="/" replace /> }
+  ],
+  {
+    future: {
+      v7_startTransition: true,
+      v7_relativeSplatPath: true
+    }
+  }
+);

@@ -368,6 +368,9 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   let addedSinceFlush = 0;
   let cancelled = false;
   let lastPctLocal = 0;
+  // Yielding is required so worker-thread progress messages can be delivered and
+  // observed by the UI during fast runs (otherwise the event loop may not get a turn).
+  let lastYieldMs = Date.now();
 
   const decisionsNoRefsGlobal = { value: 0 };
   const decisionsOkGlobal = { value: 0 };
@@ -651,8 +654,13 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     hooks?.onProgress?.(done, args.candidates, results);
     hooks?.onCheckpoint?.({ done, total: args.candidates, donePercent: pct, partialResults: results });
     hooks?.onBlacklistUpdate?.({ count: blacklistState?.negativeSet.size ?? 0, skipped: skippedBlacklisted });
-    if (pct > lastPctLocal) {
-      lastPctLocal = pct;
+
+    // Yield frequently enough to allow progress updates to reach the parent thread.
+    // We do NOT intentionally slow down; setImmediate yields without sleeping.
+    const now = Date.now();
+    if (pct > lastPctLocal) lastPctLocal = pct;
+    if (now - lastYieldMs >= 15 || pct === 100) {
+      lastYieldMs = now;
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
   }

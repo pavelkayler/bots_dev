@@ -1,0 +1,16 @@
+{
+  "jobId": "6304c029-ad7d-4fce-8de9-d8c88a6ea55d",
+  "createdAt": 1772173216992,
+  "updatedAt": 1772173216992,
+  "status": "running",
+  "donePercent": 0,
+  "processedCandidates": 0,
+  "totalCandidates": 200,
+  "topKResults": [],
+  "minTrades": 1,
+  "startedAtMs": 1772173216992,
+  "excludeNegative": true,
+  "rememberNegatives": true,
+  "runKey": "tapes=tape-2026-02-25T12-14-40-332Z,tape-2026-02-25T13-39-14-502Z,tape-2026-02-25T13-46-38-162Z|dir=both|tf=0",
+  "finishedAtMs": null
+}

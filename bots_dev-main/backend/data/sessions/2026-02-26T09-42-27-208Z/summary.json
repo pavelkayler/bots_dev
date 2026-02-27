@@ -1,0 +1,126 @@
+{
+  "summary": {
+    "generatedAt": 1772098976951,
+    "sessionId": "2026-02-26T09-42-27-208Z",
+    "startTs": 1772098947209,
+    "endTs": 1772098976948,
+    "durationSec": 29.739,
+    "trades": {
+      "total": 4,
+      "wins": 0,
+      "losses": 4,
+      "winRate": 0,
+      "avgWin": null,
+      "avgLoss": -1.73708342,
+      "expectancy": null,
+      "avgHoldSec": 11.11
+    },
+    "pnl": {
+      "netRealized": -6.94833369,
+      "grossFromMove": -5.34940357,
+      "funding": 0,
+      "fees": 1.59893012
+    },
+    "equity": {
+      "maxDrawdown": 6.94833369,
+      "peak": 0,
+      "trough": -6.94833369
+    },
+    "perSymbol": [
+      {
+        "symbol": "SKRUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -4.242921600726387
+      },
+      {
+        "symbol": "ENAUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -1.3178606681873883
+      },
+      {
+        "symbol": "BELUSDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -0.7940879859440511
+      },
+      {
+        "symbol": "C98USDT",
+        "trades": 1,
+        "wins": 0,
+        "losses": 1,
+        "winRate": 0,
+        "netRealized": -0.5934634380940138
+      }
+    ]
+  },
+  "trades": [
+    {
+      "symbol": "SKRUSDT",
+      "side": "LONG",
+      "openedAt": 1772098960265,
+      "closedAt": 1772098976945,
+      "entryPrice": 0.022056779430000003,
+      "closePrice": 0.021972,
+      "qty": 45337.53457405816,
+      "closeType": "FORCE",
+      "pnlFromMove": -3.8436903387941457,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39923126193224123,
+      "realizedPnl": -4.242921600726387,
+      "holdMs": 16680
+    },
+    {
+      "symbol": "ENAUSDT",
+      "side": "LONG",
+      "openedAt": 1772098965276,
+      "closedAt": 1772098976945,
+      "entryPrice": 0.1185288147,
+      "closePrice": 0.11842,
+      "qty": 8436.76706403443,
+      "closeType": "FORCE",
+      "pnlFromMove": -0.918044277042797,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39981639114459144,
+      "realizedPnl": -1.3178606681873883,
+      "holdMs": 11669
+    },
+    {
+      "symbol": "C98USDT",
+      "side": "LONG",
+      "openedAt": 1772098965276,
+      "closedAt": 1772098976945,
+      "entryPrice": 0.024569754300000003,
+      "closePrice": 0.024565,
+      "qty": 40700.44770451774,
+      "closeType": "FORCE",
+      "pnlFromMove": -0.19350213852171816,
+      "fundingAccrued": 0,
+      "feesPaid": 0.39996129957229565,
+      "realizedPnl": -0.5934634380940138,
+      "holdMs": 11669
+    },
+    {
+      "symbol": "BELUSDT",
+      "side": "LONG",
+      "openedAt": 1772098972537,
+      "closedAt": 1772098976945,
+      "entryPrice": 0.09896901030000001,
+      "closePrice": 0.09893,
+      "qty": 10104.172982722046,
+      "closeType": "FORCE",
+      "pnlFromMove": -0.39416681930791264,
+      "fundingAccrued": 0,
+      "feesPaid": 0.3999211666361384,
+      "realizedPnl": -0.7940879859440511,
+      "holdMs": 4408
+    }
+  ]
+}
