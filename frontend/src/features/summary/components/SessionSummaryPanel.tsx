@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Card, Spinner } from "react-bootstrap";
 import type { DemoSummaryResponse, SessionState } from "../../../shared/types/domain";
 import { getSummaryDownloadUrl } from "../api/summaryApi";
@@ -20,10 +20,12 @@ function renderBalance(value: number | null | undefined) {
 }
 
 export function SessionSummaryPanel({ sessionState, sessionId, executionMode, suppressStopRefresh }: Props) {
-  const { data, loading, error, lastUpdatedAt, refresh } = useSessionSummary(sessionState, sessionId, suppressStopRefresh);
+  const { data, loading, error, lastUpdatedAt, refresh } = useSessionSummary(sessionState, sessionId, true);
   const [demoSummary, setDemoSummary] = useState<DemoSummaryResponse | null>(null);
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoError, setDemoError] = useState<string | null>(null);
+  const lastAutoFetchedDemoSessionId = useRef<string | null>(null);
+  const lastAutoFetchedPaperSessionId = useRef<string | null>(null);
 
   const refreshDemo = useCallback(async () => {
     if (!sessionId) return;
@@ -40,7 +42,7 @@ export function SessionSummaryPanel({ sessionState, sessionId, executionMode, su
   }, [sessionId]);
 
   useEffect(() => {
-    if (sessionState === "RUNNING" && sessionId && executionMode === "demo") {
+    if ((sessionState === "RUNNING" || sessionState === "STOPPING") && sessionId && executionMode === "demo") {
       setDemoSummary(null);
       setDemoError(null);
       setDemoLoading(false);
@@ -48,11 +50,29 @@ export function SessionSummaryPanel({ sessionState, sessionId, executionMode, su
   }, [sessionState, sessionId, executionMode]);
 
   useEffect(() => {
-    if (!sessionId || executionMode !== "demo") return;
-    if (sessionState !== "RUNNING" && !suppressStopRefresh) {
-      void refreshDemo();
+    if (sessionState === "RUNNING" || sessionState === "STOPPING") {
+      if (executionMode === "demo") {
+        lastAutoFetchedDemoSessionId.current = null;
+      }
+      if (executionMode === "paper") {
+        lastAutoFetchedPaperSessionId.current = null;
+      }
+      return;
     }
-  }, [sessionState, sessionId, suppressStopRefresh, executionMode, refreshDemo]);
+
+    if (!sessionId || suppressStopRefresh || sessionState !== "STOPPED") return;
+
+    if (executionMode === "demo" && lastAutoFetchedDemoSessionId.current !== sessionId) {
+      lastAutoFetchedDemoSessionId.current = sessionId;
+      void refreshDemo();
+      return;
+    }
+
+    if (executionMode === "paper" && lastAutoFetchedPaperSessionId.current !== sessionId) {
+      lastAutoFetchedPaperSessionId.current = sessionId;
+      void refresh();
+    }
+  }, [sessionState, sessionId, suppressStopRefresh, executionMode, refreshDemo, refresh]);
 
   const downloadUrl = executionMode === "demo" ? getDemoSummaryDownloadUrl() : getSummaryDownloadUrl();
 
