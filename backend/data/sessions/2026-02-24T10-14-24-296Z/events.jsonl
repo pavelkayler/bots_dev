@@ -1,5 +1,0 @@
-{"ts":1771928064297,"type":"SESSION_START","payload":{"sessionId":"2026-02-24T10-14-24-296Z"}}
-{"ts":1771928064298,"type":"SESSION_STATE","payload":{"state":"RUNNING","sessionId":"2026-02-24T10-14-24-296Z"}}
-{"ts":1771928069773,"type":"SESSION_STATE","payload":{"state":"STOPPING","sessionId":"2026-02-24T10-14-24-296Z"}}
-{"ts":1771928069774,"type":"SESSION_STOP","payload":{"symbols":["BTCUSDT","ETHUSDT","SOLUSDT"]}}
-{"ts":1771928069775,"type":"SESSION_STATE","payload":{"state":"STOPPED","sessionId":"2026-02-24T10-14-24-296Z"}}
