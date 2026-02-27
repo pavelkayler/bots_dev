@@ -490,7 +490,8 @@ export function OptimizerPage() {
         if (statusRes.status === "running" || statusRes.status === "paused") {
           lastTableSourceRef.current = "single";
           setSingleJobId(current.jobId);
-          setDone(statusRes.done);
+          const donePct = typeof (statusRes as any).donePct === "number" ? (statusRes as any).donePct : statusRes.done;
+          setDone(donePct);
           setTotal(statusRes.total);
         } else {
           clearSingleJobState();
@@ -878,7 +879,8 @@ export function OptimizerPage() {
         const res = await getJobStatus(reqJobId);
         if (loopActive || singleJobId !== reqJobId) return;
         if (!alive) return;
-        setDone((prev) => (prev === res.done ? prev : res.done));
+        const donePct = typeof (res as any).donePct === "number" ? (res as any).donePct : res.done;
+        setDone((prev) => (prev === donePct ? prev : donePct));
         setTotal((prev) => (prev === res.total ? prev : res.total));
         setJobStartedAtMs((prev) => {
           const next = res.startedAtMs ?? null;
@@ -943,7 +945,8 @@ export function OptimizerPage() {
         if (!alive) return;
         if (loopPollTokenRef.current !== token) return;
         if (loopJobIdRef.current !== reqJobId) return;
-        setDone((prev) => (prev === res.done ? prev : res.done));
+        const donePct = typeof (res as any).donePct === "number" ? (res as any).donePct : res.done;
+        setDone((prev) => (prev === donePct ? prev : donePct));
         setTotal((prev) => (prev === res.total ? prev : res.total));
         setJobStartedAtMs((prev) => {
           const next = res.startedAtMs ?? null;
@@ -1509,7 +1512,7 @@ export function OptimizerPage() {
                 Page <b>{jobHistoryCurrentPage}</b> of <b>{jobHistoryTotalPages}</b> · Total <b>{jobHistoryTotal}</b>
               </div>
             </div>
-            <Table striped bordered hover size="sm">
+            <Table striped bordered hover size="sm" style={{ tableLayout: "auto", width: "auto" }}>
               <thead>
                 <tr>
                   <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("jobId")}>runId</th>
@@ -1542,7 +1545,7 @@ export function OptimizerPage() {
                     <Fragment key={row.jobId}>
                       <tr>
                         <td>{row.jobId.slice(-8)}</td>
-                        <td>{new Date(row.endedAtMs).toLocaleString()}</td>
+                        <td style={{ padding: "4px 8px" }}><span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{new Date(row.endedAtMs).toLocaleString()}</span></td>
                         <td>{row.status.toUpperCase()}</td>
                         <td>{row.mode ?? "-"}</td>
                         <td title={row.runPayload.tapeIds.join(",")}>{row.runPayload.tapeIds.length}</td>

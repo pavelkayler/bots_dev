@@ -943,7 +943,7 @@ const now = Date.now();
     try {
       optimizerWorkerManager.start(jobId, runPayload, {
         onProgress: (msg) => {
-          const pct2 = Number(msg.donePercent) || 0;
+          const pct2 = Math.max(0, Math.min(100, Math.round((Number(msg.donePercent) || 0) * 100) / 100));
           job.lastPct = pct2;
           job.done = pct2;
           job.total = 100;
@@ -1197,6 +1197,7 @@ const now = Date.now();
       status: job.status,
       total: job.total,
       done: job.done,
+      donePct: job.done,
       startedAtMs: job.startedAtMs,
       updatedAtMs: job.updatedAtMs,
       finishedAtMs: job.finishedAtMs,
