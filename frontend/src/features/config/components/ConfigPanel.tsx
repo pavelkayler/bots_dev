@@ -225,6 +225,9 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
           dailyTriggerMax: Number(patch?.signals?.dailyTriggerMax ?? draft.signals.dailyTriggerMax),
           requireFundingSign: true,
         },
+        execution: {
+          mode: (patch?.execution?.mode === "demo" ? "demo" : patch?.execution?.mode === "paper" ? "paper" : draft.execution.mode),
+        },
         paper: {
           ...draft.paper,
           tpRoiPct: Number(patch?.paper?.tpRoiPct ?? draft.paper.tpRoiPct),
@@ -434,6 +437,14 @@ function buildConfigForApply(): RuntimeConfig {
 
               <Col md={4}>
                 <h6>Funding cooldown</h6>
+                <Form.Group className="mb-2">
+                  <Form.Label>Execution mode</Form.Label>
+                  <Form.Select value={draft.execution.mode} onChange={(e) => setDraft({ ...draft, execution: { mode: e.currentTarget.value as "paper" | "demo" } })}>
+                    <option value="paper">Paper</option>
+                    <option value="demo">Demo</option>
+                  </Form.Select>
+                </Form.Group>
+                <div className="mb-2">Demo keys are read from backend env. Demo requires Bybit Demo Trading API keys.</div>
                 <Form.Group className="mb-2"><Form.Label>beforeMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingBeforeMin} onChange={(e) => setNumericField("fundingBeforeMin", e.currentTarget.value)} /></Form.Group>
                 <Form.Group className="mb-2"><Form.Label>afterMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingAfterMin} onChange={(e) => setNumericField("fundingAfterMin", e.currentTarget.value)} /></Form.Group>
                 <hr />

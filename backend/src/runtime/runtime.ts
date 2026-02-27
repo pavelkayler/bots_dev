@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { configStore } from "./configStore.js";
 import { EventLogger, type LogEvent } from "../logging/EventLogger.js";
 import { PaperBroker, type PaperStats, type PaperView } from "../paper/PaperBroker.js";
+import { DemoBroker } from "../demo/DemoBroker.js";
 import {
   computePaperSummaryFromEvents,
   getSummaryFilePathFromEventsFile,
@@ -63,6 +64,7 @@ class Runtime extends EventEmitter {
 
   private logger: EventLogger | null = null;
   private paper: PaperBroker | null = null;
+  private demo: DemoBroker | null = null;
 
   private summaryFilePath: string | null = null;
 
@@ -122,7 +124,14 @@ class Runtime extends EventEmitter {
     });
 
     const cfg = configStore.get();
-    this.paper = new PaperBroker(cfg.paper, this.logger);
+    if (cfg.execution.mode === "demo") {
+      this.paper = null;
+      this.demo = new DemoBroker(cfg.paper, this.logger, this.getMarkPrice ?? undefined);
+      this.demo.start();
+    } else {
+      this.demo = null;
+      this.paper = new PaperBroker(cfg.paper, this.logger);
+    }
 
     this.sessionState = "RESUMING";
     this.logger?.log({
@@ -168,6 +177,10 @@ class Runtime extends EventEmitter {
         symbols: [],
         getMarkPrice: provider
       });
+    }
+    if (this.demo) {
+      this.demo.stop();
+      this.demo = null;
     }
 
     this.sessionState = "STOPPED";
@@ -216,6 +229,8 @@ class Runtime extends EventEmitter {
       payload: { state: this.sessionState, sessionId: this.sessionId }
     });
 
+    if (this.demo) this.demo.stop();
+
     const status = this.getStatus();
     this.emit("state", status);
     return status;
@@ -229,6 +244,7 @@ class Runtime extends EventEmitter {
     }
 
     this.sessionState = "RUNNING";
+    if (this.demo) this.demo.start();
     this.logger?.log({
       ts: Date.now(),
       type: "SESSION_STATE",
@@ -242,19 +258,18 @@ class Runtime extends EventEmitter {
 
 
   getBotStats(): PaperStats {
-    if (!this.paper) {
-      return {
-        openPositions: 0,
-        pendingOrders: 0,
-        closedTrades: 0,
-        wins: 0,
-        losses: 0,
-        netRealized: 0,
-        feesPaid: 0,
-        fundingAccrued: 0
-      };
-    }
-    return this.paper.getStats();
+    if (this.demo) return this.demo.getStats();
+    if (this.paper) return this.paper.getStats();
+    return {
+      openPositions: 0,
+      pendingOrders: 0,
+      closedTrades: 0,
+      wins: 0,
+      losses: 0,
+      netRealized: 0,
+      feesPaid: 0,
+      fundingAccrued: 0
+    };
   }
 
   getPaperView(symbol: string, markPrice: number | null): PaperView {
@@ -284,7 +299,14 @@ class Runtime extends EventEmitter {
     signalReason: string;
     cooldownActive: boolean;
   }) {
-    if (!this.paper || !this.isRunning()) return;
+    if (!this.isRunning()) return;
+    const mode = configStore.get().execution.mode;
+    if (mode === "demo") {
+      if (!this.demo) return;
+      void this.demo.tick(args);
+      return;
+    }
+    if (!this.paper) return;
     this.paper.tick(args);
   }
 

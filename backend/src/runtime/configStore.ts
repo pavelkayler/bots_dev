@@ -71,11 +71,18 @@ const paperSchema = z
   })
   .strict();
 
+const executionSchema = z
+  .object({
+    mode: z.enum(["paper", "demo"]),
+  })
+  .strict();
+
 const runtimeConfigSchema = z
   .object({
     universe: universeSchema,
     fundingCooldown: fundingCooldownSchema,
     signals: signalsSchema,
+    execution: executionSchema,
     paper: paperSchema,
   })
   .strict();
@@ -85,6 +92,7 @@ const patchSchema = z
     universe: universeSchema.partial().optional(),
     fundingCooldown: fundingCooldownSchema.partial().optional(),
     signals: signalsPatchSchema.optional(),
+    execution: executionSchema.partial().optional(),
     paper: paperSchema.partial().optional(),
   })
   .strict();
@@ -133,6 +141,12 @@ function migrateLoaded(raw: any): any {
     if (raw.universe.klineTfMin == null) raw.universe.klineTfMin = CONFIG.klineTfMin;
   }
 
+
+  if (!raw.execution || typeof raw.execution !== "object") {
+    raw.execution = { mode: "paper" };
+  } else {
+    if (raw.execution.mode == null) raw.execution.mode = "paper";
+  }
 
   if (!raw.paper || typeof raw.paper !== "object") {
     raw.paper = { ...CONFIG.paper };
@@ -241,6 +255,9 @@ class ConfigStore extends EventEmitter {
         dailyTriggerMin: p.signals?.dailyTriggerMin ?? this.cfg.signals.dailyTriggerMin,
         dailyTriggerMax: p.signals?.dailyTriggerMax ?? this.cfg.signals.dailyTriggerMax,
       },
+      execution: {
+        mode: p.execution?.mode ?? this.cfg.execution.mode,
+      },
       paper: {
         enabled: p.paper?.enabled ?? this.cfg.paper.enabled,
         directionMode: p.paper?.directionMode ?? this.cfg.paper.directionMode,
@@ -276,6 +293,7 @@ const defaults: RuntimeConfig = runtimeConfigSchema.parse({
   universe: { selectedId: "", symbols: Array.from(CONFIG.symbols), klineTfMin: CONFIG.klineTfMin },
   fundingCooldown: CONFIG.fundingCooldown,
   signals: CONFIG.signals,
+  execution: { mode: "paper" },
   paper: CONFIG.paper,
 });
 
