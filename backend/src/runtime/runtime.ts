@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import path from "node:path";
 import { configStore } from "./configStore.js";
 import { EventLogger, type LogEvent } from "../logging/EventLogger.js";
 import { PaperBroker, type PaperStats, type PaperView } from "../paper/PaperBroker.js";
@@ -12,7 +14,7 @@ import {
 export type RuntimeSessionState = "STOPPED" | "RUNNING" | "STOPPING" | "PAUSING" | "PAUSED" | "RESUMING";
 
 export type RuntimeBotStats = PaperStats & {
-  executionMode: "paper" | "demo";
+  executionMode: "paper" | "demo" | "empty";
   demoStats?: Omit<DemoStats, "mode">;
 };
 
@@ -72,6 +74,7 @@ class Runtime extends EventEmitter {
   private demo: DemoBroker | null = null;
 
   private summaryFilePath: string | null = null;
+  private demoStartedAtMs: number | null = null;
 
   private getMarkPrice: ((symbol: string) => number | null) | null = null;
   private closedTrades: ClosedTrade[] = [];
@@ -93,13 +96,14 @@ class Runtime extends EventEmitter {
     return this.sessionState === "RUNNING";
   }
 
-  start(): Status {
+  async start(): Promise<Status> {
     if (this.sessionState !== "STOPPED") {
-      this.stop();
+      await this.stop();
     }
 
     this.sessionId = newSessionId();
     this.summaryFilePath = null;
+    this.demoStartedAtMs = null;
 
     this.closedTrades = [];
 
@@ -133,6 +137,9 @@ class Runtime extends EventEmitter {
       this.paper = null;
       this.demo = new DemoBroker(cfg.paper, this.logger, this.getMarkPrice ?? undefined);
       this.demo.start();
+    } else if (cfg.execution.mode === "empty") {
+      this.paper = null;
+      this.demo = null;
     } else {
       this.demo = null;
       this.paper = new PaperBroker(cfg.paper, this.logger);
@@ -147,6 +154,10 @@ class Runtime extends EventEmitter {
     this.emit("state", this.getStatus());
 
     this.sessionState = "RUNNING";
+    if (cfg.execution.mode === "demo" && this.demo) {
+      this.demoStartedAtMs = Date.now();
+      this.demo.sessionStartBalanceUsdt = await this.demo.getWalletUsdtBalance();
+    }
 
     this.logger.log({
       ts: Date.now(),
@@ -159,7 +170,7 @@ class Runtime extends EventEmitter {
     return status;
   }
 
-  stop(): Status {
+  async stop(): Promise<Status> {
     if (this.sessionState === "STOPPED") {
       const status = this.getStatus();
       this.emit("state", status);
@@ -184,9 +195,36 @@ class Runtime extends EventEmitter {
       });
     }
     if (this.demo) {
+      const demoEndedAtMs = Date.now();
+      this.demo.sessionEndBalanceUsdt = await this.demo.getWalletUsdtBalance();
+      const stats = this.demo.getStats();
+      const startBalanceUsdt = this.demo.sessionStartBalanceUsdt;
+      const endBalanceUsdt = this.demo.sessionEndBalanceUsdt;
+      const deltaUsdt = startBalanceUsdt != null && endBalanceUsdt != null ? endBalanceUsdt - startBalanceUsdt : null;
+      const demoSummary = {
+        sessionId: this.sessionId,
+        executionMode: "demo" as const,
+        startedAtMs: this.demoStartedAtMs,
+        endedAtMs: demoEndedAtMs,
+        startBalanceUsdt,
+        endBalanceUsdt,
+        deltaUsdt,
+        openPositionsAtEnd: stats.openPositions,
+        openOrdersAtEnd: stats.openOrders,
+        pendingEntriesAtEnd: stats.pendingEntries,
+      };
+      const sessionDir = this.logger?.filePath ? path.dirname(this.logger.filePath) : null;
+      if (sessionDir) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const outPath = path.join(sessionDir, "demo_summary.json");
+        const tempPath = `${outPath}.tmp`;
+        fs.writeFileSync(tempPath, JSON.stringify(demoSummary, null, 2), "utf8");
+        fs.renameSync(tempPath, outPath);
+      }
       this.demo.stop();
       this.demo = null;
     }
+    this.demoStartedAtMs = null;
 
     this.sessionState = "STOPPED";
     this.logger?.log({
@@ -284,6 +322,7 @@ class Runtime extends EventEmitter {
       };
     }
     if (this.paper) return { ...this.paper.getStats(), executionMode: "paper" };
+    const mode = configStore.get().execution.mode;
     return {
       openPositions: 0,
       pendingOrders: 0,
@@ -293,7 +332,7 @@ class Runtime extends EventEmitter {
       netRealized: 0,
       feesPaid: 0,
       fundingAccrued: 0,
-      executionMode: "paper",
+      executionMode: mode,
     };
   }
 
@@ -326,6 +365,7 @@ class Runtime extends EventEmitter {
   }) {
     if (!this.isRunning()) return;
     const mode = configStore.get().execution.mode;
+    if (mode === "empty") return;
     if (mode === "demo") {
       if (!this.demo) return;
       void this.demo.tick(args);

@@ -1,6 +1,6 @@
 import { getApiBase } from "../../../shared/config/env";
 import { getJson, postJson } from "../../../shared/api/http";
-import type { StatusResponse } from "../../../shared/types/domain";
+import type { DemoSummaryResponse, StatusResponse } from "../../../shared/types/domain";
 
 export async function fetchStatus(): Promise<StatusResponse> {
   const api = getApiBase();
@@ -45,4 +45,20 @@ export function getRunPackConfigUrl(): string {
 export function getRunPackUniverseUrl(): string {
   const api = getApiBase();
   return `${api}/api/session/run-pack/universe/download`;
+}
+
+export async function fetchDemoSummary(): Promise<DemoSummaryResponse | null> {
+  const api = getApiBase();
+  const res = await fetch(`${api}/api/session/demo-summary`, { method: "GET" });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`demo_summary_http_${res.status}${text ? `: ${text}` : ""}`);
+  }
+  return (await res.json()) as DemoSummaryResponse;
+}
+
+export function getDemoSummaryDownloadUrl(): string {
+  const api = getApiBase();
+  return `${api}/api/session/demo-summary/download`;
 }

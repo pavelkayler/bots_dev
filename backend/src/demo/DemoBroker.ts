@@ -59,6 +59,8 @@ export class DemoBroker {
   private lastReconcileAtMs = 0;
   private openOrdersCount = 0;
   private openPositionsCount = 0;
+  public sessionStartBalanceUsdt: number | null = null;
+  public sessionEndBalanceUsdt: number | null = null;
 
   constructor(cfg: PaperBrokerConfig, logger: EventLogger, private readonly getMarkPrice?: (symbol: string) => number | null) {
     this.cfg = cfg;
@@ -135,6 +137,27 @@ export class DemoBroker {
       pendingEntries,
       lastReconcileAtMs: this.lastReconcileAtMs,
     };
+  }
+
+  async getWalletUsdtBalance(): Promise<number | null> {
+    if (!this.rest.hasCredentials()) return null;
+    try {
+      const result: any = await this.rest.getWalletBalance({ coin: "USDT" });
+      const accounts = Array.isArray(result?.list) ? result.list : [];
+      for (const account of accounts) {
+        const coins = Array.isArray(account?.coin) ? account.coin : [];
+        const usdt = coins.find((c: any) => String(c?.coin ?? "").toUpperCase() === "USDT");
+        if (!usdt) continue;
+        const candidates = [usdt.walletBalance, usdt.equity, usdt.availableToWithdraw, usdt.availableBalance];
+        for (const value of candidates) {
+          const parsed = Number(value);
+          if (Number.isFinite(parsed)) return parsed;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   private async getMeta(symbol: string): Promise<LinearInstrumentMeta | null> {

@@ -139,7 +139,7 @@ export function DashboardPage() {
 
         <BotSummaryBar sessionState={status.sessionState} botStats={botStats} uptimeText={uptimeText} />
 
-        <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} suppressStopRefresh={false} />
+        <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} executionMode={botStats.executionMode ?? "paper"} suppressStopRefresh={false} />
 
         <ConfigPanel sessionState={status.sessionState} onDraftKlineTfMinChange={setDraftKlineTfMin} />
 
