@@ -9,6 +9,70 @@ let paused = false;
 let cancelled = false;
 let currentJobId: string | null = null;
 let runStarted = false;
+const PROGRESS_THROTTLE_MS = 75;
+
+type PendingProgress = {
+  done: number;
+  total: number;
+  updatedAtMs: number;
+  previewResults: any[];
+};
+
+let lastProgressSentAtMs = 0;
+let pendingProgressFlushTimer: NodeJS.Timeout | null = null;
+let pendingProgress: PendingProgress | null = null;
+
+function toDonePercent(done: number, total: number) {
+  if (total <= 0) return 0;
+  const pct = (done / total) * 100;
+  return Math.max(0, Math.min(100, Math.round(pct * 100) / 100));
+}
+
+function clearPendingProgressTimer() {
+  if (!pendingProgressFlushTimer) return;
+  clearTimeout(pendingProgressFlushTimer);
+  pendingProgressFlushTimer = null;
+}
+
+function postProgress(progress: PendingProgress) {
+  const donePercent = toDonePercent(progress.done, progress.total);
+  parentPort?.postMessage({
+    type: "progress",
+    jobId: currentJobId,
+    donePercent,
+    done: progress.done,
+    total: progress.total,
+    updatedAtMs: progress.updatedAtMs,
+    previewResults: progress.previewResults.slice(0, 200),
+  });
+  lastProgressSentAtMs = Date.now();
+}
+
+function flushPendingProgress() {
+  clearPendingProgressTimer();
+  if (!pendingProgress) return;
+  postProgress(pendingProgress);
+  pendingProgress = null;
+}
+
+function queueProgress(done: number, total: number, previewResults: any[]) {
+  pendingProgress = {
+    done,
+    total,
+    updatedAtMs: Date.now(),
+    previewResults,
+  };
+  const now = Date.now();
+  if (lastProgressSentAtMs === 0 || now - lastProgressSentAtMs >= PROGRESS_THROTTLE_MS) {
+    flushPendingProgress();
+    return;
+  }
+  if (pendingProgressFlushTimer) return;
+  const waitMs = Math.max(0, PROGRESS_THROTTLE_MS - (now - lastProgressSentAtMs));
+  pendingProgressFlushTimer = setTimeout(() => {
+    flushPendingProgress();
+  }, waitMs);
+}
 
 async function waitWhilePaused() {
   while (paused) {
@@ -38,6 +102,9 @@ parentPort.on("message", async (msg: any) => {
   currentJobId = String(msg.jobId ?? "");
   paused = false;
   cancelled = false;
+  lastProgressSentAtMs = 0;
+  pendingProgress = null;
+  clearPendingProgressTimer();
 
   try {
     const output = await runOptimizationCore(msg.runPayload as RunOptimizationArgs, {
@@ -46,16 +113,7 @@ parentPort.on("message", async (msg: any) => {
       waitWhilePaused,
       onProgress: (_done, total, previewResults) => {
         const done = Number(_done) || 0;
-        const donePercent = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 10_000) / 100)) : 0;
-        parentPort?.postMessage({
-          type: "progress",
-          jobId: currentJobId,
-          donePercent,
-          done,
-          total,
-          updatedAtMs: Date.now(),
-          previewResults: previewResults.slice(0, 200),
-        });
+        queueProgress(done, total, Array.isArray(previewResults) ? previewResults : []);
       },
       onCheckpoint: ({ done, total, donePercent, partialResults }) => {
         parentPort?.postMessage({
@@ -75,6 +133,16 @@ parentPort.on("message", async (msg: any) => {
       },
     });
 
+    flushPendingProgress();
+    if (!output.cancelled) {
+      postProgress({
+        done: 100,
+        total: 100,
+        updatedAtMs: Date.now(),
+        previewResults: output.results,
+      });
+    }
+
     parentPort?.postMessage({
       type: "done",
       jobId: currentJobId,
@@ -82,6 +150,7 @@ parentPort.on("message", async (msg: any) => {
       finalMessage: output,
     });
   } catch (e: any) {
+    clearPendingProgressTimer();
     parentPort?.postMessage({ type: "error", jobId: currentJobId, errorMessage: String(e?.message ?? e) });
   }
 });
