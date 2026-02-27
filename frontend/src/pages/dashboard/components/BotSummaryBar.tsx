@@ -42,7 +42,7 @@ export function BotSummaryBar({ sessionState, botStats, uptimeText }: Props) {
             <>
               <div>
                 <div style={{ opacity: 0.75, fontSize: 12 }}>Demo positions/orders</div>
-                <div>positions: {botStats.demoStats?.openPositions ?? 0} · orders: {botStats.demoStats?.openOrders ?? 0}</div>
+                <div>positions: {botStats.demoStats?.globalOpenPositions ?? 0} · orders: {botStats.demoStats?.globalOpenOrders ?? 0}</div>
               </div>
               <div>
                 <div style={{ opacity: 0.75, fontSize: 12 }}>Demo pending</div>

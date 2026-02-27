@@ -8,6 +8,10 @@ export type DemoStats = {
   mode: "demo";
   openPositions: number;
   openOrders: number;
+  globalOpenPositions: number;
+  globalOpenOrders: number;
+  trackedOpenPositions: number;
+  trackedOpenOrders: number;
   pendingEntries: number;
   lastReconcileAtMs: number;
   tradesCount: number;
@@ -63,8 +67,10 @@ export class DemoBroker {
   private leverageSet = new Set<string>();
   private missingMetaLogged = new Set<string>();
   private lastReconcileAtMs = 0;
-  private openOrdersCount = 0;
-  private openPositionsCount = 0;
+  private globalOpenOrdersCount = 0;
+  private globalOpenPositionsCount = 0;
+  private trackedOpenOrdersCount = 0;
+  private trackedOpenPositionsCount = 0;
   private lastExecTimeMs: number | null = null;
   private execSeenIds = new Set<string>();
   private execSeenQueue: string[] = [];
@@ -153,8 +159,12 @@ export class DemoBroker {
     }
     return {
       mode: "demo",
-      openPositions: this.openPositionsCount,
-      openOrders: this.openOrdersCount,
+      openPositions: this.globalOpenPositionsCount,
+      openOrders: this.globalOpenOrdersCount,
+      globalOpenPositions: this.globalOpenPositionsCount,
+      globalOpenOrders: this.globalOpenOrdersCount,
+      trackedOpenPositions: this.trackedOpenPositionsCount,
+      trackedOpenOrders: this.trackedOpenOrdersCount,
       pendingEntries,
       lastReconcileAtMs: this.lastReconcileAtMs,
       tradesCount: this.demoTradesCount,
@@ -384,17 +394,21 @@ export class DemoBroker {
       ]);
 
       const universeSymbols = new Set(Array.from(this.map.keys()));
-      const allOpenOrders = Array.isArray(openOrdersResp.list) ? openOrdersResp.list : [];
-      const openOrders = allOpenOrders.filter((o) => universeSymbols.size === 0 || universeSymbols.has(String(o.symbol ?? "")));
+      const openOrdersAll = Array.isArray(openOrdersResp.list) ? openOrdersResp.list : [];
+      const openOrders = openOrdersAll.filter((o) => universeSymbols.has(String(o.symbol ?? "")));
+      const positionsAll = Array.isArray(positionsResp.list) ? positionsResp.list : [];
+      const activePositionsAll = positionsAll.filter((p) => Number(p.size ?? "0") !== 0);
+      const positions = activePositionsAll.filter((p) => universeSymbols.has(String(p.symbol ?? "")));
+
       this.lastReconcileAtMs = nowMs;
-      this.openOrdersCount = openOrders.length;
+      this.globalOpenOrdersCount = openOrdersAll.length;
+      this.globalOpenPositionsCount = activePositionsAll.length;
+      this.trackedOpenOrdersCount = openOrders.length;
+      this.trackedOpenPositionsCount = positions.length;
       this.openOrdersCache = openOrders
         .map((o) => ({ symbol: String(o.symbol ?? ""), orderLinkId: String(o.orderLinkId ?? "") }))
         .filter((o) => o.symbol.length > 0 && o.orderLinkId.length > 0);
 
-      const allPositions = (Array.isArray(positionsResp.list) ? positionsResp.list : []).filter((p) => Number(p.size ?? "0") > 0);
-      const positions = allPositions.filter((p) => universeSymbols.size === 0 || universeSymbols.has(String(p.symbol ?? "")));
-      this.openPositionsCount = positions.length;
       const positionBySymbol = new Map(positions.map((p) => [String(p.symbol ?? ""), p]));
 
       for (const [symbol, st] of this.map.entries()) {
