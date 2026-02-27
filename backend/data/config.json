@@ -347,11 +347,14 @@
     "afterMin": 5
   },
   "signals": {
-    "priceThresholdPct": 0.1,
-    "oivThresholdPct": 0.1,
+    "priceThresholdPct": 0.01,
+    "oivThresholdPct": 0.01,
     "requireFundingSign": true,
     "dailyTriggerMin": 1,
     "dailyTriggerMax": 999
+  },
+  "execution": {
+    "mode": "paper"
   },
   "paper": {
     "enabled": true,
@@ -360,10 +363,11 @@
     "leverage": 10,
     "entryOffsetPct": 0.001,
     "entryTimeoutSec": 1,
-    "tpRoiPct": 5,
-    "slRoiPct": 5,
+    "tpRoiPct": 6,
+    "slRoiPct": 3,
     "makerFeeRate": 0.0002,
     "applyFunding": true,
-    "rearmDelayMs": 1000
+    "rearmDelayMs": 1000,
+    "maxDailyLossUSDT": 0
   }
 }
