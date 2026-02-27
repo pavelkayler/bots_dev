@@ -25,6 +25,9 @@ export type RuntimeConfig = {
     dailyTriggerMin: number;
     dailyTriggerMax: number;
   };
+  execution: {
+    mode: "paper" | "demo";
+  };
   paper: {
     enabled: boolean;
     directionMode: "both" | "long" | "short";

@@ -591,6 +591,10 @@ export function registerHttpRoutes(app: FastifyInstance) {
     if (blacklistWarning) warnings.push(`blacklistsDir not writable: ${blacklistWarning}`);
     const freeBytes = readFreeBytesBestEffort(dataDir);
     if (freeBytes != null && freeBytes < MIN_FREE_BYTES) warnings.push("low_disk");
+    const cfg = configStore.get();
+    const isDemo = cfg.execution.mode === "demo";
+    const demoKeysPresent = Boolean(process.env.BYBIT_DEMO_API_KEY) && Boolean(process.env.BYBIT_DEMO_API_SECRET);
+    const demoBaseUrl = process.env.BYBIT_DEMO_REST_URL ?? "https://api-demo.bybit.com";
     return {
       ok: warnings.length === 0,
       nowMs: Date.now(),
@@ -603,6 +607,7 @@ export function registerHttpRoutes(app: FastifyInstance) {
         blacklistsDir: optimizerBlacklistsDir,
       },
       warnings,
+      ...(isDemo ? { demoKeysPresent, demoBaseUrl } : {}),
     };
   });
 
