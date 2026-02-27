@@ -402,6 +402,15 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       hooks?.onProgress?.(done, progressTotal, results);
     }
   };
+  const reportProgressFrac = (candidateIndexBase: number, fracWithinCandidate: number) => {
+    const fracCandidate = Math.max(0, Math.min(1, fracWithinCandidate));
+    const fracGlobal = args.candidates > 0 ? (candidateIndexBase + fracCandidate) / args.candidates : 0;
+    const done = Math.max(0, Math.min(progressTotal, Math.floor(fracGlobal * progressTotal)));
+    if (done !== lastProgressDone) {
+      lastProgressDone = done;
+      hooks?.onProgress?.(done, progressTotal, results);
+    }
+  };
   const effectiveDirection = args.directionMode ?? "both";
   const effectiveTf = args.optTfMin ?? 0;
   const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
@@ -556,6 +565,9 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
               break;
             }
           }
+          const totalEvents = tape.events.length || 1;
+          const fracWithin = Math.min(1, eventCounter / totalEvents);
+          reportProgressFrac(i, fracWithin);
           await new Promise<void>((resolve) => setImmediate(resolve));
         }
 
