@@ -334,7 +334,7 @@ export function OptimizerPage() {
   const [seed, setSeed] = useState("1");
   const [minTrades, setMinTrades] = useState("1");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
-  const [optTfMin, setOptTfMin] = useState<string>("");
+  const [optTfMin, setOptTfMin] = useState<string>("1");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
   const [, setOptimizerPaused] = useState(false);
@@ -350,7 +350,7 @@ export function OptimizerPage() {
 
   const [results, setResults] = useState<OptimizationResult[]>([]);
   const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>([]);
-  const [loopAggMap, setLoopAggMap] = useState<Map<string, OptimizerResultRow>>(new Map());
+  const [, setLoopAggMap] = useState<Map<string, OptimizerResultRow>>(new Map());
   const [page, setPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
@@ -374,6 +374,7 @@ export function OptimizerPage() {
   const prevLoopJobIdRef = useRef<string | null>(null);
   const prevLoopActiveRef = useRef(false);
   const loopJobIdRef = useRef<string | null>(null);
+  const lastTableSourceRef = useRef<"loop" | "single">("single");
 
   const resetJobProgressState = useCallback(() => {
     setDone(0);
@@ -429,6 +430,9 @@ export function OptimizerPage() {
     if (savedOptTf != null) {
       const n = Math.floor(Number(savedOptTf));
       if (Number.isFinite(n) && n >= 1) setOptTfMin(String(n));
+      else setOptTfMin("1");
+    } else {
+      setOptTfMin("1");
     }
     const savedMinTrades = localStorage.getItem(MIN_TRADES_STORAGE_KEY);
     if (savedMinTrades != null) {
@@ -453,9 +457,13 @@ export function OptimizerPage() {
       try {
         const current = await getCurrentJob();
         if (!current.jobId) return;
+        const loopState = await getOptimizerLoopStatus();
+        const currentIsLoopJob = Boolean(loopState.loop?.lastJobId && loopState.loop.lastJobId === current.jobId);
+        if (currentIsLoopJob) return;
         const statusRes = await getJobStatus(current.jobId);
         // Restore only an in-flight single-run job. Completed jobs should not drive UI controls/progress on page load.
         if (statusRes.status === "running" || statusRes.status === "paused") {
+          lastTableSourceRef.current = "single";
           setSingleJobId(current.jobId);
           setDone(statusRes.done);
           setTotal(statusRes.total);
@@ -505,12 +513,8 @@ export function OptimizerPage() {
 
   useEffect(() => {
     try {
-      if (!optTfMin.trim()) {
-        localStorage.removeItem(OPT_TF_STORAGE_KEY);
-      } else {
-        const n = Math.floor(Number(optTfMin));
-        if (Number.isFinite(n) && n >= 1) localStorage.setItem(OPT_TF_STORAGE_KEY, String(n));
-      }
+      const n = Math.floor(Number(optTfMin));
+      if (Number.isFinite(n) && n >= 1) localStorage.setItem(OPT_TF_STORAGE_KEY, String(n));
     } catch {
       return;
     }
@@ -597,6 +601,7 @@ export function OptimizerPage() {
   async function onStartLoop() {
     if (!selectedTapeIds.length || rangeError) return;
     setError(null);
+    lastTableSourceRef.current = "loop";
     setLoopBusy(true);
     try {
       const rangePayload = buildRangesPayload();
@@ -615,7 +620,7 @@ export function OptimizerPage() {
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
         directionMode,
-        ...(optTfMin.trim() ? { optTfMin: Number(optTfMin) } : {}),
+        optTfMin: Number(optTfMin),
         excludeNegative,
         rememberNegatives,
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
@@ -750,23 +755,25 @@ export function OptimizerPage() {
     const nextResults = res.results ?? [];
     if (loopActive) {
       const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
-      const merged = new Map(loopAggMap);
-      for (const row of nextResults) {
-        if (excludeNegative && row.netPnl < 0) continue;
-        if (minTradesLimit > 0 && row.trades < minTradesLimit) continue;
-        const signature = makeResultSignature(row);
-        const existing = merged.get(signature);
-        if (!existing || isBetterResult(row, existing)) {
-          merged.set(signature, row);
+      setLoopAggMap((prev) => {
+        const next = new Map(prev);
+        for (const row of nextResults) {
+          if (excludeNegative && row.netPnl < 0) continue;
+          if (minTradesLimit > 0 && row.trades < minTradesLimit) continue;
+          const signature = makeResultSignature(row);
+          const existing = next.get(signature);
+          if (!existing || isBetterResult(row, existing)) {
+            next.set(signature, row);
+          }
         }
-      }
-      const sortedRows = Array.from(merged.values()).sort((a, b) => {
-        if (b.netPnl !== a.netPnl) return b.netPnl - a.netPnl;
-        return b.trades - a.trades;
+        const sortedRows = Array.from(next.values()).sort((a, b) => {
+          if (b.netPnl !== a.netPnl) return b.netPnl - a.netPnl;
+          return b.trades - a.trades;
+        });
+        setLoopAggRows(() => sortedRows);
+        setTotalRows(sortedRows.length);
+        return next;
       });
-      setLoopAggMap(merged);
-      setLoopAggRows(sortedRows);
-      setTotalRows(sortedRows.length);
       return;
     }
     const keepPreviousIfEmpty = options?.keepPreviousIfEmpty ?? false;
@@ -779,6 +786,7 @@ export function OptimizerPage() {
   async function onRunOptimization() {
     if (!selectedTapeIds.length || rangeError) return;
     setError(null);
+    lastTableSourceRef.current = "single";
     setDone(0);
     setTotal(0);
     try {
@@ -798,7 +806,7 @@ export function OptimizerPage() {
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
         directionMode,
-        ...(optTfMin.trim() ? { optTfMin: Number(optTfMin) } : {}),
+        optTfMin: Number(optTfMin),
         excludeNegative,
         rememberNegatives,
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
@@ -1050,12 +1058,8 @@ export function OptimizerPage() {
     }
   }
 
-  const isLoopDisplay = loopActive || (!singleJobId && loopAggRows.length > 0);
-  const displayedRows = loopActive
-    ? loopAggRows
-    : singleJobId
-      ? results
-      : (loopAggRows.length > 0 ? loopAggRows : results);
+  const isLoopDisplay = lastTableSourceRef.current === "loop";
+  const displayedRows = isLoopDisplay ? loopAggRows : results;
   const loopDisplayRows = useMemo(() => {
     if (!isLoopDisplay) return displayedRows;
     const start = (page - 1) * pageSize;
@@ -1198,7 +1202,6 @@ export function OptimizerPage() {
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
                 <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(e.currentTarget.value)}>
-                  <option value="">Auto (tape tf)</option>
                   <option value="1">1</option>
                   <option value="3">3</option>
                   <option value="5">5</option>
