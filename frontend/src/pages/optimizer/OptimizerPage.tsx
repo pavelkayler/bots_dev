@@ -397,6 +397,9 @@ export function OptimizerPage() {
   const prevLoopJobIdRef = useRef<string | null>(null);
   const prevLoopActiveRef = useRef(false);
   const loopJobIdRef = useRef<string | null>(null);
+  const lastNonNullLoopJobIdRef = useRef<string | null>(null);
+  const lastPctByJobIdRef = useRef<Record<string, number>>({});
+  const startedAtByJobIdRef = useRef<Record<string, number>>({});
   const lastTableSourceRef = useRef<"loop" | "single">("single");
 
   const resetJobProgressState = useCallback(() => {
@@ -412,8 +415,19 @@ export function OptimizerPage() {
   const clearSingleJobState = useCallback(() => {
     setSingleJobId(null);
     setJobStatus("idle");
-    setDone(0);
-    setTotal(0);
+  }, []);
+
+  const getStableProgressForJob = useCallback((jobId: string, status: { donePct?: number; done?: number; startedAtMs?: number | null }) => {
+    const rawPct = typeof status.donePct === "number" ? status.donePct : status.done ?? 0;
+    const clampedPct = clamp(roundTo2(Number(rawPct) || 0), 0, 100);
+    const lastPct = lastPctByJobIdRef.current[jobId];
+    const pct = typeof lastPct === "number" ? Math.max(lastPct, clampedPct) : clampedPct;
+    lastPctByJobIdRef.current[jobId] = pct;
+    if (typeof status.startedAtMs === "number" && Number.isFinite(status.startedAtMs)) {
+      startedAtByJobIdRef.current[jobId] = status.startedAtMs;
+    }
+    const startedAtMs = startedAtByJobIdRef.current[jobId] ?? null;
+    return { pct, startedAtMs };
   }, []);
 
   const isNoCurrentJobError = useCallback((err: unknown): boolean => {
@@ -490,14 +504,15 @@ export function OptimizerPage() {
         if (statusRes.status === "running" || statusRes.status === "paused") {
           lastTableSourceRef.current = "single";
           setSingleJobId(current.jobId);
-          const donePct = typeof (statusRes as any).donePct === "number" ? (statusRes as any).donePct : statusRes.done;
-          setDone(donePct);
+          const progress = getStableProgressForJob(current.jobId, statusRes as { donePct?: number; done?: number; startedAtMs?: number | null });
+          setDone(progress.pct);
           setTotal(statusRes.total);
         } else {
           clearSingleJobState();
           return;
         }
         if (statusRes.startedAtMs) setJobStartedAtMs(statusRes.startedAtMs);
+        else setJobStartedAtMs(startedAtByJobIdRef.current[current.jobId] ?? null);
         if (statusRes.updatedAtMs) setJobUpdatedAtMs(statusRes.updatedAtMs);
         setJobFinishedAtMs(statusRes.finishedAtMs ?? null);
         setJobStatus(statusRes.status);
@@ -593,7 +608,8 @@ export function OptimizerPage() {
   const loopActive = loopRunning || loopPaused;
   const loopStopped = !loopRunning;
   const jobActive = jobStatus === "running" || jobStatus === "paused";
-  const activeJobId = loopActive ? loopJobId : singleJobId;
+  const activeLoopJobId = loopJobId ?? lastNonNullLoopJobIdRef.current;
+  const activeJobId = loopActive ? activeLoopJobId : singleJobId;
 
   useEffect(() => {
     let timer: number | null = null;
@@ -621,12 +637,15 @@ export function OptimizerPage() {
     const prev = prevLoopJobIdRef.current;
     if (loopJobId !== null && prev !== loopJobId) {
       resetJobProgressState();
+      setDone(lastPctByJobIdRef.current[loopJobId] ?? 0);
+      setJobStartedAtMs(startedAtByJobIdRef.current[loopJobId] ?? null);
     }
     prevLoopJobIdRef.current = loopJobId;
   }, [loopJobId, resetJobProgressState]);
 
   useEffect(() => {
     loopJobIdRef.current = loopJobId;
+    if (loopJobId) lastNonNullLoopJobIdRef.current = loopJobId;
   }, [loopJobId]);
 
   useEffect(() => {
@@ -853,7 +872,10 @@ export function OptimizerPage() {
         precision,
       });
       setSingleJobId(runRes.jobId);
-      setJobStartedAtMs(Date.now());
+      const startedAtMs = Date.now();
+      startedAtByJobIdRef.current[runRes.jobId] = startedAtMs;
+      lastPctByJobIdRef.current[runRes.jobId] = 0;
+      setJobStartedAtMs(startedAtMs);
       setJobUpdatedAtMs(Date.now());
       setJobFinishedAtMs(null);
       setJobStatus("running");
@@ -879,11 +901,11 @@ export function OptimizerPage() {
         const res = await getJobStatus(reqJobId);
         if (loopActive || singleJobId !== reqJobId) return;
         if (!alive) return;
-        const donePct = typeof (res as any).donePct === "number" ? (res as any).donePct : res.done;
-        setDone((prev) => (prev === donePct ? prev : donePct));
+        const progress = getStableProgressForJob(reqJobId, res as { donePct?: number; done?: number; startedAtMs?: number | null });
+        setDone((prev) => (prev === progress.pct ? prev : progress.pct));
         setTotal((prev) => (prev === res.total ? prev : res.total));
         setJobStartedAtMs((prev) => {
-          const next = res.startedAtMs ?? null;
+          const next = progress.startedAtMs;
           return prev === next ? prev : next;
         });
         setJobUpdatedAtMs((prev) => {
@@ -930,26 +952,26 @@ export function OptimizerPage() {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [clearSingleJobState, isNoCurrentJobError, jobActive, loopActive, page, singleJobId, sortDir, sortKey]);
+  }, [clearSingleJobState, getStableProgressForJob, isNoCurrentJobError, jobActive, loopActive, page, singleJobId, sortDir, sortKey]);
 
   useEffect(() => {
-    if (!loopActive || !loopJobId) return;
+    if (!loopActive || !activeLoopJobId) return;
     const token = ++loopPollTokenRef.current;
     let alive = true;
     const timer = window.setInterval(async () => {
-      const reqJobId = loopJobId;
+      const reqJobId = loopJobIdRef.current ?? lastNonNullLoopJobIdRef.current;
       const reqToken = loopPollTokenRef.current;
       if (!reqJobId || reqToken !== token) return;
       try {
         const res = await getJobStatus(reqJobId);
         if (!alive) return;
         if (loopPollTokenRef.current !== token) return;
-        if (loopJobIdRef.current !== reqJobId) return;
-        const donePct = typeof (res as any).donePct === "number" ? (res as any).donePct : res.done;
-        setDone((prev) => (prev === donePct ? prev : donePct));
+        if ((loopJobIdRef.current ?? lastNonNullLoopJobIdRef.current) !== reqJobId) return;
+        const progress = getStableProgressForJob(reqJobId, res as { donePct?: number; done?: number; startedAtMs?: number | null });
+        setDone((prev) => (prev === progress.pct ? prev : progress.pct));
         setTotal((prev) => (prev === res.total ? prev : res.total));
         setJobStartedAtMs((prev) => {
-          const next = res.startedAtMs ?? null;
+          const next = progress.startedAtMs;
           return prev === next ? prev : next;
         });
         setJobUpdatedAtMs((prev) => {
@@ -971,7 +993,7 @@ export function OptimizerPage() {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [loopActive, loopJobId]);
+  }, [activeLoopJobId, getStableProgressForJob, loopActive]);
 
   useEffect(() => {
     if (!loopActive || !loopJobId) return;
@@ -1173,14 +1195,15 @@ export function OptimizerPage() {
   const isRunningStatus = jobStatus === "running";
   const hasTapeSelected = selectedTapeIds.length > 0;
   const singleJobProcessActive = !loopActive && Boolean(singleJobId) && (jobStatus === "running" || jobStatus === "paused");
-  const endMs = !jobStartedAtMs
+  const startedAtForActiveJobId = activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs;
+  const endMs = !startedAtForActiveJobId
     ? null
     : isRunningStatus
       ? nowMs
-      : (jobFinishedAtMs ?? jobUpdatedAtMs ?? jobStartedAtMs);
-  const elapsedSec = endMs == null || !jobStartedAtMs ? null : Math.max(0, (endMs - jobStartedAtMs) / 1000);
+      : (jobFinishedAtMs ?? jobUpdatedAtMs ?? startedAtForActiveJobId);
+  const elapsedSec = endMs == null || !startedAtForActiveJobId ? null : Math.max(0, (endMs - startedAtForActiveJobId) / 1000);
   const pctDone = clamp(roundTo2(done), 0, 100);
-  const etaSec = isRunningStatus && elapsedSec != null && jobStartedAtMs != null && pctDone > 0.1
+  const etaSec = isRunningStatus && elapsedSec != null && startedAtForActiveJobId != null && pctDone > 0.1 && pctDone < 100
     ? (elapsedSec * (100 - pctDone)) / pctDone
     : null;
   const lastJobSnapshotExists = Boolean(

@@ -11,3 +11,7 @@ backend/data/tapes/
 backend/data/optimizer_loops/current.json
 backend/data/optimizer_checkpoints/job-*.json
 backend/data/optimizer_job_history.json
+backend/data/optimizer_blacklists/
+backend/data/optimizer_checkpoints/
+backend/data/optimizer_loops/
+backend/data/sessions/
