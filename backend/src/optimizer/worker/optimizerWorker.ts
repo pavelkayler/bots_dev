@@ -10,12 +10,16 @@ let cancelled = false;
 let currentJobId: string | null = null;
 let runStarted = false;
 const PROGRESS_THROTTLE_MS = 75;
+const LOADING_PROGRESS_MAX = 5;
+const RUN_PROGRESS_START = 5;
+const RUN_PROGRESS_SCALE = 0.95;
 
 type PendingProgress = {
   done: number;
   total: number;
   updatedAtMs: number;
   previewResults: any[];
+  donePercent?: number;
 };
 
 let lastProgressSentAtMs = 0;
@@ -28,6 +32,10 @@ function toDonePercent(done: number, total: number) {
   return Math.max(0, Math.min(100, Math.round(pct * 100) / 100));
 }
 
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value * 100) / 100));
+}
+
 function clearPendingProgressTimer() {
   if (!pendingProgressFlushTimer) return;
   clearTimeout(pendingProgressFlushTimer);
@@ -35,7 +43,7 @@ function clearPendingProgressTimer() {
 }
 
 function postProgress(progress: PendingProgress) {
-  const donePercent = toDonePercent(progress.done, progress.total);
+  const donePercent = clampPercent(typeof progress.donePercent === "number" ? progress.donePercent : toDonePercent(progress.done, progress.total));
   parentPort?.postMessage({
     type: "progress",
     jobId: currentJobId,
@@ -55,12 +63,13 @@ function flushPendingProgress() {
   pendingProgress = null;
 }
 
-function queueProgress(done: number, total: number, previewResults: any[]) {
+function queueProgress(done: number, total: number, previewResults: any[], donePercent?: number) {
   pendingProgress = {
     done,
     total,
     updatedAtMs: Date.now(),
     previewResults,
+    ...(typeof donePercent === "number" ? { donePercent: clampPercent(donePercent) } : {}),
   };
   const now = Date.now();
   if (lastProgressSentAtMs === 0 || now - lastProgressSentAtMs >= PROGRESS_THROTTLE_MS) {
@@ -107,13 +116,22 @@ parentPort.on("message", async (msg: any) => {
   clearPendingProgressTimer();
 
   try {
+    queueProgress(0, 100, [], 0);
+
     const output = await runOptimizationCore(msg.runPayload as RunOptimizationArgs, {
       shouldCancel: () => cancelled,
       shouldPause: () => paused,
       waitWhilePaused,
+      onLoadProgress: (bytesRead, totalBytes) => {
+        const ratio = totalBytes > 0 ? bytesRead / totalBytes : 1;
+        const loadingPct = LOADING_PROGRESS_MAX * Math.max(0, Math.min(1, ratio));
+        queueProgress(0, 100, [], loadingPct);
+      },
       onProgress: (_done, total, previewResults) => {
         const done = Number(_done) || 0;
-        queueProgress(done, total, Array.isArray(previewResults) ? previewResults : []);
+        const runPct = total > 0 ? (done / total) * 100 : 0;
+        const donePct = RUN_PROGRESS_START + runPct * RUN_PROGRESS_SCALE;
+        queueProgress(done, total, Array.isArray(previewResults) ? previewResults : [], donePct);
       },
       onCheckpoint: ({ done, total, donePercent, partialResults }) => {
         parentPort?.postMessage({
@@ -138,6 +156,7 @@ parentPort.on("message", async (msg: any) => {
       postProgress({
         done: 100,
         total: 100,
+        donePercent: 100,
         updatedAtMs: Date.now(),
         previewResults: output.results,
       });

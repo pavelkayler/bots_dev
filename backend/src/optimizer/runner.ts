@@ -166,7 +166,13 @@ function readRange(bound: { min?: unknown; max?: unknown } | undefined, fallback
   return { min, max };
 }
 
-export async function readTapeLines(tapePath: string): Promise<TapeParsed> {
+export async function readTapeLines(
+  tapePath: string,
+  hooks?: {
+    onProgress?: (bytesRead: number, totalBytes: number) => void;
+  }
+): Promise<TapeParsed> {
+  const totalBytes = (await fs.promises.stat(tapePath)).size;
   const stream = fs.createReadStream(tapePath, { encoding: "utf8" });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
@@ -177,8 +183,20 @@ export async function readTapeLines(tapePath: string): Promise<TapeParsed> {
 
   const lastTickerTsBySymbol = new Map<string, number>();
   const tickIntervalSamples: number[] = [];
+  let lastLoadProgressAt = 0;
+
+  const maybeReportLoadProgress = async () => {
+    const now = Date.now();
+    if (now - lastLoadProgressAt < 200) return;
+    lastLoadProgressAt = now;
+    hooks?.onProgress?.(Math.min(stream.bytesRead, totalBytes), totalBytes);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  };
+
+  hooks?.onProgress?.(0, totalBytes);
 
   for await (const line of rl) {
+    await maybeReportLoadProgress();
     const text = line.trim();
     if (!text) continue;
 
@@ -218,6 +236,8 @@ export async function readTapeLines(tapePath: string): Promise<TapeParsed> {
       });
     }
   }
+
+  hooks?.onProgress?.(totalBytes, totalBytes);
 
   return {
     meta,
@@ -305,6 +325,7 @@ export type RunOptimizationHooks = {
   shouldPause?: () => boolean;
   shouldCancel?: () => boolean;
   waitWhilePaused?: () => Promise<"resumed" | "cancelled">;
+  onLoadProgress?: (bytesRead: number, totalBytes: number) => void;
   onProgress?: (done: number, total: number, partialResults: OptimizerResult[]) => void;
   onBlacklistUpdate?: (summary: { count: number; skipped: number }) => void;
   onCheckpoint?: (summary: { done: number; total: number; donePercent: number; partialResults: OptimizerResult[] }) => void;
@@ -340,14 +361,32 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
   const tapes: Array<{ tapeId: string; meta: TapeMeta | null; events: TapeEvent[]; firstTsMs: number | null; lastTsMs: number | null }> = [];
   const globalTickIntervals: number[] = [];
-  for (const tapeId of tapeIds) {
-    const tapePath = getTapePath(tapeId);
-    const parsed = await readTapeLines(tapePath);
+  const tapePathEntries = tapeIds.map((tapeId) => ({ tapeId, tapePath: getTapePath(tapeId) }));
+  const tapeSizes = await Promise.all(tapePathEntries.map(async ({ tapePath }) => (await fs.promises.stat(tapePath)).size));
+  const totalTapeBytes = tapeSizes.reduce((sum, value) => sum + value, 0);
+  const loadedTapeBytesById = new Map<string, number>();
+
+  hooks?.onLoadProgress?.(0, totalTapeBytes);
+
+  for (const { tapeId, tapePath } of tapePathEntries) {
+    const parsed = await readTapeLines(tapePath, {
+      onProgress: (bytesRead, totalBytes) => {
+        const bounded = Math.max(0, Math.min(totalBytes, bytesRead));
+        loadedTapeBytesById.set(tapeId, bounded);
+        const loadedSoFar = tapePathEntries.reduce((sum, entry, index) => {
+          const fullSize = tapeSizes[index] ?? 0;
+          const loaded = loadedTapeBytesById.get(entry.tapeId);
+          return sum + (loaded == null ? 0 : Math.max(0, Math.min(fullSize, loaded)));
+        }, 0);
+        hooks?.onLoadProgress?.(loadedSoFar, totalTapeBytes);
+      },
+    });
     tapes.push({ tapeId, meta: parsed.meta, events: parsed.events, firstTsMs: parsed.firstTsMs, lastTsMs: parsed.lastTsMs });
     if (parsed.medianTickIntervalSec > 0 && globalTickIntervals.length < MAX_TICK_INTERVAL_SAMPLES) {
       globalTickIntervals.push(parsed.medianTickIntervalSec);
     }
   }
+  hooks?.onLoadProgress?.(totalTapeBytes, totalTapeBytes);
   const medianTickIntervalSec = median(globalTickIntervals);
 
   const results: OptimizerResult[] = [];
