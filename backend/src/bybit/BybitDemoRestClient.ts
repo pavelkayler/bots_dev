@@ -16,6 +16,7 @@ type PlaceOrderLinearParams = {
   reduceOnly?: boolean;
   takeProfit?: string | number;
   stopLoss?: string | number;
+  positionIdx?: 0 | 1 | 2;
   orderLinkId?: string;
 };
 
