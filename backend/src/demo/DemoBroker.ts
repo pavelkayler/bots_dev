@@ -167,6 +167,7 @@ export class DemoBroker {
     if (st.positionOpen || st.pendingEntry) return;
 
     const side = args.signal === "LONG" ? "Buy" : "Sell";
+    const positionIdx = args.signal === "LONG" ? 1 : 2;
     const offset = this.cfg.entryOffsetPct / 100;
     const markPrice = Number.isFinite(args.markPrice) ? args.markPrice : (this.getMarkPrice?.(args.symbol) ?? 0);
     if (!Number.isFinite(markPrice) || markPrice <= 0) return;
@@ -239,6 +240,7 @@ export class DemoBroker {
         timeInForce: "GTC",
         takeProfit: formatToDecimals(tpRounded, priceDecimals),
         stopLoss: formatToDecimals(slRounded, priceDecimals),
+        positionIdx,
         orderLinkId,
       });
     } catch (err: any) {
