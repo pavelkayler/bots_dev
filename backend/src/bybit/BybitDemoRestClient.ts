@@ -132,6 +132,14 @@ export class BybitDemoRestClient {
     });
   }
 
+  async getInstrumentsInfoLinear(params: { symbol?: string } = {}): Promise<any[]> {
+    const result = await this.request<{ list?: any[] }>("GET", "/v5/market/instruments-info", {
+      category: "linear",
+      ...params,
+    });
+    return Array.isArray(result?.list) ? result.list : [];
+  }
+
   getWalletBalance(params: { coin?: string } = {}) {
     return this.request("GET", "/v5/account/wallet-balance", {
       accountType: "UNIFIED",

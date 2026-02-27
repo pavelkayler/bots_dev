@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
+import { decimalsFromStep, formatToDecimals, pickLinearMeta, roundDownToStep, roundUpToStep, type LinearInstrumentMeta } from "../bybit/instrumentsMeta.js";
 import type { EventLogger } from "../logging/EventLogger.js";
 import type { PaperBrokerConfig, PaperStats, PaperSide } from "../paper/PaperBroker.js";
 
@@ -44,6 +45,9 @@ export class DemoBroker {
   private reconcileBusy = false;
   private missingKeysLogged = false;
   private openOrdersCache: Array<{ symbol: string; orderLinkId: string }> = [];
+  private metaBySymbol = new Map<string, LinearInstrumentMeta>();
+  private leverageSet = new Set<string>();
+  private missingMetaLogged = new Set<string>();
 
   constructor(cfg: PaperBrokerConfig, logger: EventLogger, private readonly getMarkPrice?: (symbol: string) => number | null) {
     this.cfg = cfg;
@@ -108,6 +112,16 @@ export class DemoBroker {
     };
   }
 
+  private async getMeta(symbol: string): Promise<LinearInstrumentMeta | null> {
+    const cached = this.metaBySymbol.get(symbol);
+    if (cached) return cached;
+    const list = await this.rest.getInstrumentsInfoLinear({ symbol });
+    const meta = pickLinearMeta(list[0]);
+    if (!meta) return null;
+    this.metaBySymbol.set(symbol, meta);
+    return meta;
+  }
+
   async tick(args: TickInput) {
     if (!this.cfg.enabled) return;
     if (!this.rest.hasCredentials()) {
@@ -138,21 +152,73 @@ export class DemoBroker {
     const offset = this.cfg.entryOffsetPct / 100;
     const markPrice = Number.isFinite(args.markPrice) ? args.markPrice : (this.getMarkPrice?.(args.symbol) ?? 0);
     if (!Number.isFinite(markPrice) || markPrice <= 0) return;
-    const price = args.signal === "LONG" ? markPrice * (1 - offset) : markPrice * (1 + offset);
+
+    const meta = await this.getMeta(args.symbol);
+    if (!meta) {
+      if (!this.missingMetaLogged.has(args.symbol)) {
+        this.missingMetaLogged.add(args.symbol);
+        this.logger.log({ ts: args.nowMs, type: "DEMO_META_MISSING", symbol: args.symbol, payload: { reason: "instrument_meta_unavailable" } });
+      }
+      return;
+    }
+
+    if (!this.leverageSet.has(args.symbol)) {
+      try {
+        await this.rest.setLeverageLinear({
+          symbol: args.symbol,
+          buyLeverage: String(this.cfg.leverage),
+          sellLeverage: String(this.cfg.leverage),
+        });
+      } catch (err: any) {
+        this.logger.log({
+          ts: args.nowMs,
+          type: "DEMO_SET_LEVERAGE_FAIL",
+          symbol: args.symbol,
+          payload: { retCode: err?.retCode, retMsg: err?.retMsg },
+        });
+      } finally {
+        this.leverageSet.add(args.symbol);
+      }
+    }
+
+    const priceRaw = args.signal === "LONG" ? markPrice * (1 - offset) : markPrice * (1 + offset);
     const notional = this.cfg.marginUSDT * this.cfg.leverage;
-    const qty = Math.round((notional / markPrice) * 1000) / 1000;
-    const levels = calcTpSl(price, args.signal, this.cfg.leverage, this.cfg.tpRoiPct, this.cfg.slRoiPct);
+    const qtyRaw = notional / markPrice;
+    const qtyRounded = roundDownToStep(qtyRaw, meta.qtyStep);
+    if (qtyRounded < meta.minOrderQty) {
+      st.cooldownUntil = args.nowMs + this.cfg.rearmDelayMs;
+      this.logger.log({
+        ts: args.nowMs,
+        type: "DEMO_QTY_TOO_SMALL",
+        symbol: args.symbol,
+        payload: { qtyRaw, qtyRounded, minOrderQty: meta.minOrderQty },
+      });
+      return;
+    }
+
+    const priceRounded = args.signal === "LONG"
+      ? roundDownToStep(priceRaw, meta.tickSize)
+      : roundUpToStep(priceRaw, meta.tickSize);
+    const levelsRaw = calcTpSl(priceRaw, args.signal, this.cfg.leverage, this.cfg.tpRoiPct, this.cfg.slRoiPct);
+    const tpRounded = args.signal === "LONG"
+      ? roundUpToStep(levelsRaw.tp, meta.tickSize)
+      : roundDownToStep(levelsRaw.tp, meta.tickSize);
+    const slRounded = args.signal === "LONG"
+      ? roundDownToStep(levelsRaw.sl, meta.tickSize)
+      : roundUpToStep(levelsRaw.sl, meta.tickSize);
+    const qtyDecimals = decimalsFromStep(meta.qtyStep);
+    const priceDecimals = decimalsFromStep(meta.tickSize);
     const orderLinkId = `demo-entry-${randomUUID()}`;
 
     await this.rest.placeOrderLinear({
       symbol: args.symbol,
       side,
       orderType: "Limit",
-      qty: qty.toFixed(3),
-      price: price.toFixed(6),
+      qty: formatToDecimals(qtyRounded, qtyDecimals),
+      price: formatToDecimals(priceRounded, priceDecimals),
       timeInForce: "GTC",
-      takeProfit: levels.tp.toFixed(6),
-      stopLoss: levels.sl.toFixed(6),
+      takeProfit: formatToDecimals(tpRounded, priceDecimals),
+      stopLoss: formatToDecimals(slRounded, priceDecimals),
       orderLinkId,
     });
 
@@ -160,7 +226,7 @@ export class DemoBroker {
       ts: args.nowMs,
       type: "DEMO_ORDER_PLACE",
       symbol: args.symbol,
-      payload: { side, qty, price, tp: levels.tp, sl: levels.sl, orderLinkId, reason: args.signalReason },
+      payload: { side, qty: qtyRounded, price: priceRounded, tp: tpRounded, sl: slRounded, orderLinkId, reason: args.signalReason },
     });
 
     st.pendingEntry = true;
@@ -168,10 +234,10 @@ export class DemoBroker {
     st.placedAt = args.nowMs;
     st.expiresAt = args.nowMs + this.cfg.entryTimeoutSec * 1000;
     st.side = args.signal;
-    st.qty = qty;
-    st.entryPrice = price;
-    st.tpPrice = levels.tp;
-    st.slPrice = levels.sl;
+    st.qty = qtyRounded;
+    st.entryPrice = priceRounded;
+    st.tpPrice = tpRounded;
+    st.slPrice = slRounded;
   }
 
   private async reconcile() {

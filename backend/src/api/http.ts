@@ -26,6 +26,7 @@ import {
 } from "../optimizer/runner.js";
 import { optimizerWorkerManager } from "../optimizer/worker/workerManager.js";
 import { getDataDirPath, isLowDiskBestEffort, MIN_FREE_BYTES, readFreeBytesBestEffort } from "../utils/diskGuard.js";
+import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 
 type OptimizerJob = {
   status: "running" | "paused" | "done" | "error" | "cancelled";
@@ -595,6 +596,16 @@ export function registerHttpRoutes(app: FastifyInstance) {
     const isDemo = cfg.execution.mode === "demo";
     const demoKeysPresent = Boolean(process.env.BYBIT_DEMO_API_KEY) && Boolean(process.env.BYBIT_DEMO_API_SECRET);
     const demoBaseUrl = process.env.BYBIT_DEMO_REST_URL ?? "https://api-demo.bybit.com";
+    let demoAuthOk = false;
+    if (isDemo && demoKeysPresent) {
+      try {
+        const demoRest = new BybitDemoRestClient();
+        await demoRest.getWalletBalance();
+        demoAuthOk = true;
+      } catch {
+        demoAuthOk = false;
+      }
+    }
     return {
       ok: warnings.length === 0,
       nowMs: Date.now(),
@@ -607,7 +618,7 @@ export function registerHttpRoutes(app: FastifyInstance) {
         blacklistsDir: optimizerBlacklistsDir,
       },
       warnings,
-      ...(isDemo ? { demoKeysPresent, demoBaseUrl } : {}),
+      ...(isDemo ? { demoKeysPresent, demoBaseUrl, demoAuthOk } : {}),
     };
   });
 
