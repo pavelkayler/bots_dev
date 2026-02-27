@@ -76,6 +76,10 @@ export type BotStats = {
   demoStats?: {
     openPositions: number;
     openOrders: number;
+    globalOpenPositions: number;
+    globalOpenOrders: number;
+    trackedOpenPositions?: number;
+    trackedOpenOrders?: number;
     pendingEntries: number;
     lastReconcileAtMs: number;
     tradesCount: number;

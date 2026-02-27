@@ -320,6 +320,10 @@ class Runtime extends EventEmitter {
         demoStats: {
           openPositions: demoStats.openPositions,
           openOrders: demoStats.openOrders,
+          globalOpenPositions: demoStats.globalOpenPositions,
+          globalOpenOrders: demoStats.globalOpenOrders,
+          trackedOpenPositions: demoStats.trackedOpenPositions,
+          trackedOpenOrders: demoStats.trackedOpenOrders,
           pendingEntries: demoStats.pendingEntries,
           lastReconcileAtMs: demoStats.lastReconcileAtMs,
           tradesCount: demoStats.tradesCount,

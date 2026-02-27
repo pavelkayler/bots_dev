@@ -75,6 +75,11 @@ export class BybitDemoRestClient {
   readonly apiKey: string;
   readonly apiSecret: string;
   readonly recvWindow: number;
+  private inflight = 0;
+  private queue: Array<() => void> = [];
+  private maxConcurrent = 2;
+  private minGapMs = 120;
+  private lastStartMs = 0;
 
   constructor() {
     this.baseUrl = process.env.BYBIT_DEMO_REST_URL ?? "https://api-demo.bybit.com";
@@ -87,6 +92,41 @@ export class BybitDemoRestClient {
     return this.apiKey.length > 0 && this.apiSecret.length > 0;
   }
 
+  private async acquire(): Promise<void> {
+    while (true) {
+      const now = Date.now();
+      const gapRemaining = Math.max(0, this.minGapMs - (now - this.lastStartMs));
+      if (this.inflight < this.maxConcurrent && gapRemaining <= 0) {
+        this.inflight += 1;
+        this.lastStartMs = Date.now();
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const wake = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        this.queue.push(wake);
+        if (gapRemaining > 0) {
+          setTimeout(wake, gapRemaining);
+        }
+      });
+    }
+  }
+
+  private release(): void {
+    this.inflight = Math.max(0, this.inflight - 1);
+    const next = this.queue.shift();
+    if (next) next();
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
   private async request<T>(
     method: "GET" | "POST",
     endpoint: string,
@@ -94,48 +134,80 @@ export class BybitDemoRestClient {
     body?: Record<string, unknown>,
     opts?: { ignoreRetCodes?: number[] },
   ): Promise<T> {
+    return this.requestInternal(method, endpoint, query, body, opts, false);
+  }
+
+  private async requestInternal<T>(
+    method: "GET" | "POST",
+    endpoint: string,
+    query?: Record<string, unknown>,
+    body?: Record<string, unknown>,
+    opts?: { ignoreRetCodes?: number[] },
+    retried10006 = false,
+  ): Promise<T> {
     const q = buildSortedQueryString(query ?? {});
     const url = q ? `${this.baseUrl}${endpoint}?${q}` : `${this.baseUrl}${endpoint}`;
-    const timestamp = Date.now();
     const bodyString = method === "POST" ? JSON.stringify(body ?? {}) : "";
 
-    const signed = buildSignedHeaders({
-      apiKey: this.apiKey,
-      apiSecret: this.apiSecret,
-      recvWindow: this.recvWindow,
-      timestamp,
-      method,
-      queryString: q,
-      bodyString,
-    });
+    let retried = retried10006;
+    while (true) {
+      const timestamp = Date.now();
+      const signed = buildSignedHeaders({
+        apiKey: this.apiKey,
+        apiSecret: this.apiSecret,
+        recvWindow: this.recvWindow,
+        timestamp,
+        method,
+        queryString: q,
+        bodyString,
+      });
 
-    const headers: Record<string, string> = {
-      ...signed,
-      "Content-Type": "application/json",
-    };
+      const headers: Record<string, string> = {
+        ...signed,
+        "Content-Type": "application/json",
+      };
 
-    const init: RequestInit = { method, headers };
-    if (method === "POST") init.body = bodyString;
-    const res = await fetch(url, init);
+      const init: RequestInit = { method, headers };
+      if (method === "POST") init.body = bodyString;
 
-    const text = await res.text();
-    let parsed: ApiResp<T> | null = null;
-    try {
-      parsed = JSON.parse(text) as ApiResp<T>;
-    } catch {
-      parsed = null;
+      await this.acquire();
+      try {
+        const res = await fetch(url, init);
+
+        const text = await res.text();
+        let parsed: ApiResp<T> | null = null;
+        try {
+          parsed = JSON.parse(text) as ApiResp<T>;
+        } catch {
+          parsed = null;
+        }
+
+        if (parsed?.retCode === 10006 && !retried) {
+          const resetHeader = res.headers.get("X-Bapi-Limit-Reset-Timestamp");
+          let waitMs = 1000;
+          const resetAtMs = Number(resetHeader);
+          if (Number.isFinite(resetAtMs) && resetAtMs > 0) {
+            waitMs = Math.max(250, Math.min(5000, resetAtMs - Date.now()));
+          }
+          retried = true;
+          await this.sleep(waitMs);
+          continue;
+        }
+
+        const shouldIgnoreRetCode = parsed && parsed.retCode !== 0 && Array.isArray(opts?.ignoreRetCodes) && opts.ignoreRetCodes.includes(parsed.retCode);
+        if (!res.ok || !parsed || (parsed.retCode !== 0 && !shouldIgnoreRetCode)) {
+          const err: any = new Error(`Bybit demo REST error: ${endpoint}`);
+          err.status = res.status;
+          err.retCode = parsed?.retCode;
+          err.retMsg = parsed?.retMsg ?? text;
+          throw err;
+        }
+
+        return parsed.result;
+      } finally {
+        this.release();
+      }
     }
-
-    const shouldIgnoreRetCode = parsed && parsed.retCode !== 0 && Array.isArray(opts?.ignoreRetCodes) && opts.ignoreRetCodes.includes(parsed.retCode);
-    if (!res.ok || !parsed || (parsed.retCode !== 0 && !shouldIgnoreRetCode)) {
-      const err: any = new Error(`Bybit demo REST error: ${endpoint}`);
-      err.status = res.status;
-      err.retCode = parsed?.retCode;
-      err.retMsg = parsed?.retMsg ?? text;
-      throw err;
-    }
-
-    return parsed.result;
   }
 
   placeOrderLinear(params: PlaceOrderLinearParams) {
