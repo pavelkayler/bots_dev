@@ -2,7 +2,15 @@ import crypto from "node:crypto";
 import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 import { decimalsFromStep, formatToDecimals, pickLinearMeta, roundDownToStep, roundUpToStep, type LinearInstrumentMeta } from "../bybit/instrumentsMeta.js";
 import type { EventLogger } from "../logging/EventLogger.js";
-import type { PaperBrokerConfig, PaperStats, PaperSide } from "../paper/PaperBroker.js";
+import type { PaperBrokerConfig, PaperSide } from "../paper/PaperBroker.js";
+
+export type DemoStats = {
+  mode: "demo";
+  openPositions: number;
+  openOrders: number;
+  pendingEntries: number;
+  lastReconcileAtMs: number;
+};
 
 type TickInput = {
   symbol: string;
@@ -48,6 +56,9 @@ export class DemoBroker {
   private metaBySymbol = new Map<string, LinearInstrumentMeta>();
   private leverageSet = new Set<string>();
   private missingMetaLogged = new Set<string>();
+  private lastReconcileAtMs = 0;
+  private openOrdersCount = 0;
+  private openPositionsCount = 0;
 
   constructor(cfg: PaperBrokerConfig, logger: EventLogger, private readonly getMarkPrice?: (symbol: string) => number | null) {
     this.cfg = cfg;
@@ -112,20 +123,17 @@ export class DemoBroker {
     }
   }
 
-  getStats(): PaperStats {
-    let openPositions = 0;
+  getStats(): DemoStats {
+    let pendingEntries = 0;
     for (const st of this.map.values()) {
-      if (st.positionOpen) openPositions += 1;
+      if (st.pendingEntry) pendingEntries += 1;
     }
     return {
-      openPositions,
-      pendingOrders: this.openOrdersCache.length,
-      closedTrades: 0,
-      wins: 0,
-      losses: 0,
-      netRealized: 0,
-      feesPaid: 0,
-      fundingAccrued: 0,
+      mode: "demo",
+      openPositions: this.openPositionsCount,
+      openOrders: this.openOrdersCount,
+      pendingEntries,
+      lastReconcileAtMs: this.lastReconcileAtMs,
     };
   }
 
@@ -275,11 +283,14 @@ export class DemoBroker {
       const [positionsResp, openOrdersResp] = await Promise.all([this.rest.getPositionsLinear(), this.rest.getOpenOrdersLinear()]);
 
       const openOrders = Array.isArray(openOrdersResp.list) ? openOrdersResp.list : [];
+      this.lastReconcileAtMs = nowMs;
+      this.openOrdersCount = openOrders.length;
       this.openOrdersCache = openOrders
         .map((o) => ({ symbol: String(o.symbol ?? ""), orderLinkId: String(o.orderLinkId ?? "") }))
         .filter((o) => o.symbol.length > 0 && o.orderLinkId.length > 0);
 
       const positions = (Array.isArray(positionsResp.list) ? positionsResp.list : []).filter((p) => Number(p.size ?? "0") > 0);
+      this.openPositionsCount = positions.length;
       const positionBySymbol = new Map(positions.map((p) => [String(p.symbol ?? ""), p]));
 
       for (const [symbol, st] of this.map.entries()) {
@@ -330,7 +341,16 @@ export class DemoBroker {
         st.entryPrice = Number(serverPos.avgPrice ?? 0) || st.entryPrice;
         st.qty = Number(serverPos.size ?? 0) || st.qty;
       }
-    } catch {
+    } catch (err: any) {
+      this.logger.log({
+        ts: nowMs,
+        type: "DEMO_ORDER_ERROR",
+        payload: {
+          stage: "reconcile",
+          retCode: err?.retCode,
+          retMsg: err?.retMsg,
+        },
+      });
     } finally {
       this.reconcileBusy = false;
     }

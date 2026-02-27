@@ -71,6 +71,15 @@ export type BotStats = {
   netRealized: number;
   feesPaid: number;
   fundingAccrued: number;
+
+  executionMode?: "paper" | "demo";
+  demoStats?: {
+    openPositions: number;
+    openOrders: number;
+    pendingEntries: number;
+    lastReconcileAtMs: number;
+    executionsCount?: number;
+  };
 };
 
 export type SymbolRow = {

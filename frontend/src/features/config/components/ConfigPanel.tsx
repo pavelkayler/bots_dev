@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Col, Form, Row } from "react-bootstrap";
 import type { RuntimeConfig, SessionState } from "../../../shared/types/domain";
 import { useRuntimeConfig } from "../hooks/useRuntimeConfig";
@@ -12,6 +12,13 @@ type Props = {
   sessionState?: SessionState;
   rebooting?: boolean;
   onDraftKlineTfMinChange?: (klineTfMin: number) => void;
+};
+
+
+
+type DoctorStatus = {
+  demoKeysPresent?: boolean;
+  demoAuthOk?: boolean;
 };
 
 type NumericDraft = {
@@ -123,6 +130,9 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
   const [presetBusy, setPresetBusy] = useState(false);
   const [pendingPatchApplied, setPendingPatchApplied] = useState(false);
 
+  const [doctorStatus, setDoctorStatus] = useState<DoctorStatus | null>(null);
+  const [doctorLoading, setDoctorLoading] = useState(false);
+
   const disabled = !draft || !numericDraft;
   const universeLocked = sessionState === "RUNNING" || sessionState === "STOPPING";
   const hasUniverse = !!selectedUniverseId;
@@ -152,6 +162,19 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
     const p = lastApplied?.paper ? `paper=${String(lastApplied.paper)}` : "paper=?";
     return `${s}, ${f}, ${p}`;
   }, [lastApplied]);
+
+  const loadDoctor = useCallback(async () => {
+    setDoctorLoading(true);
+    try {
+      const res = await fetch("/api/doctor");
+      const json = await res.json();
+      setDoctorStatus(json as DoctorStatus);
+    } catch {
+      setDoctorStatus(null);
+    } finally {
+      setDoctorLoading(false);
+    }
+  }, []);
 
   async function refreshUniverses() {
     setUniverseLoading(true);
@@ -191,6 +214,10 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
     void refreshUniverses();
     void refreshPresets();
   }, []);
+
+  useEffect(() => {
+    void loadDoctor();
+  }, [loadDoctor, draft?.execution.mode]);
 
   useEffect(() => {
     if (!config) return;
@@ -439,26 +466,41 @@ function buildConfigForApply(): RuntimeConfig {
                 <h6>Funding cooldown</h6>
                 <Form.Group className="mb-2">
                   <Form.Label>Execution mode</Form.Label>
-                  <Form.Select value={draft.execution.mode} onChange={(e) => setDraft({ ...draft, execution: { mode: e.currentTarget.value as "paper" | "demo" } })}>
-                    <option value="paper">Paper</option>
-                    <option value="demo">Demo</option>
-                  </Form.Select>
+                  <div className="d-flex align-items-center gap-2">
+                    <Form.Select value={draft.execution.mode} onChange={(e) => setDraft({ ...draft, execution: { mode: e.currentTarget.value as "paper" | "demo" } })}>
+                      <option value="paper">Paper</option>
+                      <option value="demo">Demo</option>
+                    </Form.Select>
+                    <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                      keys {doctorLoading ? "…" : doctorStatus?.demoKeysPresent ? "✅" : "❌"} · auth {doctorLoading ? "…" : doctorStatus?.demoAuthOk ? "✅" : "❌"}
+                    </span>
+                  </div>
                 </Form.Group>
-                <div className="mb-2">Demo keys are read from backend env. Demo requires Bybit Demo Trading API keys.</div>
                 <Form.Group className="mb-2"><Form.Label>beforeMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingBeforeMin} onChange={(e) => setNumericField("fundingBeforeMin", e.currentTarget.value)} /></Form.Group>
                 <Form.Group className="mb-2"><Form.Label>afterMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingAfterMin} onChange={(e) => setNumericField("fundingAfterMin", e.currentTarget.value)} /></Form.Group>
-                <hr />
-                <h6 className="mb-0">Paper</h6>
-                <div className="mt-2 d-flex align-items-center gap-3">
-                  <Form.Group className="mb-0"><Form.Label className="mb-1">Direction</Form.Label><Form.Select id="paperDirectionMode" size="sm" value={draft.paper.directionMode} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, directionMode: e.currentTarget.value as "both" | "long" | "short" } })}><option value="both">Both directions</option><option value="long">Long only</option><option value="short">Short only</option></Form.Select></Form.Group>
-                  <Form.Check type="switch" id="paperEnabled" label="enabled" checked={draft.paper.enabled} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, enabled: e.currentTarget.checked } })} />
-                </div>
-                <Row className="g-2 mt-1"><Col><Form.Label>marginUSDT</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperMarginUSDT} onChange={(e) => setNumericField("paperMarginUSDT", e.currentTarget.value)} /></Col><Col><Form.Label>leverage</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperLeverage} onChange={(e) => setNumericField("paperLeverage", e.currentTarget.value)} /></Col></Row>
-                <Row className="g-2 mt-1"><Col><Form.Label>entryOffsetPct</Form.Label><Form.Control type="number" step="0.01" value={numericDraft.paperEntryOffsetPct} onChange={(e) => setNumericField("paperEntryOffsetPct", e.currentTarget.value)} /></Col><Col><Form.Label>entryTimeoutSec</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperEntryTimeoutSec} onChange={(e) => setNumericField("paperEntryTimeoutSec", e.currentTarget.value)} /></Col></Row>
-                <Row className="g-2 mt-1"><Col><Form.Label>tpRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperTpRoiPct} onChange={(e) => setNumericField("paperTpRoiPct", e.currentTarget.value)} /></Col><Col><Form.Label>slRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperSlRoiPct} onChange={(e) => setNumericField("paperSlRoiPct", e.currentTarget.value)} /></Col></Row>
-                <Row className="g-2 mt-1"><Col><Form.Label>makerFeeRate</Form.Label><Form.Control type="number" step="0.0001" value={numericDraft.paperMakerFeeRate} onChange={(e) => setNumericField("paperMakerFeeRate", e.currentTarget.value)} /></Col><Col><Form.Label>rearmDelayMs</Form.Label><Form.Control type="number" step="100" value={numericDraft.paperRearmDelayMs} onChange={(e) => setNumericField("paperRearmDelayMs", e.currentTarget.value)} /></Col></Row>
-                <Form.Group className="mt-1"><Form.Label>maxDailyLossUSDT</Form.Label><Form.Control type="number" step="1" min={0} value={numericDraft.paperMaxDailyLossUSDT} onChange={(e) => setNumericField("paperMaxDailyLossUSDT", e.currentTarget.value)} /></Form.Group>
-                <Form.Check className="mt-2" type="switch" id="applyFunding" label="applyFunding" checked={draft.paper.applyFunding} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, applyFunding: e.currentTarget.checked } })} />
+
+                <Card className="mt-2 mb-2">
+                  <Card.Body style={{ padding: 12 }}>
+                    <h6 className="mb-1">Demo settings{draft.execution.mode === "demo" ? "" : " (inactive)"}</h6>
+                    <div style={{ fontSize: 12 }}>Demo keys are read from backend env.</div>
+                    <div style={{ fontSize: 12 }}>demoKeysPresent: <b>{doctorStatus?.demoKeysPresent ? "✅" : "❌"}</b> · demoAuthOk: <b>{doctorStatus?.demoAuthOk ? "✅" : "❌"}</b></div>
+                  </Card.Body>
+                </Card>
+
+                <Card className="mt-2">
+                  <Card.Body style={{ padding: 12 }}>
+                    <h6 className="mb-0">Paper settings{draft.execution.mode === "demo" ? " (inactive in Demo mode)" : ""}</h6>
+                    <div className="mt-2 d-flex align-items-center gap-3">
+                      <Form.Group className="mb-0"><Form.Label className="mb-1">Direction</Form.Label><Form.Select id="paperDirectionMode" size="sm" value={draft.paper.directionMode} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, directionMode: e.currentTarget.value as "both" | "long" | "short" } })}><option value="both">Both directions</option><option value="long">Long only</option><option value="short">Short only</option></Form.Select></Form.Group>
+                    </div>
+                    <Row className="g-2 mt-1"><Col><Form.Label>marginUSDT</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperMarginUSDT} onChange={(e) => setNumericField("paperMarginUSDT", e.currentTarget.value)} /></Col><Col><Form.Label>leverage</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperLeverage} onChange={(e) => setNumericField("paperLeverage", e.currentTarget.value)} /></Col></Row>
+                    <Row className="g-2 mt-1"><Col><Form.Label>entryOffsetPct</Form.Label><Form.Control type="number" step="0.01" value={numericDraft.paperEntryOffsetPct} onChange={(e) => setNumericField("paperEntryOffsetPct", e.currentTarget.value)} /></Col><Col><Form.Label>entryTimeoutSec</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperEntryTimeoutSec} onChange={(e) => setNumericField("paperEntryTimeoutSec", e.currentTarget.value)} /></Col></Row>
+                    <Row className="g-2 mt-1"><Col><Form.Label>tpRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperTpRoiPct} onChange={(e) => setNumericField("paperTpRoiPct", e.currentTarget.value)} /></Col><Col><Form.Label>slRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperSlRoiPct} onChange={(e) => setNumericField("paperSlRoiPct", e.currentTarget.value)} /></Col></Row>
+                    <Row className="g-2 mt-1"><Col><Form.Label>makerFeeRate</Form.Label><Form.Control type="number" step="0.0001" value={numericDraft.paperMakerFeeRate} onChange={(e) => setNumericField("paperMakerFeeRate", e.currentTarget.value)} /></Col><Col><Form.Label>rearmDelayMs</Form.Label><Form.Control type="number" step="100" value={numericDraft.paperRearmDelayMs} onChange={(e) => setNumericField("paperRearmDelayMs", e.currentTarget.value)} /></Col></Row>
+                    <Form.Group className="mt-1"><Form.Label>maxDailyLossUSDT</Form.Label><Form.Control type="number" step="1" min={0} value={numericDraft.paperMaxDailyLossUSDT} onChange={(e) => setNumericField("paperMaxDailyLossUSDT", e.currentTarget.value)} /></Form.Group>
+                    <Form.Check className="mt-2" type="switch" id="applyFunding" label="applyFunding" checked={draft.paper.applyFunding} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, applyFunding: e.currentTarget.checked } })} />
+                  </Card.Body>
+                </Card>
               </Col>
             </Row>
           </>
