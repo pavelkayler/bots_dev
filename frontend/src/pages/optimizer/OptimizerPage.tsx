@@ -347,7 +347,6 @@ export function OptimizerPage() {
   const [loopJobId, setLoopJobId] = useState<string | null>(null);
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
-  const [displayDone, setDisplayDone] = useState(0);
 
   const [results, setResults] = useState<OptimizationResult[]>([]);
   const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>([]);
@@ -379,7 +378,6 @@ export function OptimizerPage() {
   const resetJobProgressState = useCallback(() => {
     setDone(0);
     setTotal(0);
-    setDisplayDone(0);
     setJobStartedAtMs(null);
     setJobUpdatedAtMs(null);
     setJobFinishedAtMs(null);
@@ -392,43 +390,7 @@ export function OptimizerPage() {
     setJobStatus("idle");
     setDone(0);
     setTotal(0);
-    setDisplayDone(0);
   }, []);
-
-  // Smooth progress rendering: even if backend updates are bursty, render as 0.01 increments.
-  // This does not change backend semantics; it only animates the UI to the latest observed done%.
-  const progressAnimRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (progressAnimRef.current != null) {
-      window.clearInterval(progressAnimRef.current);
-      progressAnimRef.current = null;
-    }
-    const target = clamp(roundTo2(done), 0, 100);
-    if (target <= 0) {
-      setDisplayDone(0);
-      return;
-    }
-    // If target decreased (new run) reset immediately.
-    setDisplayDone((prev) => (target < prev ? target : prev));
-    progressAnimRef.current = window.setInterval(() => {
-      setDisplayDone((prev) => {
-        if (prev >= target) {
-          if (progressAnimRef.current != null) {
-            window.clearInterval(progressAnimRef.current);
-            progressAnimRef.current = null;
-          }
-          return prev;
-        }
-        return roundTo2(Math.min(target, prev + 0.01));
-      });
-    }, 10);
-    return () => {
-      if (progressAnimRef.current != null) {
-        window.clearInterval(progressAnimRef.current);
-        progressAnimRef.current = null;
-      }
-    };
-  }, [done]);
 
   const isNoCurrentJobError = useCallback((err: unknown): boolean => {
     const message = String((err as any)?.message ?? err).toLowerCase();
@@ -491,10 +453,16 @@ export function OptimizerPage() {
       try {
         const current = await getCurrentJob();
         if (!current.jobId) return;
-        setSingleJobId(current.jobId);
         const statusRes = await getJobStatus(current.jobId);
-        setDone(statusRes.done);
-        setTotal(statusRes.total);
+        // Restore only an in-flight single-run job. Completed jobs should not drive UI controls/progress on page load.
+        if (statusRes.status === "running" || statusRes.status === "paused") {
+          setSingleJobId(current.jobId);
+          setDone(statusRes.done);
+          setTotal(statusRes.total);
+        } else {
+          clearSingleJobState();
+          return;
+        }
         if (statusRes.startedAtMs) setJobStartedAtMs(statusRes.startedAtMs);
         if (statusRes.updatedAtMs) setJobUpdatedAtMs(statusRes.updatedAtMs);
         setJobFinishedAtMs(statusRes.finishedAtMs ?? null);
@@ -1100,9 +1068,7 @@ export function OptimizerPage() {
   }, [totalPages]);
   const isRunningStatus = jobStatus === "running";
   const hasTapeSelected = selectedTapeIds.length > 0;
-  // A loop run also creates jobs; do not treat the loop's last job as a "single" job.
-  const isLoopJobSelectedAsSingle = Boolean(loopJobId) && Boolean(singleJobId) && loopJobId === singleJobId;
-  const singleJobProcessActive = !loopActive && !isLoopJobSelectedAsSingle && Boolean(singleJobId) && (jobStatus === "running" || jobStatus === "paused");
+  const singleJobProcessActive = !loopActive && Boolean(singleJobId) && (jobStatus === "running" || jobStatus === "paused");
   const endMs = !jobStartedAtMs
     ? null
     : isRunningStatus
@@ -1119,7 +1085,7 @@ export function OptimizerPage() {
     total > 0
   );
   const showProgressBlock = Boolean(activeJobId) || loopActive || lastJobSnapshotExists;
-  const pct = clamp(roundTo2(displayDone), 0, 100);
+  const pct = clamp(roundTo2(done), 0, 100);
   const loopStartMs = loopStatus?.loop?.createdAtMs ?? null;
   const loopEndMs = !loopStartMs
     ? null

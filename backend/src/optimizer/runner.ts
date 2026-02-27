@@ -351,6 +351,18 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const medianTickIntervalSec = median(globalTickIntervals);
 
   const results: OptimizerResult[] = [];
+
+  // progress is reported in 0.01% steps (total=10000)
+  const progressTotal = 10_000;
+  let lastProgressDone = -1;
+  const reportProgress = (candidateIndexDone: number) => {
+    const frac = args.candidates > 0 ? candidateIndexDone / args.candidates : 0;
+    const done = Math.max(0, Math.min(progressTotal, Math.floor(frac * progressTotal)));
+    if (done !== lastProgressDone) {
+      lastProgressDone = done;
+      hooks?.onProgress?.(done, progressTotal, results);
+    }
+  };
   const effectiveDirection = args.directionMode ?? "both";
   const effectiveTf = args.optTfMin ?? 0;
   const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
@@ -368,9 +380,6 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   let addedSinceFlush = 0;
   let cancelled = false;
   let lastPctLocal = 0;
-  // Yielding is required so worker-thread progress messages can be delivered and
-  // observed by the UI during fast runs (otherwise the event loop may not get a turn).
-  let lastYieldMs = Date.now();
 
   const decisionsNoRefsGlobal = { value: 0 };
   const decisionsOkGlobal = { value: 0 };
@@ -401,7 +410,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     if (blacklistState && blacklistState.negativeSet.has(paramSig)) {
       skippedBlacklisted += 1;
       const done = i + 1;
-      hooks?.onProgress?.(done, args.candidates, results);
+      reportProgress(done);
       continue;
     }
 
@@ -648,19 +657,16 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     if (!args.excludeNegative || candidateResult.netPnl >= 0) {
       results.push(candidateResult);
     }
-
-    const done = i + 1;
-    const pct = args.candidates > 0 ? Math.floor((done / args.candidates) * 100) : 0;
-    hooks?.onProgress?.(done, args.candidates, results);
-    hooks?.onCheckpoint?.({ done, total: args.candidates, donePercent: pct, partialResults: results });
+    // report progress in 0.01% steps (total=10000)
+    const candidateDone = i + 1;
+    reportProgress(candidateDone);
+    const done = lastProgressDone < 0 ? 0 : lastProgressDone;
+    const donePercent = progressTotal > 0 ? Math.max(0, Math.min(100, Math.round((done / progressTotal) * 10_000) / 100)) : 0;
+    hooks?.onCheckpoint?.({ done, total: progressTotal, donePercent, partialResults: results });
     hooks?.onBlacklistUpdate?.({ count: blacklistState?.negativeSet.size ?? 0, skipped: skippedBlacklisted });
-
-    // Yield frequently enough to allow progress updates to reach the parent thread.
-    // We do NOT intentionally slow down; setImmediate yields without sleeping.
-    const now = Date.now();
-    if (pct > lastPctLocal) lastPctLocal = pct;
-    if (now - lastYieldMs >= 15 || pct === 100) {
-      lastYieldMs = now;
+    // yield occasionally so worker thread can flush messages during fast runs
+    if (donePercent > lastPctLocal) {
+      lastPctLocal = donePercent;
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
   }
