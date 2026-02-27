@@ -60,7 +60,13 @@ export class BybitDemoRestClient {
     return this.apiKey.length > 0 && this.apiSecret.length > 0;
   }
 
-  private async request<T>(method: "GET" | "POST", endpoint: string, query?: Record<string, unknown>, body?: Record<string, unknown>): Promise<T> {
+  private async request<T>(
+    method: "GET" | "POST",
+    endpoint: string,
+    query?: Record<string, unknown>,
+    body?: Record<string, unknown>,
+    opts?: { ignoreRetCodes?: number[] },
+  ): Promise<T> {
     const q = buildSortedQueryString(query ?? {});
     const url = q ? `${this.baseUrl}${endpoint}?${q}` : `${this.baseUrl}${endpoint}`;
     const timestamp = Date.now();
@@ -93,7 +99,8 @@ export class BybitDemoRestClient {
       parsed = null;
     }
 
-    if (!res.ok || !parsed || parsed.retCode !== 0) {
+    const shouldIgnoreRetCode = parsed && parsed.retCode !== 0 && Array.isArray(opts?.ignoreRetCodes) && opts.ignoreRetCodes.includes(parsed.retCode);
+    if (!res.ok || !parsed || (parsed.retCode !== 0 && !shouldIgnoreRetCode)) {
       const err: any = new Error(`Bybit demo REST error: ${endpoint}`);
       err.status = res.status;
       err.retCode = parsed?.retCode;
@@ -151,7 +158,7 @@ export class BybitDemoRestClient {
     return this.request("POST", "/v5/position/set-leverage", undefined, {
       category: "linear",
       ...params,
-    });
+    }, { ignoreRetCodes: [110043] });
   }
 
   setTradingStopLinear(params: { symbol: string; takeProfit?: string | number; stopLoss?: string | number; tpTriggerBy?: string; slTriggerBy?: string }) {

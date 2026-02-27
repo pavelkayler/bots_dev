@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import crypto from "node:crypto";
 import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 import { decimalsFromStep, formatToDecimals, pickLinearMeta, roundDownToStep, roundUpToStep, type LinearInstrumentMeta } from "../bybit/instrumentsMeta.js";
 import type { EventLogger } from "../logging/EventLogger.js";
@@ -52,6 +52,23 @@ export class DemoBroker {
   constructor(cfg: PaperBrokerConfig, logger: EventLogger, private readonly getMarkPrice?: (symbol: string) => number | null) {
     this.cfg = cfg;
     this.logger = logger;
+  }
+
+  private onTickRestError(args: TickInput, stage: string, err: any, st?: SymbolState) {
+    this.logger.log({
+      ts: args.nowMs,
+      type: "DEMO_ORDER_ERROR",
+      symbol: args.symbol,
+      payload: {
+        stage,
+        retCode: err?.retCode,
+        retMsg: err?.retMsg,
+      },
+    });
+    if (st) {
+      st.cooldownUntil = args.nowMs + this.cfg.rearmDelayMs;
+      if (stage === "placeOrder" || stage === "cancel") this.clearPending(st);
+    }
   }
 
   private getState(symbol: string): SymbolState {
@@ -139,7 +156,8 @@ export class DemoBroker {
       try {
         await this.rest.cancelOrderLinear({ symbol: args.symbol, orderLinkId: st.pendingOrderLinkId });
         this.logger.log({ ts: args.nowMs, type: "DEMO_ORDER_CANCEL_TIMEOUT", symbol: args.symbol, payload: { orderLinkId: st.pendingOrderLinkId } });
-      } catch {
+      } catch (err: any) {
+        this.onTickRestError(args, "cancel", err, st);
       }
       st.cooldownUntil = args.nowMs + this.cfg.rearmDelayMs;
       this.clearPending(st);
@@ -153,7 +171,13 @@ export class DemoBroker {
     const markPrice = Number.isFinite(args.markPrice) ? args.markPrice : (this.getMarkPrice?.(args.symbol) ?? 0);
     if (!Number.isFinite(markPrice) || markPrice <= 0) return;
 
-    const meta = await this.getMeta(args.symbol);
+    let meta: LinearInstrumentMeta | null;
+    try {
+      meta = await this.getMeta(args.symbol);
+    } catch (err: any) {
+      this.onTickRestError(args, "getMeta", err, st);
+      return;
+    }
     if (!meta) {
       if (!this.missingMetaLogged.has(args.symbol)) {
         this.missingMetaLogged.add(args.symbol);
@@ -170,12 +194,7 @@ export class DemoBroker {
           sellLeverage: String(this.cfg.leverage),
         });
       } catch (err: any) {
-        this.logger.log({
-          ts: args.nowMs,
-          type: "DEMO_SET_LEVERAGE_FAIL",
-          symbol: args.symbol,
-          payload: { retCode: err?.retCode, retMsg: err?.retMsg },
-        });
+        this.onTickRestError(args, "setLeverage", err, st);
       } finally {
         this.leverageSet.add(args.symbol);
       }
@@ -208,19 +227,24 @@ export class DemoBroker {
       : roundUpToStep(levelsRaw.sl, meta.tickSize);
     const qtyDecimals = decimalsFromStep(meta.qtyStep);
     const priceDecimals = decimalsFromStep(meta.tickSize);
-    const orderLinkId = `demo-entry-${randomUUID()}`;
+    const orderLinkId = "d" + crypto.randomBytes(16).toString("hex");
 
-    await this.rest.placeOrderLinear({
-      symbol: args.symbol,
-      side,
-      orderType: "Limit",
-      qty: formatToDecimals(qtyRounded, qtyDecimals),
-      price: formatToDecimals(priceRounded, priceDecimals),
-      timeInForce: "GTC",
-      takeProfit: formatToDecimals(tpRounded, priceDecimals),
-      stopLoss: formatToDecimals(slRounded, priceDecimals),
-      orderLinkId,
-    });
+    try {
+      await this.rest.placeOrderLinear({
+        symbol: args.symbol,
+        side,
+        orderType: "Limit",
+        qty: formatToDecimals(qtyRounded, qtyDecimals),
+        price: formatToDecimals(priceRounded, priceDecimals),
+        timeInForce: "GTC",
+        takeProfit: formatToDecimals(tpRounded, priceDecimals),
+        stopLoss: formatToDecimals(slRounded, priceDecimals),
+        orderLinkId,
+      });
+    } catch (err: any) {
+      this.onTickRestError(args, "placeOrder", err, st);
+      return;
+    }
 
     this.logger.log({
       ts: args.nowMs,
