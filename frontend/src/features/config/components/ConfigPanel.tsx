@@ -253,7 +253,7 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
           requireFundingSign: true,
         },
         execution: {
-          mode: (patch?.execution?.mode === "demo" ? "demo" : patch?.execution?.mode === "paper" ? "paper" : draft.execution.mode),
+          mode: (patch?.execution?.mode === "demo" ? "demo" : patch?.execution?.mode === "empty" ? "empty" : patch?.execution?.mode === "paper" ? "paper" : draft.execution.mode),
         },
         paper: {
           ...draft.paper,
@@ -467,9 +467,10 @@ function buildConfigForApply(): RuntimeConfig {
                 <Form.Group className="mb-2">
                   <Form.Label>Execution mode</Form.Label>
                   <div className="d-flex align-items-center gap-2">
-                    <Form.Select value={draft.execution.mode} onChange={(e) => setDraft({ ...draft, execution: { mode: e.currentTarget.value as "paper" | "demo" } })}>
+                    <Form.Select value={draft.execution.mode} onChange={(e) => setDraft({ ...draft, execution: { mode: e.currentTarget.value as "paper" | "demo" | "empty" } })}>
                       <option value="paper">Paper</option>
                       <option value="demo">Demo</option>
+                      <option value="empty">Empty (tape only)</option>
                     </Form.Select>
                     <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>
                       keys {doctorLoading ? "…" : doctorStatus?.demoKeysPresent ? "✅" : "❌"} · auth {doctorLoading ? "…" : doctorStatus?.demoAuthOk ? "✅" : "❌"}
@@ -483,6 +484,7 @@ function buildConfigForApply(): RuntimeConfig {
                   <Card.Body style={{ padding: 12 }}>
                     <h6 className="mb-1">Demo settings{draft.execution.mode === "demo" ? "" : " (inactive)"}</h6>
                     <div style={{ fontSize: 12 }}>Demo keys are read from backend env.</div>
+                    {draft.execution.mode === "empty" ? <div style={{ fontSize: 12 }}>Empty mode records tapes only and does not trade.</div> : null}
                     <div style={{ fontSize: 12 }}>demoKeysPresent: <b>{doctorStatus?.demoKeysPresent ? "✅" : "❌"}</b> · demoAuthOk: <b>{doctorStatus?.demoAuthOk ? "✅" : "❌"}</b></div>
                   </Card.Body>
                 </Card>

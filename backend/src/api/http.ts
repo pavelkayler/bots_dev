@@ -426,6 +426,10 @@ function getSummaryFilePath(eventsFile: string): string {
   return path.join(getSessionDirFromEventsFile(eventsFile), "summary.json");
 }
 
+function getDemoSummaryFilePath(eventsFile: string): string {
+  return path.join(getSessionDirFromEventsFile(eventsFile), "demo_summary.json");
+}
+
 async function computeSummary(eventsFile: string, sessionId: string | null): Promise<SessionSummaryResponse> {
   const anyMod = paperSummary as any;
 
@@ -1427,6 +1431,38 @@ const now = Date.now();
     return reply.send(stream);
   });
 
+  app.get("/api/session/demo-summary", async (_req, reply) => {
+    const st = runtime.getStatus();
+    if (!st.eventsFile) {
+      reply.code(404);
+      return { error: "no_events_file" };
+    }
+    const demoSummaryPath = getDemoSummaryFilePath(st.eventsFile);
+    const fromFile = tryReadJsonFile<any>(demoSummaryPath);
+    if (!fromFile) {
+      reply.code(404);
+      return { error: "no_demo_summary" };
+    }
+    return fromFile;
+  });
+
+  app.get("/api/session/demo-summary/download", async (_req, reply) => {
+    const st = runtime.getStatus();
+    if (!st.eventsFile) {
+      reply.code(404);
+      return { error: "no_events_file" };
+    }
+    const demoSummaryPath = getDemoSummaryFilePath(st.eventsFile);
+    if (!fs.existsSync(demoSummaryPath)) {
+      reply.code(404);
+      return { error: "no_demo_summary" };
+    }
+    reply.header("Content-Type", "application/json; charset=utf-8");
+    reply.header("Content-Disposition", 'attachment; filename="demo_summary.json"');
+    const stream = fs.createReadStream(demoSummaryPath);
+    return reply.send(stream);
+  });
+
   // download current session jsonl
   app.get("/api/session/events/download", async (_req, reply) => {
     const st = runtime.getStatus();
@@ -1446,10 +1482,14 @@ const now = Date.now();
   app.get("/api/session/run-pack", async (_req, reply) => {
     const st = runtime.getStatus();
     const sessionId = st.sessionId;
+    const demoSummaryUrl = st.eventsFile && fs.existsSync(getDemoSummaryFilePath(st.eventsFile))
+      ? "/api/session/demo-summary/download"
+      : null;
     const manifest = {
       sessionId,
       eventsUrl: "/api/session/events/download",
       summaryUrl: "/api/session/summary/download",
+      demoSummaryUrl,
       configSnapshotUrl: "/api/session/run-pack/config/download",
       universeSnapshotUrl: "/api/session/run-pack/universe/download",
     };

@@ -26,7 +26,7 @@ export type RuntimeConfig = {
     dailyTriggerMax: number;
   };
   execution: {
-    mode: "paper" | "demo";
+    mode: "paper" | "demo" | "empty";
   };
   paper: {
     enabled: boolean;
@@ -72,7 +72,7 @@ export type BotStats = {
   feesPaid: number;
   fundingAccrued: number;
 
-  executionMode?: "paper" | "demo";
+  executionMode?: "paper" | "demo" | "empty";
   demoStats?: {
     openPositions: number;
     openOrders: number;
@@ -80,6 +80,19 @@ export type BotStats = {
     lastReconcileAtMs: number;
     executionsCount?: number;
   };
+};
+
+export type DemoSummaryResponse = {
+  sessionId: string | null;
+  executionMode: "demo";
+  startedAtMs: number | null;
+  endedAtMs: number;
+  startBalanceUsdt: number | null;
+  endBalanceUsdt: number | null;
+  deltaUsdt: number | null;
+  openPositionsAtEnd: number;
+  openOrdersAtEnd: number;
+  pendingEntriesAtEnd: number;
 };
 
 export type SymbolRow = {

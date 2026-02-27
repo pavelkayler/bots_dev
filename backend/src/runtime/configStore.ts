@@ -73,7 +73,7 @@ const paperSchema = z
 
 const executionSchema = z
   .object({
-    mode: z.enum(["paper", "demo"]),
+    mode: z.enum(["paper", "demo", "empty"]),
   })
   .strict();
 
