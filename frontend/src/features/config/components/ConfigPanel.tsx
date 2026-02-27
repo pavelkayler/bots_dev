@@ -475,19 +475,13 @@ function buildConfigForApply(): RuntimeConfig {
                     <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>
                       keys {doctorLoading ? "…" : doctorStatus?.demoKeysPresent ? "✅" : "❌"} · auth {doctorLoading ? "…" : doctorStatus?.demoAuthOk ? "✅" : "❌"}
                     </span>
+                    <Button size="sm" variant="outline-secondary" onClick={() => void loadDoctor()} disabled={doctorLoading}>
+                      ↻
+                    </Button>
                   </div>
                 </Form.Group>
                 <Form.Group className="mb-2"><Form.Label>beforeMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingBeforeMin} onChange={(e) => setNumericField("fundingBeforeMin", e.currentTarget.value)} /></Form.Group>
                 <Form.Group className="mb-2"><Form.Label>afterMin</Form.Label><Form.Control type="number" step="1" value={numericDraft.fundingAfterMin} onChange={(e) => setNumericField("fundingAfterMin", e.currentTarget.value)} /></Form.Group>
-
-                <Card className="mt-2 mb-2">
-                  <Card.Body style={{ padding: 12 }}>
-                    <h6 className="mb-1">Demo settings{draft.execution.mode === "demo" ? "" : " (inactive)"}</h6>
-                    <div style={{ fontSize: 12 }}>Demo keys are read from backend env.</div>
-                    {draft.execution.mode === "empty" ? <div style={{ fontSize: 12 }}>Empty mode records tapes only and does not trade.</div> : null}
-                    <div style={{ fontSize: 12 }}>demoKeysPresent: <b>{doctorStatus?.demoKeysPresent ? "✅" : "❌"}</b> · demoAuthOk: <b>{doctorStatus?.demoAuthOk ? "✅" : "❌"}</b></div>
-                  </Card.Body>
-                </Card>
 
                 <Card className="mt-2">
                   <Card.Body style={{ padding: 12 }}>

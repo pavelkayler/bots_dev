@@ -212,6 +212,10 @@ class Runtime extends EventEmitter {
         openPositionsAtEnd: stats.openPositions,
         openOrdersAtEnd: stats.openOrders,
         pendingEntriesAtEnd: stats.pendingEntries,
+        tradesCount: stats.tradesCount,
+        realizedPnlUsdt: stats.realizedPnlUsdt,
+        feesUsdt: stats.feesUsdt,
+        lastExecTimeMs: stats.lastExecTimeMs,
       };
       const sessionDir = this.logger?.filePath ? path.dirname(this.logger.filePath) : null;
       if (sessionDir) {
@@ -318,6 +322,10 @@ class Runtime extends EventEmitter {
           openOrders: demoStats.openOrders,
           pendingEntries: demoStats.pendingEntries,
           lastReconcileAtMs: demoStats.lastReconcileAtMs,
+          tradesCount: demoStats.tradesCount,
+          realizedPnlUsdt: demoStats.realizedPnlUsdt,
+          feesUsdt: demoStats.feesUsdt,
+          lastExecTimeMs: demoStats.lastExecTimeMs,
         },
       };
     }

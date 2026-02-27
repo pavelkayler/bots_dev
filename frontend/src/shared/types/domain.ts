@@ -78,7 +78,10 @@ export type BotStats = {
     openOrders: number;
     pendingEntries: number;
     lastReconcileAtMs: number;
-    executionsCount?: number;
+    tradesCount: number;
+    realizedPnlUsdt: number;
+    feesUsdt: number;
+    lastExecTimeMs: number | null;
   };
 };
 
@@ -93,6 +96,10 @@ export type DemoSummaryResponse = {
   openPositionsAtEnd: number;
   openOrdersAtEnd: number;
   pendingEntriesAtEnd: number;
+  tradesCount?: number;
+  realizedPnlUsdt?: number;
+  feesUsdt?: number;
+  lastExecTimeMs?: number | null;
 };
 
 export type SymbolRow = {
