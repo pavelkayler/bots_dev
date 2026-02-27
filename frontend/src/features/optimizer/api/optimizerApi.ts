@@ -64,6 +64,26 @@ export type OptimizerLoopStatus = {
 };
 export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
 export type OptimizerSortDir = "asc" | "desc";
+export type OptimizerHistorySortKey =
+  | "jobId"
+  | "endedAtMs"
+  | "status"
+  | "mode"
+  | "tapes"
+  | "tfMin"
+  | "candidates"
+  | "seed"
+  | "minTrades"
+  | "direction"
+  | "rememberNegatives"
+  | "hideNegativeNetPnl"
+  | "bestNetPnl"
+  | "bestTrades"
+  | "bestWinRate"
+  | "bestProfitFactor"
+  | "bestMaxDD"
+  | "rowsPositive"
+  | "rowsTotal";
 export type OptimizerPrecision = Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", number>;
 export type OptimizerSettings = { tapesDir: string };
 
@@ -207,9 +227,19 @@ export async function getJobResults(
   return await getJson(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/results?${params.toString()}`);
 }
 
-export async function getOptimizerJobHistory(limit = 50): Promise<{ records: OptimizerJobHistoryRecord[] }> {
+export async function getOptimizerJobHistory(query?: {
+  limit?: 10 | 25 | 50 | 100;
+  offset?: number;
+  sortKey?: OptimizerHistorySortKey;
+  sortDir?: OptimizerSortDir;
+}): Promise<{ total: number; items: OptimizerJobHistoryRecord[] }> {
   const base = getApiBase();
-  return await getJson<{ records: OptimizerJobHistoryRecord[] }>(`${base}/api/optimizer/jobs/history?limit=${encodeURIComponent(String(limit))}`);
+  const params = new URLSearchParams();
+  if (query?.limit != null) params.set("limit", String(query.limit));
+  if (query?.offset != null) params.set("offset", String(query.offset));
+  if (query?.sortKey) params.set("sortKey", query.sortKey);
+  if (query?.sortDir) params.set("sortDir", query.sortDir);
+  return await getJson<{ total: number; items: OptimizerJobHistoryRecord[] }>(`${base}/api/optimizer/jobs/history?${params.toString()}`);
 }
 
 export function getJobExportUrl(jobId: string, format: "json" | "csv" = "json", sortKey?: OptimizerSortKeyExtended, sortDir?: OptimizerSortDir): string {

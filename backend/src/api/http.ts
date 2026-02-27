@@ -1237,11 +1237,48 @@ const now = Date.now();
 
   app.get("/api/optimizer/jobs/history", async (req) => {
     const query = (req.query ?? {}) as any;
-    const limit = Math.max(1, Math.min(500, Math.floor(Number(query.limit) || 50)));
-    const history = readOptimizerJobHistory()
-      .sort((a, b) => (Number(b.endedAtMs) || 0) - (Number(a.endedAtMs) || 0))
-      .slice(0, limit);
-    return { records: history };
+    const requestedLimit = Math.floor(Number(query.limit) || 25);
+    const limit = [10, 25, 50, 100].includes(requestedLimit) ? requestedLimit : 25;
+    const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
+    const sortKey = String(query.sortKey ?? "endedAtMs");
+    const sortDir: "asc" | "desc" = String(query.sortDir ?? "desc") === "asc" ? "asc" : "desc";
+    const history = readOptimizerJobHistory();
+    const sorted = history.sort((a, b) => {
+      const getValue = (row: OptimizerJobHistoryRecord): number | string => {
+        switch (sortKey) {
+          case "jobId": return row.jobId;
+          case "endedAtMs": return Number(row.endedAtMs) || 0;
+          case "status": return row.status;
+          case "mode": return row.mode ?? "";
+          case "tapes": return row.runPayload.tapeIds.length;
+          case "tfMin": return Number(row.runPayload.optTfMin) || 0;
+          case "candidates": return Number(row.runPayload.candidates) || 0;
+          case "seed": return Number(row.runPayload.seed) || 0;
+          case "minTrades": return Number(row.runPayload.minTrades) || 0;
+          case "direction": return row.runPayload.directionMode;
+          case "rememberNegatives": return row.runPayload.rememberNegatives ? 1 : 0;
+          case "hideNegativeNetPnl": return row.runPayload.excludeNegative ? 1 : 0;
+          case "bestNetPnl": return Number(row.summary.bestNetPnl) || 0;
+          case "bestTrades": return Number(row.summary.bestTrades) || 0;
+          case "bestWinRate": return Number(row.summary.bestWinRate) || 0;
+          case "bestProfitFactor": return Number(row.summary.bestProfitFactor) || 0;
+          case "bestMaxDD": return Number(row.summary.bestMaxDD) || 0;
+          case "rowsPositive": return Number(row.summary.rowsPositive) || 0;
+          case "rowsTotal": return Number(row.summary.rowsTotal) || 0;
+          default: return Number(row.endedAtMs) || 0;
+        }
+      };
+      const av = getValue(a);
+      const bv = getValue(b);
+      if (typeof av === "number" && typeof bv === "number") {
+        if (av === bv) return 0;
+        return sortDir === "asc" ? av - bv : bv - av;
+      }
+      const cmp = String(av).localeCompare(String(bv));
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    const items = sorted.slice(offset, offset + limit);
+    return { total: sorted.length, items };
   });
 
 

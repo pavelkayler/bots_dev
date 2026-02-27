@@ -33,6 +33,7 @@ import {
   type OptimizerPrecision,
   type OptimizerSortDir,
   type OptimizerSortKeyExtended,
+  type OptimizerHistorySortKey,
 } from "../../features/optimizer/api/optimizerApi";
 
 type OptimizerResultRow = OptimizationResult;
@@ -51,6 +52,7 @@ const RANGE_DEFAULTS: RangeState = {
 };
 
 const pageSize = 50;
+const HISTORY_PAGE_SIZES = [10, 25, 50, 100] as const;
 const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
 const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
@@ -381,6 +383,11 @@ export function OptimizerPage() {
   const [doctorBusy, setDoctorBusy] = useState(false);
   const [lastSoak, setLastSoak] = useState<SoakLastStatus["snapshot"]>(null);
   const [jobHistory, setJobHistory] = useState<OptimizerJobHistoryRecord[]>([]);
+  const [jobHistoryTotal, setJobHistoryTotal] = useState(0);
+  const [jobHistoryLimit, setJobHistoryLimit] = useState<(typeof HISTORY_PAGE_SIZES)[number]>(25);
+  const [jobHistoryOffset, setJobHistoryOffset] = useState(0);
+  const [jobHistorySortKey, setJobHistorySortKey] = useState<OptimizerHistorySortKey>("endedAtMs");
+  const [jobHistorySortDir, setJobHistorySortDir] = useState<OptimizerSortDir>("desc");
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
   const [historyResults, setHistoryResults] = useState<Record<string, OptimizationResult[]>>({});
   const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
@@ -475,8 +482,9 @@ export function OptimizerPage() {
         const current = await getCurrentJob();
         if (!current.jobId) return;
         const loopState = await getOptimizerLoopStatus();
+        const loopStateActive = Boolean(loopState.loop?.isRunning);
         const currentIsLoopJob = Boolean(loopState.loop?.lastJobId && loopState.loop.lastJobId === current.jobId);
-        if (currentIsLoopJob) return;
+        if (loopStateActive || currentIsLoopJob) return;
         const statusRes = await getJobStatus(current.jobId);
         // Restore only an in-flight single-run job. Completed jobs should not drive UI controls/progress on page load.
         if (statusRes.status === "running" || statusRes.status === "paused") {
@@ -517,7 +525,13 @@ export function OptimizerPage() {
       void refreshJobHistory();
     }, 8000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [jobHistoryLimit, jobHistoryOffset, jobHistorySortDir, jobHistorySortKey]);
+
+
+
+  useEffect(() => {
+    void refreshJobHistory();
+  }, [jobHistoryLimit, jobHistoryOffset, jobHistorySortDir, jobHistorySortKey]);
 
   useEffect(() => {
     const n = Math.floor(Number(candidates));
@@ -1075,8 +1089,14 @@ export function OptimizerPage() {
 
   async function refreshJobHistory() {
     try {
-      const res = await getOptimizerJobHistory(50);
-      setJobHistory(Array.isArray(res.records) ? res.records : []);
+      const res = await getOptimizerJobHistory({
+        limit: jobHistoryLimit,
+        offset: jobHistoryOffset,
+        sortKey: jobHistorySortKey,
+        sortDir: jobHistorySortDir,
+      });
+      setJobHistory(Array.isArray(res.items) ? res.items : []);
+      setJobHistoryTotal(Number(res.total) || 0);
     } catch {
       return;
     }
@@ -1095,6 +1115,23 @@ export function OptimizerPage() {
     } finally {
       setHistoryLoading((prev) => ({ ...prev, [jobId]: false }));
     }
+  }
+
+
+
+  function onHistorySort(nextSortKey: OptimizerHistorySortKey) {
+    setJobHistorySortKey((prevKey) => {
+      setJobHistorySortDir((prevDir) => (prevKey === nextSortKey && prevDir === "desc" ? "asc" : "desc"));
+      return nextSortKey;
+    });
+    setJobHistoryOffset(0);
+  }
+
+  function onHistoryLimitChange(e: ChangeEvent<HTMLSelectElement>) {
+    const nextLimit = Number(e.currentTarget.value) as (typeof HISTORY_PAGE_SIZES)[number];
+    if (!HISTORY_PAGE_SIZES.includes(nextLimit)) return;
+    setJobHistoryLimit(nextLimit);
+    setJobHistoryOffset(0);
   }
 
   async function onCheckDoctor() {
@@ -1119,10 +1156,17 @@ export function OptimizerPage() {
     return displayedRows.slice(start, start + pageSize);
   }, [displayedRows, isLoopDisplay, page]);
   const totalPages = Math.max(1, Math.ceil((isLoopDisplay ? displayedRows.length : totalRows) / pageSize));
+  const jobHistoryCurrentPage = Math.floor(jobHistoryOffset / jobHistoryLimit) + 1;
+  const jobHistoryTotalPages = Math.max(1, Math.ceil(jobHistoryTotal / jobHistoryLimit));
 
   useEffect(() => {
     setPage((prev) => Math.min(prev, totalPages));
   }, [totalPages]);
+
+  useEffect(() => {
+    const maxOffset = Math.max(0, (jobHistoryTotalPages - 1) * jobHistoryLimit);
+    if (jobHistoryOffset > maxOffset) setJobHistoryOffset(maxOffset);
+  }, [jobHistoryLimit, jobHistoryOffset, jobHistoryTotalPages]);
   const isRunningStatus = jobStatus === "running";
   const hasTapeSelected = selectedTapeIds.length > 0;
   const singleJobProcessActive = !loopActive && Boolean(singleJobId) && (jobStatus === "running" || jobStatus === "paused");
@@ -1454,28 +1498,39 @@ export function OptimizerPage() {
         <Card>
           <Card.Header><b>Completed / Stopped runs</b></Card.Header>
           <Card.Body>
+            <div className="d-flex align-items-center justify-content-between mb-2" style={{ fontSize: 12 }}>
+              <div className="d-flex align-items-center gap-2">
+                <span>Rows per page</span>
+                <Form.Select size="sm" value={jobHistoryLimit} onChange={onHistoryLimitChange} style={{ width: 90 }}>
+                  {HISTORY_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+                </Form.Select>
+              </div>
+              <div>
+                Page <b>{jobHistoryCurrentPage}</b> of <b>{jobHistoryTotalPages}</b> · Total <b>{jobHistoryTotal}</b>
+              </div>
+            </div>
             <Table striped bordered hover size="sm">
               <thead>
                 <tr>
-                  <th>runId</th>
-                  <th>endedAt</th>
-                  <th>status</th>
-                  <th>mode</th>
-                  <th>tapes</th>
-                  <th>tfMin</th>
-                  <th>candidates</th>
-                  <th>seed</th>
-                  <th>minTrades</th>
-                  <th>direction</th>
-                  <th>rememberNegatives</th>
-                  <th>hideNegativeNetPnl</th>
-                  <th>bestNetPnl</th>
-                  <th>bestTrades</th>
-                  <th>bestWinRate</th>
-                  <th>bestProfitFactor</th>
-                  <th>bestMaxDD</th>
-                  <th>rowsPositive</th>
-                  <th>rowsTotal</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("jobId")}>runId</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("mode")}>mode</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("tapes")}>tapes</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("candidates")}>candidates</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("seed")}>seed</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("minTrades")}>minTrades</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("direction")}>direction</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("rememberNegatives")}>rememberNegatives</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("hideNegativeNetPnl")}>hideNegativeNetPnl</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("bestNetPnl")}>bestNetPnl</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("bestTrades")}>bestTrades</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("bestWinRate")}>bestWinRate</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("bestProfitFactor")}>bestProfitFactor</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("bestMaxDD")}>bestMaxDD</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("rowsPositive")}>rowsPositive</th>
+                  <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("rowsTotal")}>rowsTotal</th>
                   <th>View</th>
                 </tr>
               </thead>
@@ -1510,15 +1565,15 @@ export function OptimizerPage() {
                       <tr>
                         <td colSpan={20} style={{ padding: 0, borderTop: 0 }}>
                           <Collapse in={isOpen}>
-                            <div style={{ padding: isOpen ? 8 : 0 }}>
+                            <div style={{ padding: isOpen ? 10 : 0, background: "#f5f5f5", borderLeft: "3px solid #d0d0d0", marginTop: 2 }}>
                               {historyLoading[row.jobId] ? <div style={{ fontSize: 12 }}>Loading...</div> : null}
                               {!historyLoading[row.jobId] && row.summary.rowsPositive === 0 ? <div style={{ fontSize: 12 }}>No positive results</div> : null}
                               {!historyLoading[row.jobId] && row.summary.rowsPositive > 0 ? (
-                                <Table striped bordered hover size="sm" className="mb-0">
+                                <Table striped bordered hover size="sm" className="mb-0" style={{ marginTop: 8, marginLeft: 8 }}>
                                   <thead>
                                     <tr>
                                       <th>Rank</th><th>netPnl</th><th>trades</th><th>winRate</th><th>expectancy</th><th>profitFactor</th><th>maxDD</th>
-                                      <th>placed</th><th>filled</th><th>expired</th><th>priceTh</th><th>oivTh</th><th>tp</th><th>sl</th><th>offset</th><th>timeoutSec</th><th>rearmMs</th>
+                                      <th>placed</th><th>filled</th><th>expired</th><th>priceTh</th><th>oivTh</th><th>tp</th><th>sl</th><th>offset</th><th>timeoutSec</th><th>rearmMs</th><th>action</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -1526,6 +1581,7 @@ export function OptimizerPage() {
                                       <tr key={`${row.jobId}-${r.rank}-${r.netPnl}`}>
                                         <td>{r.rank}</td><td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
                                         <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
+                                        <td><Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button></td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -1545,6 +1601,27 @@ export function OptimizerPage() {
                 ) : null}
               </tbody>
             </Table>
+            {jobHistoryTotal > 0 ? (
+              <Pagination>
+                <Pagination.Prev
+                  onClick={() => setJobHistoryOffset(Math.max(0, jobHistoryOffset - jobHistoryLimit))}
+                  disabled={jobHistoryOffset <= 0}
+                />
+                {Array.from({ length: jobHistoryTotalPages }, (_, i) => i + 1).slice(Math.max(0, jobHistoryCurrentPage - 3), Math.max(0, jobHistoryCurrentPage - 3) + 5).map((pageNum) => (
+                  <Pagination.Item
+                    key={pageNum}
+                    active={pageNum === jobHistoryCurrentPage}
+                    onClick={() => setJobHistoryOffset((pageNum - 1) * jobHistoryLimit)}
+                  >
+                    {pageNum}
+                  </Pagination.Item>
+                ))}
+                <Pagination.Next
+                  onClick={() => setJobHistoryOffset(Math.min((jobHistoryTotalPages - 1) * jobHistoryLimit, jobHistoryOffset + jobHistoryLimit))}
+                  disabled={jobHistoryCurrentPage >= jobHistoryTotalPages}
+                />
+              </Pagination>
+            ) : null}
           </Card.Body>
         </Card>
       </Container>
