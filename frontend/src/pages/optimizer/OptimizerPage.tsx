@@ -25,6 +25,8 @@ import {
   getDoctorStatus,
   getLastSoakSnapshot,
   getOptimizerJobHistory,
+  exportOptimizerHistory,
+  importOptimizerHistory,
   type DoctorStatus,
   type OptimizerJobHistoryRecord,
   type OptimizerLoopStatus,
@@ -473,6 +475,7 @@ export function OptimizerPage() {
   const [historyResults, setHistoryResults] = useState<Record<string, OptimizationResult[]>>({});
   const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
   const [historyCompactMode, setHistoryCompactMode] = useState(() => window.innerWidth < HISTORY_COMPACT_BREAKPOINT_PX);
+  const [historyTransferMessage, setHistoryTransferMessage] = useState<string | null>(null);
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
   const loopPollTokenRef = useRef(0);
@@ -483,6 +486,7 @@ export function OptimizerPage() {
   const lastPctByJobIdRef = useRef<Record<string, number>>({});
   const startedAtByJobIdRef = useRef<Record<string, number>>({});
   const lastTableSourceRef = useRef<"loop" | "single">("single");
+  const historyImportInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -1409,6 +1413,49 @@ export function OptimizerPage() {
     }
   }
 
+  async function onExportHistory() {
+    setHistoryTransferMessage(null);
+    setError(null);
+    try {
+      const payload = await exportOptimizerHistory();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `optimizer-history-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setHistoryTransferMessage("History export downloaded.");
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+      setHistoryTransferMessage("History export failed.");
+    }
+  }
+
+  function onOpenImportHistoryPicker() {
+    setHistoryTransferMessage(null);
+    historyImportInputRef.current?.click();
+  }
+
+  async function onImportHistoryFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = "";
+    if (!file) return;
+    setHistoryTransferMessage(null);
+    setError(null);
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as { runs?: unknown[] };
+      const runs = Array.isArray(parsed?.runs) ? parsed.runs : [];
+      const res = await importOptimizerHistory({ runs, mode: "merge" });
+      await refreshJobHistory();
+      setHistoryTransferMessage(`History imported (${res.imported} runs, total ${res.total}).`);
+    } catch (err: any) {
+      setError(String(err?.message ?? err));
+      setHistoryTransferMessage("History import failed.");
+    }
+  }
+
   const isLoopDisplay = lastTableSourceRef.current === "loop";
   const displayedRows = isLoopDisplay ? loopAggRows : results;
   const loopDisplayRows = useMemo(() => {
@@ -1825,7 +1872,15 @@ export function OptimizerPage() {
               >
                 Export CSV
               </Button>
+              <Button size="sm" variant="outline-secondary" onClick={() => void onExportHistory()}>
+                Export history
+              </Button>
+              <Button size="sm" variant="outline-secondary" onClick={onOpenImportHistoryPicker}>
+                Import history
+              </Button>
+              <input ref={historyImportInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => void onImportHistoryFile(e)} />
             </div>
+            {historyTransferMessage ? <div style={{ fontSize: 12, marginBottom: 8 }}>{historyTransferMessage}</div> : null}
 
             <Table striped bordered hover size="sm">
               <thead>

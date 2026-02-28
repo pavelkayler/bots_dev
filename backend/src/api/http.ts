@@ -213,9 +213,49 @@ function readOptimizerJobHistory(): OptimizerJobHistoryRecord[] {
   }
 }
 
+function readOptimizerJobHistoryRaw(): unknown[] {
+  if (!fs.existsSync(OPTIMIZER_JOB_HISTORY_PATH)) return [];
+  try {
+    const raw = fs.readFileSync(OPTIMIZER_JOB_HISTORY_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function writeOptimizerJobHistory(records: OptimizerJobHistoryRecord[]) {
   fs.mkdirSync(path.dirname(OPTIMIZER_JOB_HISTORY_PATH), { recursive: true });
   writeFileAtomic(OPTIMIZER_JOB_HISTORY_PATH, `${JSON.stringify(records, null, 2)}\n`);
+}
+
+function writeOptimizerJobHistoryRaw(records: unknown[]) {
+  fs.mkdirSync(path.dirname(OPTIMIZER_JOB_HISTORY_PATH), { recursive: true });
+  writeFileAtomic(OPTIMIZER_JOB_HISTORY_PATH, `${JSON.stringify(records, null, 2)}\n`);
+}
+
+function getHistoryRecordId(record: unknown): string {
+  if (!record || typeof record !== "object") return "";
+  const row = record as Record<string, unknown>;
+  const id = row.runId ?? row.jobId;
+  return typeof id === "string" ? id.trim() : "";
+}
+
+function getHistoryRecordEndedAtMs(record: unknown): number {
+  if (!record || typeof record !== "object") return 0;
+  const row = record as Record<string, unknown>;
+  const endedAtMsRaw = Number(row.endedAtMs);
+  if (Number.isFinite(endedAtMsRaw) && endedAtMsRaw > 0) return Math.floor(endedAtMsRaw);
+  const endedAtRaw = row.endedAt;
+  if (typeof endedAtRaw === "string" && endedAtRaw.trim()) {
+    const parsed = Date.parse(endedAtRaw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function isValidHistoryRecord(record: unknown): boolean {
+  return Boolean(getHistoryRecordId(record)) && getHistoryRecordEndedAtMs(record) > 0;
 }
 
 function toHistoryRunPayload(runPayload: Record<string, unknown> | null): OptimizerJobHistoryRecord["runPayload"] {
@@ -1724,6 +1764,57 @@ const now = Date.now();
     });
     const items = sorted.slice(offset, offset + limit);
     return { total: sorted.length, items };
+  });
+
+  app.get("/api/optimizer/history/export", async (req, reply) => {
+    if (!isLocalRequestIp((req as any).ip)) {
+      reply.code(403);
+      return { error: "forbidden" };
+    }
+    reply.header("Content-Type", "application/json; charset=utf-8");
+    const runs = readOptimizerJobHistoryRaw();
+    const loopState = readLoopState();
+    return {
+      exportedAtMs: Date.now(),
+      runs,
+      ...(loopState ? { loopState } : {}),
+    };
+  });
+
+  app.post("/api/optimizer/history/import", async (req, reply) => {
+    if (!isLocalRequestIp((req as any).ip)) {
+      reply.code(403);
+      return { error: "forbidden" };
+    }
+    const body = safeBody((req as any).body) as any;
+    const incoming = Array.isArray(body?.runs) ? body.runs : null;
+    if (!incoming) {
+      reply.code(400);
+      return { error: "invalid_history_payload" };
+    }
+    if (!incoming.every(isValidHistoryRecord)) {
+      reply.code(400);
+      return { error: "invalid_history_run" };
+    }
+    const mode = String(body?.mode ?? "merge") === "replace" ? "replace" : "merge";
+    if (mode === "replace") {
+      writeOptimizerJobHistoryRaw(incoming);
+      return { ok: true, imported: incoming.length, total: incoming.length, mode };
+    }
+
+    const merged = [...readOptimizerJobHistoryRaw(), ...incoming];
+    const byId = new Map<string, unknown>();
+    for (const row of merged) {
+      const id = getHistoryRecordId(row);
+      if (!id) continue;
+      const existing = byId.get(id);
+      if (!existing || getHistoryRecordEndedAtMs(row) >= getHistoryRecordEndedAtMs(existing)) {
+        byId.set(id, row);
+      }
+    }
+    const deduped = Array.from(byId.values()).sort((a, b) => getHistoryRecordEndedAtMs(b) - getHistoryRecordEndedAtMs(a));
+    writeOptimizerJobHistoryRaw(deduped);
+    return { ok: true, imported: incoming.length, total: deduped.length, mode };
   });
 
 
