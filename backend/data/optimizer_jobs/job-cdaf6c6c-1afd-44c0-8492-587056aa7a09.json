@@ -1,0 +1,313 @@
+{
+  "jobId": "cdaf6c6c-1afd-44c0-8492-587056aa7a09",
+  "status": "cancelled",
+  "startedAtMs": 1772284497355,
+  "updatedAtMs": 1772284499016,
+  "finishedAtMs": 1772284499010,
+  "runPayload": {
+    "tapeIds": [
+      "tape-2026-02-28T13-12-14-030Z",
+      "tape-2026-02-25T13-46-38-162Z",
+      "tape-2026-02-25T13-39-14-502Z"
+    ],
+    "candidates": 2000,
+    "seed": 1,
+    "ranges": {
+      "priceTh": {
+        "min": 0.5,
+        "max": 6
+      },
+      "oivTh": {
+        "min": 0.5,
+        "max": 15
+      },
+      "tp": {
+        "min": 2,
+        "max": 12
+      },
+      "sl": {
+        "min": 2,
+        "max": 12
+      },
+      "offset": {
+        "min": 0.001,
+        "max": 1
+      },
+      "timeoutSec": {
+        "min": 5,
+        "max": 60
+      },
+      "rearmMs": {
+        "min": 0,
+        "max": 3000
+      }
+    },
+    "precision": {
+      "priceTh": 2,
+      "oivTh": 2,
+      "tp": 1,
+      "sl": 1,
+      "offset": 3,
+      "timeoutSec": 0,
+      "rearmMs": 0
+    },
+    "directionMode": "both",
+    "optTfMin": 1,
+    "minTrades": 1,
+    "excludeNegative": true,
+    "rememberNegatives": true
+  },
+  "results": [
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 1.79,
+        "oivThresholdPct": 14.72,
+        "tpRoiPct": 10.6,
+        "slRoiPct": 5.3,
+        "entryOffsetPct": 0.683,
+        "timeoutSec": 34,
+        "rearmMs": 648
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 25,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 7,
+      "ordersFilled": 0,
+      "ordersExpired": 6,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 1.07,
+        "oivThresholdPct": 1.52,
+        "tpRoiPct": 5.2,
+        "slRoiPct": 3.3,
+        "entryOffsetPct": 0.708,
+        "timeoutSec": 37,
+        "rearmMs": 1138
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 1.95,
+        "oivThresholdPct": 11.39,
+        "tpRoiPct": 11.3,
+        "slRoiPct": 3.8,
+        "entryOffsetPct": 0.335,
+        "timeoutSec": 59,
+        "rearmMs": 1166
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 5.3,
+        "oivThresholdPct": 5.29,
+        "tpRoiPct": 2.2,
+        "slRoiPct": 11.5,
+        "entryOffsetPct": 0.232,
+        "timeoutSec": 51,
+        "rearmMs": 78
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 4,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 1,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 2.61,
+        "oivThresholdPct": 1.18,
+        "tpRoiPct": 5.5,
+        "slRoiPct": 3.3,
+        "entryOffsetPct": 0.81,
+        "timeoutSec": 27,
+        "rearmMs": 442
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 3.86,
+        "oivThresholdPct": 12.02,
+        "tpRoiPct": 11.3,
+        "slRoiPct": 2.1,
+        "entryOffsetPct": 0.032,
+        "timeoutSec": 60,
+        "rearmMs": 2411
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 3,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 1,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 3,
+        "oivThresholdPct": 6.18,
+        "tpRoiPct": 8.7,
+        "slRoiPct": 11.7,
+        "entryOffsetPct": 0.734,
+        "timeoutSec": 32,
+        "rearmMs": 1247
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 1.3,
+        "oivThresholdPct": 13.58,
+        "tpRoiPct": 9.5,
+        "slRoiPct": 8.4,
+        "entryOffsetPct": 0.579,
+        "timeoutSec": 35,
+        "rearmMs": 157
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 2.82,
+        "oivThresholdPct": 8.67,
+        "tpRoiPct": 11.5,
+        "slRoiPct": 5.4,
+        "entryOffsetPct": 0.777,
+        "timeoutSec": 20,
+        "rearmMs": 2733
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 4551,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 5.68,
+        "oivThresholdPct": 6.76,
+        "tpRoiPct": 6.3,
+        "slRoiPct": 5.5,
+        "entryOffsetPct": 0.022,
+        "timeoutSec": 41,
+        "rearmMs": 2247
+      }
+    }
+  ],
+  "message": "Optimization cancelled."
+}
