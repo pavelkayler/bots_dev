@@ -71,7 +71,9 @@ const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
 const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const SELECTED_TAPES_STORAGE_KEY = "bots_dev.optimizer.selectedTapeIds";
-const TOP_RESULTS_CACHE_KEY = "bots_dev.optimizer.topResultsCache.v1";
+const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
+const TOP_RESULTS_LOOP_STORAGE_KEY = "bots_dev.optimizer.topResults.loop";
+
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
@@ -409,20 +411,24 @@ function loadStoredPositiveInt(key: string, fallback: string, min: number): stri
   }
 }
 
+function safeJsonParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
+function saveJson(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
 export function OptimizerPage() {
   const { conn, lastServerTime, wsUrl, streams } = useWsFeedLite();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
-  const [selectedTapeIds, setSelectedTapeIds] = useState<string[]>([]);
+  const [selectedTapeIds, setSelectedTapeIds] = useState<string[]>(() => {
+  const arr = safeJsonParse<unknown>(localStorage.getItem(SELECTED_TAPES_STORAGE_KEY));
+  if (Array.isArray(arr) && arr.every((x) => typeof x === "string")) return arr;
+  return [];
+});
   const [recordingTapeId, setRecordingTapeId] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(SELECTED_TAPES_STORAGE_KEY, JSON.stringify(selectedTapeIds));
-    } catch {
-      // ignore
-    }
-  }, [selectedTapeIds]);
   const [isRecording, setIsRecording] = useState(false);
   const [tapesRefreshKey, setTapesRefreshKey] = useState(0);
   const [tapeBoundsById, setTapeBoundsById] = useState<Record<string, TapeBounds>>({});
@@ -455,8 +461,21 @@ export function OptimizerPage() {
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
 
-  const [results, setResults] = useState<OptimizationResult[]>([]);
-  const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>([]);
+  const [results, setResults] = useState<OptimizationResult[]>(() => safeJsonParse<OptimizationResult[]>(localStorage.getItem(TOP_RESULTS_SINGLE_STORAGE_KEY)) ?? []);
+  const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>(() => safeJsonParse<OptimizerResultRow[]>(localStorage.getItem(TOP_RESULTS_LOOP_STORAGE_KEY)) ?? []);
+
+useEffect(() => {
+  saveJson(SELECTED_TAPES_STORAGE_KEY, selectedTapeIds);
+}, [selectedTapeIds]);
+
+useEffect(() => {
+  saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, results);
+}, [results]);
+
+useEffect(() => {
+  saveJson(TOP_RESULTS_LOOP_STORAGE_KEY, loopAggRows);
+}, [loopAggRows]);
+
   const [, setLoopAggMap] = useState<Map<string, OptimizerResultRow>>(new Map());
   const [page, setPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
@@ -537,33 +556,7 @@ export function OptimizerPage() {
     return { pct, startedAtMs };
   }, []);
 
-  
-  const loadTopResultsCache = useCallback(() => {
-    try {
-      const raw = localStorage.getItem(TOP_RESULTS_CACHE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as any;
-      if (!parsed || typeof parsed !== "object") return null;
-      if (typeof parsed.jobId !== "string") return null;
-      if (!Array.isArray(parsed.results)) return null;
-      return parsed as { jobId: string; results: any[]; totalRows?: number; savedAtMs?: number };
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const saveTopResultsCache = useCallback((jobId: string, results: any[], totalRows: number) => {
-    try {
-      localStorage.setItem(
-        TOP_RESULTS_CACHE_KEY,
-        JSON.stringify({ jobId, results, totalRows, savedAtMs: Date.now() })
-      );
-    } catch {
-      // ignore
-    }
-  }, []);
-
-const isNoCurrentJobError = useCallback((err: unknown): boolean => {
+  const isNoCurrentJobError = useCallback((err: unknown): boolean => {
     const message = String((err as any)?.message ?? err).toLowerCase();
     return message.includes("404") || message.includes("not found") || message.includes("no current job");
   }, []);
@@ -613,17 +606,6 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
     setRememberNegatives(localStorage.getItem(REMEMBER_NEGATIVES_STORAGE_KEY) === "1");
     setLoopRunsCount(loadStoredPositiveInt(LOOP_RUNS_COUNT_STORAGE_KEY, "3", 1));
     setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
-    try {
-      const rawTapes = localStorage.getItem(SELECTED_TAPES_STORAGE_KEY);
-      if (rawTapes) {
-        const arr = JSON.parse(rawTapes);
-        if (Array.isArray(arr) && arr.every((x) => typeof x === "string")) {
-          setSelectedTapeIds(arr);
-        }
-      }
-    } catch {
-      // ignore
-    }
     void refreshStatus();
     void refreshJobHistory();
     setTapesRefreshKey((prev) => prev + 1);
@@ -652,7 +634,9 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
           setDone(progress.pct);
           setTotal(statusRes.total);
         } else {
-          clearSingleJobState();
+          setSingleJobId(null);
+          setJobStatus("idle");
+          setOptimizerPaused(false);
           return;
         }
         if (statusRes.startedAtMs) setJobStartedAtMs(statusRes.startedAtMs);
@@ -672,7 +656,9 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
         setError(statusRes.message ?? "Optimization job failed.");
       } catch (e: any) {
         if (isNoCurrentJobError(e)) {
-          clearSingleJobState();
+          setSingleJobId(null);
+          setJobStatus("idle");
+          setOptimizerPaused(false);
           return;
         }
         setError(String(e?.message ?? e));
@@ -775,16 +761,6 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
   const activeLoopJobId = loopJobId ?? lastNonNullLoopJobIdRef.current;
   const activeJobId = loopActive ? activeLoopJobId : singleJobId;
 
-  useEffect(() => {
-    if (!activeJobId) return;
-    const cached = loadTopResultsCache();
-    if (cached && cached.jobId === activeJobId && Array.isArray(cached.results) && cached.results.length > 0) {
-      setResults(cached.results as any);
-      setPage(1);
-      setTotalRows(typeof cached.totalRows === "number" ? cached.totalRows : cached.results.length);
-    }
-  }, [activeJobId, loadTopResultsCache]);
-
   const selectedTapeBounds = useMemo(() => {
     const tapeId = selectedTapeIds[0];
     if (!tapeId) return null;
@@ -845,10 +821,6 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
         }
         setLoopStatus(next);
         setLoopJobId(next.loop?.lastJobId ?? null);
-        const loopTapes = next.loop?.runPayload?.tapeIds;
-        if ((next.loop?.isRunning || next.loop?.isPaused) && Array.isArray(loopTapes) && loopTapes.every((x) => typeof x === "string")) {
-          setSelectedTapeIds(loopTapes);
-        }
       } catch {
         return;
       }
@@ -1089,9 +1061,6 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
           return b.trades - a.trades;
         });
         setLoopAggRows(() => sortedRows);
-         if (nextPage === 1) {
-           saveTopResultsCache(activeJobId, sortedRows as any, sortedRows.length);
-         }
         setTotalRows(sortedRows.length);
         return next;
       });
@@ -1102,9 +1071,6 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
     setResults((prev) => (areTopResultsSimilar(prev, nextResults) ? prev : nextResults));
     setPage((prev) => (prev === res.page ? prev : res.page));
     setTotalRows((prev) => (prev === res.totalRows ? prev : res.totalRows));
-    if (nextPage === 1) {
-      saveTopResultsCache(activeJobId, nextResults as any, res.totalRows);
-    }
   }
 
   useEffect(() => {
@@ -1116,7 +1082,9 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
       } catch (e: any) {
         if (!alive) return;
         if (isNoCurrentJobError(e)) {
-          clearSingleJobState();
+          setSingleJobId(null);
+          setJobStatus("idle");
+          setOptimizerPaused(false);
           return;
         }
       }
@@ -1248,7 +1216,9 @@ const isNoCurrentJobError = useCallback((err: unknown): boolean => {
         }
       } catch (e: any) {
         if (isNoCurrentJobError(e)) {
-          clearSingleJobState();
+          setSingleJobId(null);
+          setJobStatus("idle");
+          setOptimizerPaused(false);
           return;
         }
         setError(String(e?.message ?? e));

@@ -1,8 +1,8 @@
 {
   "jobId": "2dd8a218-bbe0-4efd-aad0-30edd6f1494d",
-  "status": "running",
+  "status": "paused",
   "startedAtMs": 1772297955560,
-  "updatedAtMs": 1772298034728,
+  "updatedAtMs": 1772300080926,
   "finishedAtMs": null,
   "runPayload": {
     "tapeIds": [
