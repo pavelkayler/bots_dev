@@ -84,6 +84,31 @@ export function getTapePath(id: string): string {
   return path.join(getTapesDir(), `${safeId(id)}.jsonl`);
 }
 
+export function listTapeSegments(baseTapeId: string): string[] {
+  const safeBaseId = safeId(baseTapeId);
+  const escapedBaseId = safeBaseId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  ensureDir();
+  const tapesDir = getTapesDir();
+  const files = fs.readdirSync(tapesDir).filter((file) => file.endsWith(".jsonl"));
+  const ids = files.map((file) => file.slice(0, -".jsonl".length));
+  const segmentIds = ids
+    .map((id) => {
+      if (id === safeBaseId) return { id, seg: 1 };
+      const match = id.match(new RegExp(`^${escapedBaseId}-seg(\\d+)$`));
+      if (!match) return null;
+      const seg = Number(match[1]);
+      if (!Number.isFinite(seg) || seg < 2) return null;
+      return { id, seg: Math.floor(seg) };
+    })
+    .filter((value): value is { id: string; seg: number } => Boolean(value));
+
+  return segmentIds.sort((a, b) => a.seg - b.seg).map((row) => row.id);
+}
+
+export function getTapeSizeBytes(tapeId: string): number {
+  return fs.statSync(getTapePath(tapeId)).size;
+}
+
 export function resolveTapePath(id: string): string {
   const tapePath = getTapePath(id);
   const realTapesDir = fs.realpathSync.native(getTapesDir());
