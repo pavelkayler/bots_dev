@@ -181,6 +181,9 @@ export async function getStatus(): Promise<{ isRecording: boolean; tapeId: strin
 export async function runOptimizationJob(payload: {
   tapeId?: string;
   tapeIds?: string[];
+  datasetMode?: "snapshot" | "followTail";
+  timeRangeFromTs?: number | null;
+  timeRangeToTs?: number | null;
   candidates: number;
   seed: number;
   minTrades?: number;
@@ -279,6 +282,9 @@ export async function resumeCurrentJob(): Promise<{ ok: true }> {
 export async function startOptimizerLoop(payload: {
   tapeId?: string;
   tapeIds?: string[];
+  datasetMode?: "snapshot" | "followTail";
+  timeRangeFromTs?: number | null;
+  timeRangeToTs?: number | null;
   candidates: number;
   seed: number;
   minTrades?: number;

@@ -348,6 +348,9 @@ export function OptimizerPage() {
   const [seed, setSeed] = useState("1");
   const [minTrades, setMinTrades] = useState("1");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
+  const [datasetMode, setDatasetMode] = useState<"snapshot" | "followTail">("snapshot");
+  const [timeRangeFromTs, setTimeRangeFromTs] = useState("");
+  const [timeRangeToTs, setTimeRangeToTs] = useState("");
   const [optTfMin, setOptTfMin] = useState<string>("1");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
@@ -610,6 +613,8 @@ export function OptimizerPage() {
   const jobActive = jobStatus === "running" || jobStatus === "paused";
   const activeLoopJobId = loopJobId ?? lastNonNullLoopJobIdRef.current;
   const activeJobId = loopActive ? activeLoopJobId : singleJobId;
+  const timeRangeFromTsNum = parseMaybeNumber(timeRangeFromTs);
+  const timeRangeToTsNum = parseMaybeNumber(timeRangeToTs);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -675,6 +680,9 @@ export function OptimizerPage() {
       };
       await startOptimizerLoop({
         tapeIds: selectedTapeIds,
+        datasetMode,
+        timeRangeFromTs: timeRangeFromTsNum ?? null,
+        timeRangeToTs: timeRangeToTsNum ?? null,
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -861,6 +869,9 @@ export function OptimizerPage() {
       };
       const runRes = await runOptimizationJob({
         tapeIds: selectedTapeIds,
+        datasetMode,
+        timeRangeFromTs: timeRangeFromTsNum ?? null,
+        timeRangeToTs: timeRangeToTsNum ?? null,
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -1341,6 +1352,27 @@ export function OptimizerPage() {
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>runsCount</Form.Label>
                 <Form.Control value={loopRunsCount} onChange={(e) => setLoopRunsCount(e.currentTarget.value)} type="number" min={1} step={1} disabled={loopInfinite} />
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>dataset</Form.Label>
+                <Form.Select value={datasetMode} onChange={(e) => setDatasetMode(e.currentTarget.value as "snapshot" | "followTail")}>
+                  <option value="snapshot">Snapshot</option>
+                  <option value="followTail">Follow Tail</option>
+                </Form.Select>
+                </Form.Group>
+              </Col>
+              <Col md={3} sm={6} xs={12}>
+                <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>from ts</Form.Label>
+                <Form.Control value={timeRangeFromTs} onChange={(e) => setTimeRangeFromTs(e.currentTarget.value)} type="number" min={0} step={1} />
+                </Form.Group>
+              </Col>
+              <Col md={3} sm={6} xs={12}>
+                <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>to ts</Form.Label>
+                <Form.Control value={timeRangeToTs} onChange={(e) => setTimeRangeToTs(e.currentTarget.value)} type="number" min={0} step={1} />
                 </Form.Group>
               </Col>
               <Col xs={12}>
