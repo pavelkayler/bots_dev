@@ -161,6 +161,13 @@ export type OptimizerSortKeyExtended =
   | "ordersFilled"
   | "ordersExpired";
 
+
+export type OptimizerHistoryExport = {
+  exportedAtMs: number;
+  runs: unknown[];
+  loopState?: unknown;
+};
+
 export async function listTapes(): Promise<{ tapes: OptimizerTape[] }> {
   const base = getApiBase();
   return await getJson<{ tapes: OptimizerTape[] }>(`${base}/api/optimizer/tapes`);
@@ -344,4 +351,15 @@ export async function getDoctorStatus(): Promise<DoctorStatus> {
 export async function getLastSoakSnapshot(): Promise<SoakLastStatus> {
   const base = getApiBase();
   return await getJson<SoakLastStatus>(`${base}/api/soak/last`);
+}
+
+
+export async function exportOptimizerHistory(): Promise<OptimizerHistoryExport> {
+  const base = getApiBase();
+  return await getJson<OptimizerHistoryExport>(`${base}/api/optimizer/history/export`);
+}
+
+export async function importOptimizerHistory(payload: { runs: unknown[]; mode?: "merge" | "replace" }): Promise<{ ok: true; imported: number; total: number; mode: "merge" | "replace" }> {
+  const base = getApiBase();
+  return await postJson<{ ok: true; imported: number; total: number; mode: "merge" | "replace" }>(`${base}/api/optimizer/history/import`, payload);
 }
