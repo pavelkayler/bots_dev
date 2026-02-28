@@ -723,12 +723,17 @@ export function OptimizerPage() {
   useEffect(() => {
     const prev = prevLoopJobIdRef.current;
     if (loopJobId !== null && prev !== loopJobId) {
-      resetJobProgressState();
-      setDone(lastPctByJobIdRef.current[loopJobId] ?? 0);
+      // Do not reset to 0 first: it causes visible 0->100->0 flicker.
+      // Show last reported pct for the new jobId (or 0 if we truly have no data yet).
+      const pct = lastPctByJobIdRef.current[loopJobId] ?? 0;
+      setDone(pct);
+      setTotal(100);
       setJobStartedAtMs(startedAtByJobIdRef.current[loopJobId] ?? null);
+      setJobUpdatedAtMs(Date.now());
+      // Keep jobStatus as-is; it will be updated by WS/progress polling.
     }
     prevLoopJobIdRef.current = loopJobId;
-  }, [loopJobId, resetJobProgressState]);
+  }, [loopJobId]);
 
   useEffect(() => {
     loopJobIdRef.current = loopJobId;
@@ -1281,11 +1286,18 @@ export function OptimizerPage() {
   const historyHoursByJobId = useMemo(() => {
     const map: Record<string, string> = {};
     jobHistory.forEach((row) => {
-      if ((row.runPayload.tapeIds?.length ?? 0) !== 1) {
+      const tapeIds = row.runPayload.tapeIds ?? [];
+      if (tapeIds.length < 1) {
         map[row.jobId] = "-";
         return;
       }
-      const tapeId = row.runPayload.tapeIds[0];
+      const baseIds = Array.from(new Set(tapeIds.map((id) => String(id).replace(/-seg\d+$/, ""))));
+      if (baseIds.length !== 1) {
+        // Multi-tape runs are not resolved to a single time window in the UI.
+        map[row.jobId] = "-";
+        return;
+      }
+      const tapeId = baseIds[0];
       const bounds = tapeBoundsById[tapeId];
       let fromTs = row.runPayload.timeRangeFromTs;
       let toTs = row.runPayload.timeRangeToTs;

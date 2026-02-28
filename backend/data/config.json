@@ -112,15 +112,15 @@
       "HNTUSDT",
       "WHITEWHALEUSDT"
     ],
-    "klineTfMin": 5
+    "klineTfMin": 1
   },
   "fundingCooldown": {
-    "beforeMin": 15,
-    "afterMin": 30
+    "beforeMin": 5,
+    "afterMin": 10
   },
   "signals": {
-    "priceThresholdPct": 0.6,
-    "oivThresholdPct": 0.8,
+    "priceThresholdPct": 0.25,
+    "oivThresholdPct": 0.35,
     "requireFundingSign": true,
     "dailyTriggerMin": 1,
     "dailyTriggerMax": 999
@@ -132,14 +132,14 @@
     "enabled": true,
     "directionMode": "both",
     "marginUSDT": 100,
-    "leverage": 6,
-    "entryOffsetPct": 0.015,
-    "entryTimeoutSec": 90,
-    "tpRoiPct": 3,
+    "leverage": 10,
+    "entryOffsetPct": 0.008,
+    "entryTimeoutSec": 30,
+    "tpRoiPct": 2.5,
     "slRoiPct": 2,
     "makerFeeRate": 0.0002,
-    "applyFunding": true,
-    "rearmDelayMs": 4000,
+    "applyFunding": false,
+    "rearmDelayMs": 1500,
     "maxDailyLossUSDT": 0
   }
 }

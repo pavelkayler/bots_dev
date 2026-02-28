@@ -1,0 +1,71 @@
+{
+  "jobId": "0df2f9da-3e6b-4ba9-8b0e-7fd8e5f1a2c3",
+  "status": "cancelled",
+  "startedAtMs": 1772289687147,
+  "updatedAtMs": 1772289687530,
+  "finishedAtMs": 1772289687528,
+  "runPayload": {
+    "tapeIds": [
+      "tape-2026-02-28T14-37-55-002Z"
+    ],
+    "followTail": {
+      "datasetMode": "followTail",
+      "baseTapeIds": [
+        "tape-2026-02-28T14-37-55-002Z"
+      ],
+      "explicitTapeIds": [],
+      "timeRangeFromTs": 1772289475926,
+      "timeRangeToTs": 1772289476245
+    },
+    "candidates": 200,
+    "seed": 1,
+    "ranges": {
+      "priceTh": {
+        "min": 0.5,
+        "max": 6
+      },
+      "oivTh": {
+        "min": 0.5,
+        "max": 15
+      },
+      "tp": {
+        "min": 2,
+        "max": 12
+      },
+      "sl": {
+        "min": 2,
+        "max": 12
+      },
+      "offset": {
+        "min": 0.001,
+        "max": 1
+      },
+      "timeoutSec": {
+        "min": 5,
+        "max": 60
+      },
+      "rearmMs": {
+        "min": 0,
+        "max": 3000
+      }
+    },
+    "precision": {
+      "priceTh": 2,
+      "oivTh": 2,
+      "tp": 1,
+      "sl": 1,
+      "offset": 3,
+      "timeoutSec": 0,
+      "rearmMs": 0
+    },
+    "directionMode": "both",
+    "optTfMin": 1,
+    "minTrades": 1,
+    "excludeNegative": true,
+    "rememberNegatives": true,
+    "timeRangeFromTs": 1772289475926,
+    "timeRangeToTs": 1772289476245
+  },
+  "results": [],
+  "message": "Optimization cancelled."
+}
