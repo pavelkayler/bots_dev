@@ -66,6 +66,7 @@ export class DemoBroker {
   private executionsBusy = false;
   private missingKeysLogged = false;
   private openOrdersCache: Array<{ symbol: string; orderLinkId: string }> = [];
+  private openOrderSymbolsCache = new Set<string>();
   private metaBySymbol = new Map<string, LinearInstrumentMeta>();
   private leverageSet = new Set<string>();
   private missingMetaLogged = new Set<string>();
@@ -137,6 +138,7 @@ export class DemoBroker {
 
   start() {
     if (this.reconcileTimer) return;
+    void this.reconcile();
     this.reconcileTimer = setInterval(() => {
       void this.reconcile();
     }, 1500);
@@ -320,6 +322,16 @@ export class DemoBroker {
     }
 
     if (st.positionOpen || st.pendingEntry) return;
+    if (!st.positionOpen && !st.pendingEntry && this.openOrderSymbolsCache.has(args.symbol)) {
+      this.logger.log({
+        ts: args.nowMs,
+        type: "DEMO_ENTRY_SKIP_OPEN_ORDERS",
+        symbol: args.symbol,
+        payload: { reason: "server_has_open_orders" },
+      });
+      st.cooldownUntil = args.nowMs + 2000;
+      return;
+    }
 
     const side = args.signal === "LONG" ? "Buy" : "Sell";
     const positionIdx = args.signal === "LONG" ? 1 : 2;
@@ -447,6 +459,9 @@ export class DemoBroker {
       this.openOrdersCache = openOrders
         .map((o) => ({ symbol: String(o.symbol ?? ""), orderLinkId: String(o.orderLinkId ?? "") }))
         .filter((o) => o.symbol.length > 0 && o.orderLinkId.length > 0);
+      this.openOrderSymbolsCache = new Set(
+        openOrders.map((o) => String((o as any).symbol ?? "")).filter((s) => s.length > 0)
+      );
 
       const positionBySymbol = new Map(positions.map((p) => [String(p.symbol ?? ""), p]));
 
