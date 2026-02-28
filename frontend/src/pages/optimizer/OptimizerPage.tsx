@@ -66,7 +66,8 @@ const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 
-type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number; runsTotal: number };
+type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number; runsTotal: number; startTs: number | null; endTs: number | null };
+type TapeBounds = { startTs: number | null; endTs: number | null };
 
 
 const TapeSizeCell = memo(function TapeSizeCell({
@@ -152,6 +153,7 @@ const TapesTable = memo(function TapesTable({
   refreshKey,
   recordingTapeId,
   onError,
+  onTapesLoaded,
 }: {
   isRecording: boolean;
   selectedTapeIds: string[];
@@ -159,6 +161,7 @@ const TapesTable = memo(function TapesTable({
   refreshKey: number;
   recordingTapeId: string | null;
   onError: (message: string) => void;
+  onTapesLoaded: (rows: TapeRow[]) => void;
 }) {
   const [rows, setRows] = useState<TapeRow[]>([]);
 
@@ -168,7 +171,7 @@ const TapesTable = memo(function TapesTable({
       const nextTapes = res.tapes ?? [];
       setRows((prev) => {
         const prevById = new Map(prev.map((r) => [r.id, r]));
-        return nextTapes.map((t) => {
+        const nextRows = nextTapes.map((t) => {
           const next: TapeRow = {
             id: t.id,
             createdAt: t.createdAt,
@@ -176,17 +179,21 @@ const TapesTable = memo(function TapesTable({
             tf: t.meta?.klineTfMin ?? null,
             initialBytes: Number(t.fileSizeBytes) || 0,
             runsTotal: Number(t.runsTotal) || 0,
+            startTs: Number.isFinite(Number(t.startTs)) ? Number(t.startTs) : null,
+            endTs: Number.isFinite(Number(t.endTs)) ? Number(t.endTs) : null,
           };
           const old = prevById.get(t.id);
           if (!old) return next;
-          if (old.createdAt === next.createdAt && old.symbolsCount === next.symbolsCount && old.tf === next.tf && old.initialBytes === next.initialBytes && old.runsTotal === next.runsTotal) return old;
+          if (old.createdAt === next.createdAt && old.symbolsCount === next.symbolsCount && old.tf === next.tf && old.initialBytes === next.initialBytes && old.runsTotal === next.runsTotal && old.startTs === next.startTs && old.endTs === next.endTs) return old;
           return next;
         });
+        onTapesLoaded(nextRows);
+        return nextRows;
       });
     } catch (e: any) {
       onError(String(e?.message ?? e));
     }
-  }, [onError]);
+  }, [onError, onTapesLoaded]);
 
   useEffect(() => {
     void fetchTapes();
@@ -237,6 +244,34 @@ function parseMaybeNumber(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
+}
+
+function toDatetimeLocalValue(tsMs: number | null | undefined): string {
+  if (!Number.isFinite(tsMs)) return "";
+  const d = new Date(Number(tsMs));
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+}
+
+function parseDatetimeLocalToTs(value: string): number | undefined {
+  if (!value.trim()) return undefined;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) ? ts : undefined;
+}
+
+function formatTs(tsMs: number | null | undefined): string {
+  if (!Number.isFinite(tsMs)) return "-";
+  const d = new Date(Number(tsMs));
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
 function isValidRangeState(value: unknown): value is RangeState {
@@ -342,6 +377,7 @@ export function OptimizerPage() {
   const [recordingTapeId, setRecordingTapeId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [tapesRefreshKey, setTapesRefreshKey] = useState(0);
+  const [tapeBoundsById, setTapeBoundsById] = useState<Record<string, TapeBounds>>({});
   const [error, setError] = useState<string | null>(null);
 
   const [candidates, setCandidates] = useState("200");
@@ -613,8 +649,38 @@ export function OptimizerPage() {
   const jobActive = jobStatus === "running" || jobStatus === "paused";
   const activeLoopJobId = loopJobId ?? lastNonNullLoopJobIdRef.current;
   const activeJobId = loopActive ? activeLoopJobId : singleJobId;
-  const timeRangeFromTsNum = parseMaybeNumber(timeRangeFromTs);
-  const timeRangeToTsNum = parseMaybeNumber(timeRangeToTs);
+
+  const selectedTapeBounds = useMemo(() => {
+    const tapeId = selectedTapeIds[0];
+    if (!tapeId) return null;
+    return tapeBoundsById[tapeId] ?? null;
+  }, [selectedTapeIds, tapeBoundsById]);
+
+  const effectiveTimeRangePreview = useMemo(() => {
+    const bounds = selectedTapeBounds;
+    let from = parseDatetimeLocalToTs(timeRangeFromTs);
+    let to = parseDatetimeLocalToTs(timeRangeToTs);
+    if (from == null) from = bounds?.startTs ?? undefined;
+    if (to == null) to = bounds?.endTs ?? undefined;
+    if (from != null && bounds?.startTs != null && from < bounds.startTs) from = bounds.startTs;
+    if (to != null && bounds?.endTs != null && to > bounds.endTs) to = bounds.endTs;
+    const invalid = from != null && to != null && from > to;
+    return { from, to, invalid };
+  }, [selectedTapeBounds, timeRangeFromTs, timeRangeToTs]);
+
+  const resolveEffectiveTimeRange = useCallback(() => {
+    const bounds = selectedTapeBounds;
+    let from = parseDatetimeLocalToTs(timeRangeFromTs);
+    let to = parseDatetimeLocalToTs(timeRangeToTs);
+    if (from == null) from = bounds?.startTs ?? undefined;
+    if (to == null) to = bounds?.endTs ?? undefined;
+    if (from != null && bounds?.startTs != null && from < bounds.startTs) from = bounds.startTs;
+    if (to != null && bounds?.endTs != null && to > bounds.endTs) to = bounds.endTs;
+    if (from != null && to != null && from > to) {
+      return { error: "Invalid time range: from is after to." };
+    }
+    return { from, to };
+  }, [selectedTapeBounds, timeRangeFromTs, timeRangeToTs]);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -664,6 +730,11 @@ export function OptimizerPage() {
 
   async function onStartLoop() {
     if (!selectedTapeIds.length || rangeError) return;
+    const effectiveRange = resolveEffectiveTimeRange();
+    if ("error" in effectiveRange) {
+      setError(effectiveRange.error ?? "Invalid time range: from is after to.");
+      return;
+    }
     setError(null);
     lastTableSourceRef.current = "loop";
     setLoopBusy(true);
@@ -681,8 +752,8 @@ export function OptimizerPage() {
       await startOptimizerLoop({
         tapeIds: selectedTapeIds,
         datasetMode,
-        timeRangeFromTs: timeRangeFromTsNum ?? null,
-        timeRangeToTs: timeRangeToTsNum ?? null,
+        timeRangeFromTs: effectiveRange.from ?? null,
+        timeRangeToTs: effectiveRange.to ?? null,
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -852,6 +923,11 @@ export function OptimizerPage() {
 
   async function onRunOptimization() {
     if (!selectedTapeIds.length || rangeError) return;
+    const effectiveRange = resolveEffectiveTimeRange();
+    if ("error" in effectiveRange) {
+      setError(effectiveRange.error ?? "Invalid time range: from is after to.");
+      return;
+    }
     setError(null);
     lastTableSourceRef.current = "single";
     setDone(0);
@@ -870,8 +946,8 @@ export function OptimizerPage() {
       const runRes = await runOptimizationJob({
         tapeIds: selectedTapeIds,
         datasetMode,
-        timeRangeFromTs: timeRangeFromTsNum ?? null,
-        timeRangeToTs: timeRangeToTsNum ?? null,
+        timeRangeFromTs: effectiveRange.from ?? null,
+        timeRangeToTs: effectiveRange.to ?? null,
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -1194,6 +1270,32 @@ export function OptimizerPage() {
   const totalPages = Math.max(1, Math.ceil((isLoopDisplay ? displayedRows.length : totalRows) / pageSize));
   const jobHistoryCurrentPage = Math.floor(jobHistoryOffset / jobHistoryLimit) + 1;
   const jobHistoryTotalPages = Math.max(1, Math.ceil(jobHistoryTotal / jobHistoryLimit));
+  const historyHoursByJobId = useMemo(() => {
+    const map: Record<string, string> = {};
+    jobHistory.forEach((row) => {
+      if ((row.runPayload.tapeIds?.length ?? 0) !== 1) {
+        map[row.jobId] = "-";
+        return;
+      }
+      const tapeId = row.runPayload.tapeIds[0];
+      const bounds = tapeBoundsById[tapeId];
+      let fromTs = row.runPayload.timeRangeFromTs;
+      let toTs = row.runPayload.timeRangeToTs;
+      if (!Number.isFinite(Number(fromTs))) fromTs = bounds?.startTs ?? undefined;
+      if (!Number.isFinite(Number(toTs))) toTs = bounds?.endTs ?? undefined;
+      if (!Number.isFinite(Number(fromTs)) || !Number.isFinite(Number(toTs))) {
+        map[row.jobId] = "-";
+        return;
+      }
+      const delta = Number(toTs) - Number(fromTs);
+      if (!Number.isFinite(delta) || delta < 0) {
+        map[row.jobId] = "-";
+        return;
+      }
+      map[row.jobId] = (delta / 3600000).toFixed(2);
+    });
+    return map;
+  }, [jobHistory, tapeBoundsById]);
 
   useEffect(() => {
     setPage((prev) => Math.min(prev, totalPages));
@@ -1285,6 +1387,13 @@ export function OptimizerPage() {
               refreshKey={tapesRefreshKey}
               recordingTapeId={recordingTapeId}
               onError={setError}
+              onTapesLoaded={(rows) => {
+                const next: Record<string, TapeBounds> = {};
+                rows.forEach((row) => {
+                  next[row.id] = { startTs: row.startTs, endTs: row.endTs };
+                });
+                setTapeBoundsById(next);
+              }}
             />
 
             <details style={{ marginBottom: 12 }}>
@@ -1365,15 +1474,37 @@ export function OptimizerPage() {
               </Col>
               <Col md={3} sm={6} xs={12}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>from ts</Form.Label>
-                <Form.Control value={timeRangeFromTs} onChange={(e) => setTimeRangeFromTs(e.currentTarget.value)} type="number" min={0} step={1} />
+                <Form.Label style={{ fontSize: 12 }}>from</Form.Label>
+                <Form.Control
+                  value={timeRangeFromTs}
+                  onChange={(e) => setTimeRangeFromTs(e.currentTarget.value)}
+                  type="datetime-local"
+                  min={toDatetimeLocalValue(selectedTapeBounds?.startTs)}
+                  max={toDatetimeLocalValue(selectedTapeBounds?.endTs)}
+                />
                 </Form.Group>
               </Col>
               <Col md={3} sm={6} xs={12}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>to ts</Form.Label>
-                <Form.Control value={timeRangeToTs} onChange={(e) => setTimeRangeToTs(e.currentTarget.value)} type="number" min={0} step={1} />
+                <Form.Label style={{ fontSize: 12 }}>to</Form.Label>
+                <Form.Control
+                  value={timeRangeToTs}
+                  onChange={(e) => setTimeRangeToTs(e.currentTarget.value)}
+                  type="datetime-local"
+                  min={toDatetimeLocalValue(selectedTapeBounds?.startTs)}
+                  max={toDatetimeLocalValue(selectedTapeBounds?.endTs)}
+                />
                 </Form.Group>
+              </Col>
+              <Col xs={12}>
+                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                  {selectedTapeBounds?.startTs != null && selectedTapeBounds?.endTs != null
+                    ? `Tape range: ${formatTs(selectedTapeBounds.startTs)} → ${formatTs(selectedTapeBounds.endTs)}`
+                    : "Tape range: unknown"}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                  Using: {effectiveTimeRangePreview.from != null ? formatTs(effectiveTimeRangePreview.from) : "-"} → {effectiveTimeRangePreview.to != null ? formatTs(effectiveTimeRangePreview.to) : "-"}
+                </div>
               </Col>
               <Col xs={12}>
                 <div className="d-flex flex-wrap gap-3">
@@ -1391,7 +1522,7 @@ export function OptimizerPage() {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button onClick={() => void onRunOptimization()} disabled={!(hasTapeSelected && !loopActive && !singleJobProcessActive && !rangeError)}>
+                <Button onClick={() => void onRunOptimization()} disabled={!(hasTapeSelected && !loopActive && !singleJobProcessActive && !rangeError && !effectiveTimeRangePreview.invalid)}>
                   Run optimization
                 </Button>
               </Col>
@@ -1405,7 +1536,7 @@ export function OptimizerPage() {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || !hasTapeSelected || Boolean(rangeError)}>Start loop</Button>
+                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || !hasTapeSelected || Boolean(rangeError) || effectiveTimeRangePreview.invalid}>Start loop</Button>
               </Col>
               <Col xs="auto">
                 <ButtonGroup>
@@ -1448,6 +1579,7 @@ export function OptimizerPage() {
               </tbody>
             </Table>
             {rangeError ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>{rangeError}</div> : null}
+            {effectiveTimeRangePreview.invalid ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>Invalid time range: from is after to.</div> : null}
 
             <div style={{ fontSize: 12, marginBottom: 8 }}>
               selected tapes: <b>{selectedTapeIds.length}</b>
@@ -1582,6 +1714,7 @@ export function OptimizerPage() {
                   <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("direction")}>direction</th>
                   <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("rememberNegatives")}>rememberNegatives</th>
                   <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("hideNegativeNetPnl")}>hideNegativeNetPnl</th>
+                  <th>hours</th>
                   <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("bestNetPnl")}>bestNetPnl</th>
                   <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("bestTrades")}>bestTrades</th>
                   <th style={{ cursor: "pointer" }} onClick={() => onHistorySort("bestWinRate")}>bestWinRate</th>
@@ -1611,6 +1744,7 @@ export function OptimizerPage() {
                         <td>{row.runPayload.directionMode}</td>
                         <td>{row.runPayload.rememberNegatives ? "true" : "false"}</td>
                         <td>{row.runPayload.excludeNegative ? "true" : "false"}</td>
+                        <td>{historyHoursByJobId[row.jobId] ?? "-"}</td>
                         <td>{row.summary.bestNetPnl == null ? "-" : row.summary.bestNetPnl.toFixed(4)}</td>
                         <td>{row.summary.bestTrades ?? "-"}</td>
                         <td>{row.summary.bestWinRate == null ? "-" : `${row.summary.bestWinRate.toFixed(2)}%`}</td>
@@ -1621,7 +1755,7 @@ export function OptimizerPage() {
                         <td><Button size="sm" variant="outline-secondary" onClick={() => void toggleHistoryRow(row.jobId)}>{isOpen ? "Hide" : "View"}</Button></td>
                       </tr>
                       <tr>
-                        <td colSpan={20} style={{ padding: 0, borderTop: 0 }}>
+                        <td colSpan={21} style={{ padding: 0, borderTop: 0 }}>
                           <Collapse in={isOpen}>
                             <div style={{ padding: isOpen ? 10 : 0, background: "#f5f5f5", borderLeft: "3px solid #d0d0d0", marginTop: 2 }}>
                               {historyLoading[row.jobId] ? <div style={{ fontSize: 12 }}>Loading...</div> : null}
@@ -1654,7 +1788,7 @@ export function OptimizerPage() {
                 })}
                 {!jobHistory.length ? (
                   <tr>
-                    <td colSpan={20} style={{ fontSize: 12, opacity: 0.75 }}>No completed runs</td>
+                    <td colSpan={21} style={{ fontSize: 12, opacity: 0.75 }}>No completed runs</td>
                   </tr>
                 ) : null}
               </tbody>
