@@ -105,6 +105,8 @@ type OptimizerJobHistoryRecord = {
   runPayload: {
     tapeIds: string[];
     optTfMin?: number;
+    timeRangeFromTs?: number;
+    timeRangeToTs?: number;
     candidates: number;
     seed: number;
     minTrades: number;
@@ -139,6 +141,64 @@ const lastCheckpointWriteMs = new Map<string, number>();
 const lastSnapshotWriteMs = new Map<string, number>();
 let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
 let shutdownHandler: (() => Promise<void> | void) | null = null;
+const tapeBoundsCache = new Map<string, { signature: string; startTs: number | null; endTs: number | null }>();
+
+function toBaseTapeId(tapeId: string): string {
+  const match = tapeId.match(/^(.*)-seg\d+$/);
+  return match?.[1] ? match[1] : tapeId;
+}
+
+function readTapeBounds(baseTapeId: string): { startTs: number | null; endTs: number | null } {
+  const tapesDir = getOptimizerSettings().tapesDir;
+  const segmentIds = listTapeSegments(baseTapeId);
+  const signatureParts: string[] = [];
+  for (const segmentId of segmentIds) {
+    const segmentPath = path.join(tapesDir, `${segmentId}.jsonl`);
+    try {
+      const stat = fs.statSync(segmentPath);
+      signatureParts.push(`${segmentId}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
+    } catch {
+      continue;
+    }
+  }
+  const signature = signatureParts.join("|");
+  const cached = tapeBoundsCache.get(baseTapeId);
+  if (cached && cached.signature === signature) {
+    return { startTs: cached.startTs, endTs: cached.endTs };
+  }
+
+  let startTs: number | null = null;
+  let endTs: number | null = null;
+
+  for (const segmentId of segmentIds) {
+    const segmentPath = path.join(tapesDir, `${segmentId}.jsonl`);
+    let raw = "";
+    try {
+      raw = fs.readFileSync(segmentPath, "utf8");
+    } catch {
+      continue;
+    }
+    const lines = raw.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const row = JSON.parse(trimmed) as { type?: string; ts?: unknown };
+        if (row?.type === "meta") continue;
+        const tsRaw = Number(row?.ts);
+        if (!Number.isFinite(tsRaw) || tsRaw <= 0) continue;
+        const tsMs = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
+        if (startTs == null || tsMs < startTs) startTs = tsMs;
+        if (endTs == null || tsMs > endTs) endTs = tsMs;
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  tapeBoundsCache.set(baseTapeId, { signature, startTs, endTs });
+  return { startTs, endTs };
+}
 
 function readOptimizerJobHistory(): OptimizerJobHistoryRecord[] {
   if (!fs.existsSync(OPTIMIZER_JOB_HISTORY_PATH)) return [];
@@ -162,6 +222,8 @@ function toHistoryRunPayload(runPayload: Record<string, unknown> | null): Optimi
   return {
     tapeIds,
     ...(Number.isFinite(Number((runPayload as any)?.optTfMin)) ? { optTfMin: Math.floor(Number((runPayload as any)?.optTfMin)) } : {}),
+    ...(Number.isFinite(Number((runPayload as any)?.timeRangeFromTs)) ? { timeRangeFromTs: Math.floor(Number((runPayload as any)?.timeRangeFromTs)) } : {}),
+    ...(Number.isFinite(Number((runPayload as any)?.timeRangeToTs)) ? { timeRangeToTs: Math.floor(Number((runPayload as any)?.timeRangeToTs)) } : {}),
     candidates: Math.max(0, Math.floor(Number((runPayload as any)?.candidates) || 0)),
     seed: Number((runPayload as any)?.seed) || 1,
     minTrades: Math.max(0, Math.floor(Number((runPayload as any)?.minTrades) || 0)),
@@ -1043,7 +1105,16 @@ const now = Date.now();
   });
 
   app.get("/api/optimizer/tapes", async () => {
-    return { tapes: listTapes() };
+    const tapes = listTapes().map((tape) => {
+      const baseTapeId = toBaseTapeId(tape.id);
+      const bounds = readTapeBounds(baseTapeId);
+      return {
+        ...tape,
+        startTs: bounds.startTs,
+        endTs: bounds.endTs,
+      };
+    });
+    return { tapes };
   });
 
 

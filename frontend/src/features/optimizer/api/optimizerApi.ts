@@ -6,6 +6,8 @@ export type OptimizerTape = {
   createdAt: number;
   fileSizeBytes: number;
   runsTotal: number;
+  startTs: number | null;
+  endTs: number | null;
   meta: {
     tapeId?: string;
     createdAt?: number;
@@ -114,6 +116,8 @@ export type OptimizerJobHistoryRecord = {
   runPayload: {
     tapeIds: string[];
     optTfMin?: number;
+    timeRangeFromTs?: number;
+    timeRangeToTs?: number;
     candidates: number;
     seed: number;
     minTrades: number;
