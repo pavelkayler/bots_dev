@@ -17,6 +17,7 @@ import { readLoopState, recoverLoopStateOnBoot, type OptimizerLoopRunPayload, ty
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 import {
   DEFAULT_OPTIMIZER_PRECISION,
+  type OptimizerSimulationParams,
   sortOptimizationResults,
   type OptimizerPrecision,
   type OptimizerRanges,
@@ -113,6 +114,7 @@ type OptimizerJobHistoryRecord = {
     directionMode: "both" | "long" | "short";
     rememberNegatives: boolean;
     excludeNegative: boolean;
+    sim?: OptimizerSimulationParams;
   };
   summary: {
     bestNetPnl: number | null;
@@ -230,6 +232,43 @@ function toHistoryRunPayload(runPayload: Record<string, unknown> | null): Optimi
     directionMode: ["both", "long", "short"].includes(String((runPayload as any)?.directionMode)) ? String((runPayload as any)?.directionMode) as "both" | "long" | "short" : "both",
     rememberNegatives: Boolean((runPayload as any)?.rememberNegatives),
     excludeNegative: Boolean((runPayload as any)?.excludeNegative),
+    ...(((runPayload as any)?.sim && typeof (runPayload as any).sim === "object") ? { sim: (runPayload as any).sim as OptimizerSimulationParams } : {}),
+  };
+}
+
+function parseSimParams(raw: any): OptimizerSimulationParams {
+  const base = configStore.get().paper;
+  const marginPerTrade = raw?.marginPerTrade == null || String(raw.marginPerTrade).trim() === "" ? base.marginUSDT : Number(raw.marginPerTrade);
+  if (!Number.isFinite(marginPerTrade) || marginPerTrade <= 0) {
+    throw new Error("invalid_sim_margin_per_trade");
+  }
+  const leverage = raw?.leverage == null || String(raw.leverage).trim() === "" ? base.leverage : Number(raw.leverage);
+  if (!Number.isFinite(leverage) || leverage < 1) {
+    throw new Error("invalid_sim_leverage");
+  }
+  const feeBps = raw?.feeBps == null || String(raw.feeBps).trim() === "" ? 0 : Number(raw.feeBps);
+  if (!Number.isFinite(feeBps) || feeBps < 0) {
+    throw new Error("invalid_sim_fee_bps");
+  }
+  const fundingBpsPer8h = raw?.fundingBpsPer8h == null || String(raw.fundingBpsPer8h).trim() === "" ? 0 : Number(raw.fundingBpsPer8h);
+  if (!Number.isFinite(fundingBpsPer8h)) {
+    throw new Error("invalid_sim_funding_bps_per_8h");
+  }
+  const slippageBps = raw?.slippageBps == null || String(raw.slippageBps).trim() === "" ? 0 : Number(raw.slippageBps);
+  if (!Number.isFinite(slippageBps) || slippageBps < 0) {
+    throw new Error("invalid_sim_slippage_bps");
+  }
+  const initialBalance = raw?.initialBalance == null || String(raw.initialBalance).trim() === "" ? undefined : Number(raw.initialBalance);
+  if (initialBalance != null && (!Number.isFinite(initialBalance) || initialBalance <= 0)) {
+    throw new Error("invalid_sim_initial_balance");
+  }
+  return {
+    ...(initialBalance != null ? { initialBalance } : {}),
+    marginPerTrade,
+    leverage,
+    feeBps,
+    fundingBpsPer8h,
+    slippageBps,
   };
 }
 
@@ -1167,6 +1206,13 @@ const now = Date.now();
     const minTrades = minTradesRaw == null || String(minTradesRaw).trim() === "" ? 1 : Math.floor(Number(minTradesRaw));
     const excludeNegative = Boolean(body?.excludeNegative);
     const rememberNegatives = Boolean(body?.rememberNegatives);
+    let sim: OptimizerSimulationParams;
+    try {
+      sim = parseSimParams(body?.sim);
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
+    }
     const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${directionMode}|tf=${optTfMin ?? 0}`;
 
     if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
@@ -1276,6 +1322,7 @@ const now = Date.now();
       rememberNegatives,
       ...(timeRangeFromTs != null ? { timeRangeFromTs } : {}),
       ...(timeRangeToTs != null ? { timeRangeToTs } : {}),
+      sim,
     };
     job.runPayload = runPayload;
     const resolvedRunPayload = withDatasetResolved(runPayload as Record<string, unknown>);
@@ -1385,6 +1432,13 @@ const now = Date.now();
       reply.code(400);
       return { error: "invalid_tape_id", message: "No readable tape files found" };
     }
+    let sim: OptimizerSimulationParams;
+    try {
+      sim = parseSimParams(body?.sim);
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
+    }
     const payload: OptimizerLoopRunPayload = {
       ...body,
       tapeIds: normalizedTapeIds,
@@ -1418,6 +1472,7 @@ const now = Date.now();
       ...(body?.optTfMin == null || String(body.optTfMin).trim() === "" ? {} : { optTfMin: Math.floor(Number(body.optTfMin)) }),
       ...(body?.ranges ? { ranges: body.ranges } : {}),
       ...(body?.precision ? { precision: body.precision } : {}),
+      sim,
     };
     const runsCount = Math.max(1, Math.floor(Number(body?.runsCount ?? 1)));
     const isInfinite = Boolean(body?.infinite);

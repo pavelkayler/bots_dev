@@ -86,6 +86,15 @@ export type OptimizerRanges = Partial<{
   rearmMs: OptimizerRangeBound;
 }>;
 
+export type OptimizerSimulationParams = {
+  initialBalance?: number;
+  marginPerTrade?: number;
+  leverage?: number;
+  feeBps?: number;
+  fundingBpsPer8h?: number;
+  slippageBps?: number;
+};
+
 type CloseSnapshot = { ts: number; realizedPnl: number };
 
 const MAX_TICK_INTERVAL_SAMPLES = 20_000;
@@ -346,6 +355,7 @@ export type RunOptimizationArgs = {
   rememberNegatives?: boolean;
   timeRangeFromTs?: number;
   timeRangeToTs?: number;
+  sim?: OptimizerSimulationParams;
 };
 
 export type RunOptimizationHooks = {
@@ -537,6 +547,15 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         paper: {
           ...baseConfig.paper,
           directionMode: args.directionMode ?? baseConfig.paper.directionMode,
+          marginUSDT: Number.isFinite(Number(args.sim?.marginPerTrade)) && Number(args.sim?.marginPerTrade) > 0
+            ? Number(args.sim?.marginPerTrade)
+            : baseConfig.paper.marginUSDT,
+          leverage: Number.isFinite(Number(args.sim?.leverage)) && Number(args.sim?.leverage) >= 1
+            ? Number(args.sim?.leverage)
+            : baseConfig.paper.leverage,
+          makerFeeRate: Number.isFinite(Number(args.sim?.feeBps))
+            ? Math.max(0, Number(args.sim?.feeBps)) / 10_000
+            : baseConfig.paper.makerFeeRate,
           tpRoiPct: params.tpRoiPct,
           slRoiPct: params.slRoiPct,
           entryOffsetPct: params.entryOffsetPct,

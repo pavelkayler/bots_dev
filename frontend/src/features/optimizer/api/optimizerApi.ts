@@ -88,6 +88,14 @@ export type OptimizerHistorySortKey =
   | "rowsTotal";
 export type OptimizerPrecision = Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", number>;
 export type OptimizerSettings = { tapesDir: string };
+export type OptimizerSimulationParams = {
+  initialBalance?: number;
+  marginPerTrade?: number;
+  leverage?: number;
+  feeBps?: number;
+  fundingBpsPer8h?: number;
+  slippageBps?: number;
+};
 
 export type DoctorStatus = {
   ok: boolean;
@@ -124,6 +132,7 @@ export type OptimizerJobHistoryRecord = {
     directionMode: "both" | "long" | "short";
     rememberNegatives: boolean;
     excludeNegative: boolean;
+    sim?: OptimizerSimulationParams;
   };
   summary: {
     bestNetPnl: number | null;
@@ -197,6 +206,7 @@ export async function runOptimizationJob(payload: {
   optTfMin?: number;
   excludeNegative?: boolean;
   rememberNegatives?: boolean;
+  sim?: OptimizerSimulationParams;
 }): Promise<{ jobId: string }> {
   const base = getApiBase();
   return await postJson<{ jobId: string }>(`${base}/api/optimizer/run`, payload);
@@ -300,6 +310,7 @@ export async function startOptimizerLoop(payload: {
   rememberNegatives?: boolean;
   runsCount?: number;
   infinite?: boolean;
+  sim?: OptimizerSimulationParams;
 }): Promise<{ loopId: string }> {
   const base = getApiBase();
   return await postJson<{ loopId: string }>(`${base}/api/optimizer/loop/start`, payload);

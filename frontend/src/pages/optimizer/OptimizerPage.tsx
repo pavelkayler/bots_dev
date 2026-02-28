@@ -59,6 +59,11 @@ const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
 const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
 const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
 const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
+const SIM_MARGIN_STORAGE_KEY = "bots_dev.optimizer.sim.marginPerTrade";
+const SIM_LEVERAGE_STORAGE_KEY = "bots_dev.optimizer.sim.leverage";
+const SIM_FEE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.feeBps";
+const SIM_FUNDING_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.fundingBpsPer8h";
+const SIM_SLIPPAGE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.slippageBps";
 const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
 const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
@@ -341,6 +346,13 @@ function formatEta(sec: number | null): string {
   return `${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
 }
 
+function formatSimSummary(sim: { marginPerTrade?: number; leverage?: number } | undefined): string {
+  const margin = Number(sim?.marginPerTrade);
+  const lev = Number(sim?.leverage);
+  if (!Number.isFinite(margin) || !Number.isFinite(lev)) return "-";
+  return `m=${margin}, lev=${lev}`;
+}
+
 function roundTo2(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -398,6 +410,11 @@ export function OptimizerPage() {
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
   const [minTrades, setMinTrades] = useState("1");
+  const [simMarginPerTrade, setSimMarginPerTrade] = useState(() => localStorage.getItem(SIM_MARGIN_STORAGE_KEY) ?? "10");
+  const [simLeverage, setSimLeverage] = useState(() => localStorage.getItem(SIM_LEVERAGE_STORAGE_KEY) ?? "5");
+  const [simFeeBps, setSimFeeBps] = useState(() => localStorage.getItem(SIM_FEE_BPS_STORAGE_KEY) ?? "0");
+  const [simFundingBpsPer8h, setSimFundingBpsPer8h] = useState(() => localStorage.getItem(SIM_FUNDING_BPS_STORAGE_KEY) ?? "0");
+  const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [datasetMode, setDatasetMode] = useState<"snapshot" | "followTail">("snapshot");
   const [runInRange, setRunInRange] = useState(false);
@@ -472,16 +489,6 @@ export function OptimizerPage() {
       if (timer != null) window.clearTimeout(timer);
       window.removeEventListener("resize", onResize);
     };
-  }, []);
-
-  const resetJobProgressState = useCallback(() => {
-    setDone(0);
-    setTotal(0);
-    setJobStartedAtMs(null);
-    setJobUpdatedAtMs(null);
-    setJobFinishedAtMs(null);
-    setJobStatus("idle");
-    setOptimizerPaused(false);
   }, []);
 
   const clearSingleJobState = useCallback(() => {
@@ -652,6 +659,26 @@ export function OptimizerPage() {
   }, [minTrades]);
 
   useEffect(() => {
+    localStorage.setItem(SIM_MARGIN_STORAGE_KEY, simMarginPerTrade);
+  }, [simMarginPerTrade]);
+
+  useEffect(() => {
+    localStorage.setItem(SIM_LEVERAGE_STORAGE_KEY, simLeverage);
+  }, [simLeverage]);
+
+  useEffect(() => {
+    localStorage.setItem(SIM_FEE_BPS_STORAGE_KEY, simFeeBps);
+  }, [simFeeBps]);
+
+  useEffect(() => {
+    localStorage.setItem(SIM_FUNDING_BPS_STORAGE_KEY, simFundingBpsPer8h);
+  }, [simFundingBpsPer8h]);
+
+  useEffect(() => {
+    localStorage.setItem(SIM_SLIPPAGE_BPS_STORAGE_KEY, simSlippageBps);
+  }, [simSlippageBps]);
+
+  useEffect(() => {
     localStorage.setItem(EXCLUDE_NEGATIVE_STORAGE_KEY, excludeNegative ? "1" : "0");
   }, [excludeNegative]);
 
@@ -791,6 +818,16 @@ export function OptimizerPage() {
     lastTableSourceRef.current = "loop";
     setLoopBusy(true);
     try {
+      const marginPerTrade = Number(simMarginPerTrade);
+      const leverage = Number(simLeverage);
+      if (!Number.isFinite(marginPerTrade) || marginPerTrade <= 0) {
+        setError("marginPerTrade must be > 0");
+        return;
+      }
+      if (!Number.isFinite(leverage) || leverage < 1) {
+        setError("leverage must be >= 1");
+        return;
+      }
       const rangePayload = buildRangesPayload();
       const precision: OptimizerPrecision = {
         priceTh: Math.max(countDecimals(ranges.priceTh.min), countDecimals(ranges.priceTh.max)),
@@ -815,6 +852,13 @@ export function OptimizerPage() {
         optTfMin: Number(optTfMin),
         excludeNegative,
         rememberNegatives,
+        sim: {
+          marginPerTrade,
+          leverage,
+          feeBps: Number(simFeeBps) || 0,
+          fundingBpsPer8h: Number(simFundingBpsPer8h) || 0,
+          slippageBps: Number(simSlippageBps) || 0,
+        },
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
         runsCount: Math.max(1, Math.floor(Number(loopRunsCount) || 1)),
@@ -983,6 +1027,16 @@ export function OptimizerPage() {
     setDone(0);
     setTotal(0);
     try {
+      const marginPerTrade = Number(simMarginPerTrade);
+      const leverage = Number(simLeverage);
+      if (!Number.isFinite(marginPerTrade) || marginPerTrade <= 0) {
+        setError("marginPerTrade must be > 0");
+        return;
+      }
+      if (!Number.isFinite(leverage) || leverage < 1) {
+        setError("leverage must be >= 1");
+        return;
+      }
       const rangePayload = buildRangesPayload();
       const precision: OptimizerPrecision = {
         priceTh: Math.max(countDecimals(ranges.priceTh.min), countDecimals(ranges.priceTh.max)),
@@ -1007,6 +1061,13 @@ export function OptimizerPage() {
         optTfMin: Number(optTfMin),
         excludeNegative,
         rememberNegatives,
+        sim: {
+          marginPerTrade,
+          leverage,
+          feeBps: Number(simFeeBps) || 0,
+          fundingBpsPer8h: Number(simFundingBpsPer8h) || 0,
+          slippageBps: Number(simSlippageBps) || 0,
+        },
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
       });
@@ -1355,7 +1416,7 @@ export function OptimizerPage() {
     });
     return map;
   }, [jobHistory, tapeBoundsById]);
-  const historyColumnCount = historyCompactMode ? 11 : 18;
+  const historyColumnCount = historyCompactMode ? 12 : 19;
   const historyRunIdCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 80 } : HISTORY_CELL_STYLE;
   const historyEndedAtCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 120 } : HISTORY_CELL_STYLE;
   const historyStatusCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 90 } : HISTORY_CELL_STYLE;
@@ -1506,6 +1567,18 @@ export function OptimizerPage() {
               </Col>
               <Col md={2} sm={4} xs={6}>
                 <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>marginPerTrade</Form.Label>
+                <Form.Control value={simMarginPerTrade} onChange={(e) => setSimMarginPerTrade(e.currentTarget.value)} type="number" min={0.0001} step={0.1} />
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
+                <Form.Label style={{ fontSize: 12 }}>leverage</Form.Label>
+                <Form.Control value={simLeverage} onChange={(e) => setSimLeverage(e.currentTarget.value)} type="number" min={1} step={0.1} />
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
                 <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(e.currentTarget.value)}>
                   <option value="1">1</option>
@@ -1594,6 +1667,31 @@ export function OptimizerPage() {
                     <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} disabled={loopActive} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
                   </Form.Group>
                 </div>
+              </Col>
+              <Col xs={12}>
+                <details>
+                  <summary style={{ cursor: "pointer", fontSize: 12 }}>Advanced sim params</summary>
+                  <Row className="g-2 align-items-end mt-1">
+                    <Col md={2} sm={4} xs={6}>
+                      <Form.Group>
+                        <Form.Label style={{ fontSize: 12 }}>feeBps</Form.Label>
+                        <Form.Control value={simFeeBps} onChange={(e) => setSimFeeBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={2} sm={4} xs={6}>
+                      <Form.Group>
+                        <Form.Label style={{ fontSize: 12 }}>fundingBpsPer8h</Form.Label>
+                        <Form.Control value={simFundingBpsPer8h} onChange={(e) => setSimFundingBpsPer8h(e.currentTarget.value)} type="number" step={0.01} />
+                      </Form.Group>
+                    </Col>
+                    <Col md={2} sm={4} xs={6}>
+                      <Form.Group>
+                        <Form.Label style={{ fontSize: 12 }}>slippageBps</Form.Label>
+                        <Form.Control value={simSlippageBps} onChange={(e) => setSimSlippageBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                </details>
               </Col>
             </Row>
             <Row className="g-2 align-items-center mb-2">
@@ -1784,6 +1882,7 @@ export function OptimizerPage() {
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tapes")}>tapes</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("candidates")}>candidates</th>
+                  <th style={HISTORY_CELL_STYLE}>sim</th>
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("seed")}>seed</th> : null}
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("direction")}>direction</th>
                   <th style={HISTORY_CELL_STYLE}>hours</th>
@@ -1811,6 +1910,7 @@ export function OptimizerPage() {
                         <td style={HISTORY_CELL_STYLE} title={row.runPayload.tapeIds.join(",")}>{row.runPayload.tapeIds.length}</td>
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.optTfMin ?? "-"}</td>
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.candidates}</td>
+                        <td style={HISTORY_CELL_STYLE}>{formatSimSummary((row.runPayload as any).sim)}</td>
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.seed}</td> : null}
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.directionMode}</td>
                         <td style={HISTORY_CELL_STYLE}>{historyHoursByJobId[row.jobId] ?? "-"}</td>
@@ -1827,6 +1927,9 @@ export function OptimizerPage() {
                         <td colSpan={historyColumnCount} style={HISTORY_DETAILS_CELL_STYLE}>
                           <Collapse in={isOpen}>
                             <div style={{ padding: isOpen ? 10 : 0, background: "#f5f5f5", borderLeft: "3px solid #d0d0d0", marginTop: 2 }}>
+                              <div style={{ fontSize: 12 }}>
+                                sim: <b>{JSON.stringify((row.runPayload as any).sim ?? {})}</b>
+                              </div>
                               {historyLoading[row.jobId] ? <div style={{ fontSize: 12 }}>Loading...</div> : null}
                               {!historyLoading[row.jobId] && row.summary.rowsPositive === 0 ? <div style={{ fontSize: 12 }}>No positive results</div> : null}
                               {!historyLoading[row.jobId] && row.summary.rowsPositive > 0 ? (
