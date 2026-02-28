@@ -132,7 +132,7 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
 
   const [doctorStatus, setDoctorStatus] = useState<DoctorStatus | null>(null);
   const [doctorLoading, setDoctorLoading] = useState(false);
-  const isDemoMode = draft?.execution.mode === "demo";
+  const isDemoMode = draft?.execution?.mode === "demo";
 
   const disabled = !draft || !numericDraft;
   const universeLocked = sessionState === "RUNNING" || sessionState === "STOPPING";
@@ -263,7 +263,8 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
           requireFundingSign: true,
         },
         execution: {
-          mode: (patch?.execution?.mode === "demo" ? "demo" : patch?.execution?.mode === "empty" ? "empty" : patch?.execution?.mode === "paper" ? "paper" : draft.execution.mode),
+          ...draft.execution,
+          mode: (patch?.execution?.mode === "demo" ? "demo" : patch?.execution?.mode === "empty" ? "empty" : patch?.execution?.mode === "paper" ? "paper" : draft.execution?.mode ?? "paper"),
         },
         paper: {
           ...draft.paper,
@@ -336,10 +337,28 @@ function buildConfigForApply(): RuntimeConfig {
     setInputError(null);
     try {
       const preset = await readPreset(id);
-      let merged = {
-        ...preset.config,
-        universe: { ...draft.universe, ...preset.config.universe },
-        signals: { ...draft.signals, ...preset.config.signals, requireFundingSign: true },
+      if (!preset.config) return;
+      const patch = preset.config;
+      let merged: RuntimeConfig = {
+        ...draft,
+        ...patch,
+        execution: {
+          ...draft.execution,
+          ...patch.execution,
+        },
+        universe: {
+          ...draft.universe,
+          ...patch.universe,
+        },
+        signals: {
+          ...draft.signals,
+          ...patch.signals,
+          requireFundingSign: true,
+        },
+        paper: {
+          ...draft.paper,
+          ...patch.paper,
+        },
       };
       const preferredUniverseName = preferredUniverseNameFromPreset(preset.name);
       const matchedUniverse = preferredUniverseName ? universeList.find((u) => u.name === preferredUniverseName) : undefined;
@@ -355,7 +374,29 @@ function buildConfigForApply(): RuntimeConfig {
         };
         setSelectedUniverseId(matchedUniverse.id);
       }
-      setDraft(merged);
+      setDraft((prev) => {
+        const base = prev ?? draft;
+        return {
+          ...base,
+          ...patch,
+          execution: {
+            ...base.execution,
+            ...patch.execution,
+          },
+          universe: {
+            ...merged.universe,
+          },
+          signals: {
+            ...base.signals,
+            ...patch.signals,
+            requireFundingSign: true,
+          },
+          paper: {
+            ...base.paper,
+            ...patch.paper,
+          },
+        };
+      });
       setNumericDraft(toNumericDraft(merged));
       onDraftKlineTfMinChange?.(Number(merged.universe.klineTfMin));
     } catch (e: any) {
@@ -477,7 +518,7 @@ function buildConfigForApply(): RuntimeConfig {
                 <Form.Group className="mb-2">
                   <Form.Label>Execution mode</Form.Label>
                   <div className="d-flex align-items-center gap-2">
-                    <Form.Select value={draft.execution.mode} onChange={(e) => setDraft({ ...draft, execution: { mode: e.currentTarget.value as "paper" | "demo" | "empty" } })}>
+                    <Form.Select value={draft.execution?.mode ?? "paper"} onChange={(e) => setDraft({ ...draft, execution: { ...draft.execution, mode: e.currentTarget.value as "paper" | "demo" | "empty" } })}>
                       <option value="paper">Paper</option>
                       <option value="demo">Demo</option>
                       <option value="empty">Empty (tape only)</option>
@@ -497,7 +538,7 @@ function buildConfigForApply(): RuntimeConfig {
 
                 <Card className="mt-2">
                   <Card.Body style={{ padding: 12 }}>
-                    <h6 className="mb-0">Paper settings{draft.execution.mode === "demo" ? " (inactive in Demo mode)" : ""}</h6>
+                    <h6 className="mb-0">Paper settings{draft.execution?.mode === "demo" ? " (inactive in Demo mode)" : ""}</h6>
                     <div className="mt-2 d-flex align-items-center gap-3">
                       <Form.Group className="mb-0"><Form.Label className="mb-1">Direction</Form.Label><Form.Select id="paperDirectionMode" size="sm" value={draft.paper.directionMode} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, directionMode: e.currentTarget.value as "both" | "long" | "short" } })}><option value="both">Both directions</option><option value="long">Long only</option><option value="short">Short only</option></Form.Select></Form.Group>
                     </div>
