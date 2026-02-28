@@ -69,6 +69,17 @@ type OptimizerCheckpoint = {
   finishedAtMs: number | null;
 };
 
+type OptimizerJobSnapshot = {
+  jobId: string;
+  status: OptimizerJob["status"];
+  startedAtMs: number;
+  updatedAtMs: number;
+  finishedAtMs: number | null;
+  runPayload: Record<string, unknown> | null;
+  results: OptimizerResult[];
+  message?: string;
+};
+
 type OptimizerJobHistoryRecord = {
   jobId: string;
   mode?: "loop" | "single";
@@ -99,6 +110,7 @@ const optimizerJobs = new Map<string, OptimizerJob>();
 const optimizerJobStartedAt = new Map<string, number>();
 let latestOptimizerJobId: string | null = null;
 const checkpointDir = path.resolve(process.cwd(), "data/optimizer_checkpoints");
+const optimizerJobsDir = path.resolve(process.cwd(), "data/optimizer_jobs");
 const optimizerBlacklistsDir = path.resolve(process.cwd(), "data/optimizer_blacklists");
 const MAX_CHECKPOINT_FILES = 5;
 const MIN_CHECKPOINT_INTERVAL_MS = 2_000;
@@ -107,7 +119,9 @@ const OPTIMIZER_JOB_HISTORY_PATH = path.resolve(process.cwd(), "data", "optimize
 const dataDir = getDataDirPath();
 let lastSoakSnapshot: any = null;
 const lastCheckpointWriteMs = new Map<string, number>();
+const lastSnapshotWriteMs = new Map<string, number>();
 let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
+let shutdownHandler: (() => Promise<void> | void) | null = null;
 
 function readOptimizerJobHistory(): OptimizerJobHistoryRecord[] {
   if (!fs.existsSync(OPTIMIZER_JOB_HISTORY_PATH)) return [];
@@ -180,6 +194,15 @@ function checkpointPath(jobId: string) {
   return path.join(checkpointDir, `job-${jobId}.json`);
 }
 
+function ensureOptimizerJobsDir() {
+  fs.mkdirSync(optimizerJobsDir, { recursive: true });
+}
+
+function optimizerJobSnapshotPath(jobId: string) {
+  ensureOptimizerJobsDir();
+  return path.join(optimizerJobsDir, `job-${jobId}.json`);
+}
+
 function writeFileAtomic(filePath: string, body: string) {
   const tempPath = `${filePath}.tmp`;
   fs.writeFileSync(tempPath, body, "utf8");
@@ -199,6 +222,29 @@ function pruneOldCheckpoints() {
       continue;
     }
   }
+}
+
+function writeJobSnapshot(jobId: string, job: OptimizerJob, opts?: { force?: boolean }) {
+  const now = Date.now();
+  const lastWrite = lastSnapshotWriteMs.get(jobId) ?? 0;
+  if (!opts?.force && now - lastWrite < MIN_CHECKPOINT_INTERVAL_MS) return;
+  const disk = isLowDiskBestEffort(dataDir);
+  if (disk.lowDisk) {
+    job.message = [job.message, "snapshot skipped: low_disk"].filter(Boolean).join(" | ");
+    return;
+  }
+  const snapshot: OptimizerJobSnapshot = {
+    jobId,
+    status: job.status,
+    startedAtMs: job.startedAtMs,
+    updatedAtMs: now,
+    finishedAtMs: job.finishedAtMs,
+    runPayload: job.runPayload,
+    results: Array.isArray(job.results) ? job.results.slice(0, 2000) : [],
+    ...(job.message ? { message: job.message } : {}),
+  };
+  writeFileAtomic(optimizerJobSnapshotPath(jobId), JSON.stringify(snapshot, null, 2));
+  lastSnapshotWriteMs.set(jobId, now);
 }
 
 function writeCheckpoint(jobId: string, job: OptimizerJob, opts?: { force?: boolean }) {
@@ -273,6 +319,50 @@ function restoreLatestCheckpoint() {
   }
 }
 
+function restoreLatestJobSnapshot() {
+  ensureOptimizerJobsDir();
+  const files = fs.readdirSync(optimizerJobsDir).filter((name) => /^job-.+\.json$/.test(name));
+  if (!files.length) return false;
+  const latest = files
+    .map((name) => ({ name, mtimeMs: fs.statSync(path.join(optimizerJobsDir, name)).mtimeMs }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  if (!latest) return false;
+  try {
+    const raw = fs.readFileSync(path.join(optimizerJobsDir, latest.name), "utf8");
+    const parsed = JSON.parse(raw) as OptimizerJobSnapshot;
+    if (!parsed?.jobId) return false;
+    const wasRunning = parsed.status === "running";
+    const now = Date.now();
+    const job: OptimizerJob = {
+      status: wasRunning ? "paused" : parsed.status,
+      total: 100,
+      done: 0,
+      lastPct: 0,
+      cancelRequested: false,
+      pauseRequested: false,
+      paused: wasRunning || parsed.status === "paused",
+      resumeRequested: false,
+      results: Array.isArray(parsed.results) ? parsed.results : [],
+      minTrades: Math.max(0, Math.floor(Number((parsed.runPayload as any)?.minTrades) || 0)),
+      startedAtMs: Number(parsed.startedAtMs) || now,
+      updatedAtMs: Number(parsed.updatedAtMs) || now,
+      processedCandidates: 0,
+      totalCandidates: Math.max(0, Math.floor(Number((parsed.runPayload as any)?.candidates) || 0)),
+      excludeNegative: Boolean((parsed.runPayload as any)?.excludeNegative),
+      rememberNegatives: Boolean((parsed.runPayload as any)?.rememberNegatives),
+      runKey: `tapes=${Array.isArray((parsed.runPayload as any)?.tapeIds) ? [...(parsed.runPayload as any).tapeIds].sort().join(",") : ""}|dir=${String((parsed.runPayload as any)?.directionMode ?? "both")}|tf=${Number((parsed.runPayload as any)?.optTfMin ?? 0) || 0}`,
+      finishedAtMs: typeof parsed.finishedAtMs === "number" ? parsed.finishedAtMs : null,
+      runPayload: parsed.runPayload,
+      ...(typeof parsed.message === "string" ? { message: parsed.message } : {}),
+    };
+    optimizerJobs.set(parsed.jobId, job);
+    rememberOptimizerJob(parsed.jobId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function rememberOptimizerJob(jobId: string) {
   optimizerJobStartedAt.set(jobId, Date.now());
   latestOptimizerJobId = jobId;
@@ -289,6 +379,45 @@ function resolveCurrentOptimizerJobId(): string | null {
   if (running) return running[0];
   if (latestOptimizerJobId && optimizerJobs.has(latestOptimizerJobId)) return latestOptimizerJobId;
   return entries.at(0)?.[0] ?? null;
+}
+
+function isLocalRequestIp(ipRaw: unknown): boolean {
+  const ip = String(ipRaw ?? "").trim();
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForPauseOrTerminal(jobId: string, timeoutMs: number) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const job = optimizerJobs.get(jobId);
+    if (!job) return;
+    if (job.status === "paused" || isOptimizerJobTerminal(job.status)) return;
+    await sleep(100);
+  }
+}
+
+export async function requestOptimizerGracefulPauseAndFlush(opts?: { timeoutMs?: number }) {
+  const jobId = resolveCurrentOptimizerJobId();
+  if (!jobId) return;
+  const job = optimizerJobs.get(jobId);
+  if (!job) return;
+  if (job.status === "running") {
+    job.pauseRequested = true;
+    job.updatedAtMs = Date.now();
+    optimizerWorkerManager.pause(jobId);
+    await waitForPauseOrTerminal(jobId, opts?.timeoutMs ?? 3_000);
+    if (job.status === "running") job.status = "paused";
+  }
+  writeCheckpoint(jobId, job, { force: true });
+  writeJobSnapshot(jobId, job, { force: true });
+}
+
+export function setShutdownHandler(handler: (() => Promise<void> | void) | null) {
+  shutdownHandler = handler;
 }
 
 function toNumberOrUndefined(value: unknown): number | undefined {
@@ -446,7 +575,7 @@ async function computeSummary(eventsFile: string, sessionId: string | null): Pro
   return (await fn(eventsFile, sessionId)) as SessionSummaryResponse;
 }
 
-restoreLatestCheckpoint();
+if (!restoreLatestJobSnapshot()) restoreLatestCheckpoint();
 
 function isOptimizerJobTerminal(status: OptimizerJob["status"]) {
   return status === "done" || status === "cancelled" || status === "error";
@@ -517,6 +646,12 @@ function getLoopLastJobStatus() {
   };
 }
 
+function finalizeLoopForTerminalJob(jobId: string) {
+  const state = optimizerLoopState;
+  if (!state || !state.isRunning || state.lastJobId !== jobId) return;
+  updateLoopState({ runIndex: state.runIndex + 1, lastJobId: null });
+}
+
 
 function ensureWritableDir(dirPath: string): string | null {
   try {
@@ -531,6 +666,17 @@ function ensureWritableDir(dirPath: string): string | null {
 
 export function registerHttpRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ ok: true }));
+
+  app.post("/api/admin/shutdown", async (req, reply) => {
+    if (!isLocalRequestIp((req as any).ip)) {
+      reply.code(403);
+      return { error: "forbidden" };
+    }
+    reply.send({ ok: true });
+    setImmediate(() => {
+      void Promise.resolve(shutdownHandler?.());
+    });
+  });
 
   const loopTimer = setInterval(() => {
     void tickOptimizerLoop(app);
@@ -945,6 +1091,7 @@ const now = Date.now();
     optimizerJobs.set(jobId, job);
     rememberOptimizerJob(jobId);
     writeCheckpoint(jobId, job);
+    writeJobSnapshot(jobId, job);
 
     const runPayload = {
       tapeIds,
@@ -989,9 +1136,11 @@ const now = Date.now();
           }
           if (job.cancelRequested) optimizerWorkerManager.cancel(jobId);
           writeCheckpoint(jobId, job);
+          writeJobSnapshot(jobId, job);
         },
         onCheckpoint: () => {
           writeCheckpoint(jobId, job);
+          writeJobSnapshot(jobId, job);
         },
         onDone: (msg) => {
           const finalResults = Array.isArray(msg.finalResults) ? msg.finalResults : [];
@@ -1012,6 +1161,8 @@ const now = Date.now();
           if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
           appendOptimizerJobHistory(jobId, job);
           writeCheckpoint(jobId, job, { force: true });
+          writeJobSnapshot(jobId, job, { force: true });
+          finalizeLoopForTerminalJob(jobId);
           void tickOptimizerLoop(app);
         },
         onError: (msg) => {
@@ -1021,6 +1172,8 @@ const now = Date.now();
           job.message = String(msg?.errorMessage ?? "worker_error");
           appendOptimizerJobHistory(jobId, job);
           writeCheckpoint(jobId, job, { force: true });
+          writeJobSnapshot(jobId, job, { force: true });
+          finalizeLoopForTerminalJob(jobId);
           void tickOptimizerLoop(app);
         },
       });
@@ -1030,6 +1183,8 @@ const now = Date.now();
       if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
       appendOptimizerJobHistory(jobId, job);
       writeCheckpoint(jobId, job, { force: true });
+      writeJobSnapshot(jobId, job, { force: true });
+      finalizeLoopForTerminalJob(jobId);
     }
 
     return { jobId };
@@ -1094,6 +1249,7 @@ const now = Date.now();
         job.updatedAtMs = Date.now();
         optimizerWorkerManager.cancel(state.lastJobId);
         writeCheckpoint(state.lastJobId, job);
+        writeJobSnapshot(state.lastJobId, job);
       }
     }
     updateLoopState({ isRunning: false, isPaused: false });
@@ -1161,6 +1317,7 @@ const now = Date.now();
     job.updatedAtMs = Date.now();
     optimizerWorkerManager.cancel(jobId);
     writeCheckpoint(jobId, job);
+    writeJobSnapshot(jobId, job);
     return { ok: true };
   });
 
@@ -1179,6 +1336,8 @@ const now = Date.now();
     job.updatedAtMs = Date.now();
     optimizerWorkerManager.pause(jobId);
     job.status = "paused";
+    writeCheckpoint(jobId, job);
+    writeJobSnapshot(jobId, job);
     return { ok: true };
   });
 
@@ -1197,6 +1356,8 @@ const now = Date.now();
     job.updatedAtMs = Date.now();
     optimizerWorkerManager.resume(jobId);
     job.status = "running";
+    writeCheckpoint(jobId, job);
+    writeJobSnapshot(jobId, job);
     return { ok: true };
   });
 
