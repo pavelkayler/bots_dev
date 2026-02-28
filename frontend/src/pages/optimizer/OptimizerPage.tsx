@@ -65,12 +65,10 @@ const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
+const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
 
-const HISTORY_TABLE_SCROLL_STYLE = { overflowX: "auto", width: "100%", maxWidth: "100%" } as const;
-const HISTORY_TABLE_STYLE = { tableLayout: "auto", width: "max-content", minWidth: "100%", fontSize: 12.5 } as const;
-const HISTORY_CELL_STYLE = { padding: "4px 6px", whiteSpace: "nowrap", verticalAlign: "middle" } as const;
-const HISTORY_STICKY_LEFT_STYLE = { ...HISTORY_CELL_STYLE, position: "sticky", left: 0, zIndex: 3, background: "#f8f9fa" } as const;
-const HISTORY_STICKY_RIGHT_STYLE = { ...HISTORY_CELL_STYLE, position: "sticky", right: 0, zIndex: 3, background: "#f8f9fa" } as const;
+const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
+const HISTORY_CELL_STYLE = { padding: "4px 6px", whiteSpace: "nowrap", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12 } as const;
 const HISTORY_DETAILS_CELL_STYLE = { padding: 0, borderTop: 0 } as const;
 
 type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number; runsTotal: number; startTs: number | null; endTs: number | null };
@@ -251,6 +249,16 @@ function parseMaybeNumber(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
+}
+
+function formatHistoryEndedAt(tsMs: number): string {
+  const d = new Date(tsMs);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  const sec = String(d.getSeconds()).padStart(2, "0");
+  return `${mm}-${dd} ${hh}:${min}:${sec}`;
 }
 
 function toDatetimeLocalValue(tsMs: number | null | undefined): string {
@@ -437,6 +445,7 @@ export function OptimizerPage() {
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
   const [historyResults, setHistoryResults] = useState<Record<string, OptimizationResult[]>>({});
   const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
+  const [historyCompactMode, setHistoryCompactMode] = useState(() => window.innerWidth < HISTORY_COMPACT_BREAKPOINT_PX);
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
   const loopPollTokenRef = useRef(0);
@@ -447,6 +456,22 @@ export function OptimizerPage() {
   const lastPctByJobIdRef = useRef<Record<string, number>>({});
   const startedAtByJobIdRef = useRef<Record<string, number>>({});
   const lastTableSourceRef = useRef<"loop" | "single">("single");
+
+  useEffect(() => {
+    let timer: number | null = null;
+    const onResize = () => {
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const next = window.innerWidth < HISTORY_COMPACT_BREAKPOINT_PX;
+        setHistoryCompactMode((prev) => (prev === next ? prev : next));
+      }, 120);
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      if (timer != null) window.clearTimeout(timer);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   const resetJobProgressState = useCallback(() => {
     setDone(0);
@@ -1323,6 +1348,13 @@ export function OptimizerPage() {
     });
     return map;
   }, [jobHistory, tapeBoundsById]);
+  const historyColumnCount = historyCompactMode ? 11 : 21;
+  const historyRunIdCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 80 } : HISTORY_CELL_STYLE;
+  const historyEndedAtCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 120 } : HISTORY_CELL_STYLE;
+  const historyStatusCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 90 } : HISTORY_CELL_STYLE;
+  const historyBestNetCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 90 } : HISTORY_CELL_STYLE;
+  const historyRowsTotalCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 80 } : HISTORY_CELL_STYLE;
+  const historyViewCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 70 } : HISTORY_CELL_STYLE;
 
   useEffect(() => {
     setPage((prev) => Math.min(prev, totalPages));
@@ -1719,31 +1751,30 @@ export function OptimizerPage() {
                 Page <b>{jobHistoryCurrentPage}</b> of <b>{jobHistoryTotalPages}</b> · Total <b>{jobHistoryTotal}</b>
               </div>
             </div>
-            <div style={HISTORY_TABLE_SCROLL_STYLE}>
             <Table striped bordered hover size="sm" style={HISTORY_TABLE_STYLE}>
               <thead>
                 <tr>
-                  <th style={{ ...HISTORY_STICKY_LEFT_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("jobId")}>runId</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("mode")}>mode</th>
+                  <th style={{ ...historyRunIdCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("jobId")}>runId</th>
+                  <th style={{ ...historyEndedAtCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
+                  <th style={{ ...historyStatusCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("mode")}>mode</th> : null}
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tapes")}>tapes</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("candidates")}>candidates</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("seed")}>seed</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("minTrades")}>minTrades</th>
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("seed")}>seed</th> : null}
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("minTrades")}>minTrades</th> : null}
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("direction")}>direction</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rememberNegatives")}>rememberNegatives</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("hideNegativeNetPnl")}>hideNegativeNetPnl</th>
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rememberNegatives")}>rememberNegatives</th> : null}
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("hideNegativeNetPnl")}>hideNegativeNetPnl</th> : null}
                   <th style={HISTORY_CELL_STYLE}>hours</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestNetPnl")}>bestNetPnl</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestTrades")}>bestTrades</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestWinRate")}>bestWinRate</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestProfitFactor")}>bestProfitFactor</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestMaxDD")}>bestMaxDD</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rowsPositive")}>rowsPositive</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rowsTotal")}>rowsTotal</th>
-                  <th style={HISTORY_STICKY_RIGHT_STYLE}>View</th>
+                  <th style={{ ...historyBestNetCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("bestNetPnl")}>bestNetPnl</th>
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestTrades")}>bestTrades</th> : null}
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestWinRate")}>bestWinRate</th> : null}
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestProfitFactor")}>bestProfitFactor</th> : null}
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestMaxDD")}>bestMaxDD</th> : null}
+                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rowsPositive")}>rowsPositive</th> : null}
+                  <th style={{ ...historyRowsTotalCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("rowsTotal")}>rowsTotal</th>
+                  <th style={historyViewCellStyle}>View</th>
                 </tr>
               </thead>
               <tbody>
@@ -1753,30 +1784,30 @@ export function OptimizerPage() {
                   return (
                     <Fragment key={row.jobId}>
                       <tr>
-                        <td style={HISTORY_STICKY_LEFT_STYLE}>{row.jobId.slice(-8)}</td>
-                        <td style={HISTORY_CELL_STYLE}><span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{new Date(row.endedAtMs).toLocaleString()}</span></td>
-                        <td style={HISTORY_CELL_STYLE}>{row.status.toUpperCase()}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.mode ?? "-"}</td>
+                        <td style={historyRunIdCellStyle} title={row.jobId}>{row.jobId.slice(0, 7)}</td>
+                        <td style={historyEndedAtCellStyle} title={new Date(row.endedAtMs).toISOString()}><span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{formatHistoryEndedAt(row.endedAtMs)}</span></td>
+                        <td style={historyStatusCellStyle}>{row.status.toUpperCase()}</td>
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.mode ?? "-"}</td> : null}
                         <td style={HISTORY_CELL_STYLE} title={row.runPayload.tapeIds.join(",")}>{row.runPayload.tapeIds.length}</td>
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.optTfMin ?? "-"}</td>
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.candidates}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.runPayload.seed}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.runPayload.minTrades}</td>
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.seed}</td> : null}
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.minTrades}</td> : null}
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.directionMode}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.runPayload.rememberNegatives ? "true" : "false"}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.runPayload.excludeNegative ? "true" : "false"}</td>
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.rememberNegatives ? "Y" : "N"}</td> : null}
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.excludeNegative ? "Y" : "N"}</td> : null}
                         <td style={HISTORY_CELL_STYLE}>{historyHoursByJobId[row.jobId] ?? "-"}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.summary.bestNetPnl == null ? "-" : row.summary.bestNetPnl.toFixed(4)}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.summary.bestTrades ?? "-"}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.summary.bestWinRate == null ? "-" : `${row.summary.bestWinRate.toFixed(2)}%`}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.summary.bestProfitFactor == null ? "-" : row.summary.bestProfitFactor.toFixed(3)}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.summary.bestMaxDD == null ? "-" : row.summary.bestMaxDD.toFixed(4)}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.summary.rowsPositive}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.summary.rowsTotal}</td>
-                        <td style={HISTORY_STICKY_RIGHT_STYLE}><Button size="sm" variant="outline-secondary" onClick={() => void toggleHistoryRow(row.jobId)}>{isOpen ? "Hide" : "View"}</Button></td>
+                        <td style={historyBestNetCellStyle}>{row.summary.bestNetPnl == null ? "-" : row.summary.bestNetPnl.toFixed(4)}</td>
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestTrades ?? "-"}</td> : null}
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestWinRate == null ? "-" : `${row.summary.bestWinRate.toFixed(2)}%`}</td> : null}
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestProfitFactor == null ? "-" : row.summary.bestProfitFactor.toFixed(4)}</td> : null}
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestMaxDD == null ? "-" : row.summary.bestMaxDD.toFixed(4)}</td> : null}
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.rowsPositive}</td> : null}
+                        <td style={historyRowsTotalCellStyle}>{row.summary.rowsTotal}</td>
+                        <td style={historyViewCellStyle}><Button size="sm" variant="outline-secondary" onClick={() => void toggleHistoryRow(row.jobId)}>{isOpen ? "Hide" : "View"}</Button></td>
                       </tr>
                       <tr>
-                        <td colSpan={21} style={HISTORY_DETAILS_CELL_STYLE}>
+                        <td colSpan={historyColumnCount} style={HISTORY_DETAILS_CELL_STYLE}>
                           <Collapse in={isOpen}>
                             <div style={{ padding: isOpen ? 10 : 0, background: "#f5f5f5", borderLeft: "3px solid #d0d0d0", marginTop: 2 }}>
                               {historyLoading[row.jobId] ? <div style={{ fontSize: 12 }}>Loading...</div> : null}
@@ -1809,12 +1840,11 @@ export function OptimizerPage() {
                 })}
                 {!jobHistory.length ? (
                   <tr>
-                    <td colSpan={21} style={{ ...HISTORY_CELL_STYLE, fontSize: 12, opacity: 0.75 }}>No completed runs</td>
+                    <td colSpan={historyColumnCount} style={{ ...HISTORY_CELL_STYLE, fontSize: 12, opacity: 0.75 }}>No completed runs</td>
                   </tr>
                 ) : null}
               </tbody>
             </Table>
-            </div>
             {jobHistoryTotal > 0 ? (
               <Pagination>
                 <Pagination.Prev
