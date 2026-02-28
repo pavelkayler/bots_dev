@@ -400,6 +400,7 @@ export function OptimizerPage() {
   const [minTrades, setMinTrades] = useState("1");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [datasetMode, setDatasetMode] = useState<"snapshot" | "followTail">("snapshot");
+  const [runInRange, setRunInRange] = useState(false);
   const [timeRangeFromTs, setTimeRangeFromTs] = useState("");
   const [timeRangeToTs, setTimeRangeToTs] = useState("");
   const [optTfMin, setOptTfMin] = useState<string>("1");
@@ -697,7 +698,8 @@ export function OptimizerPage() {
   }, []);
 
   const effectiveTimeRangePreview = useMemo(() => {
-    const bounds = selectedTapeBounds;
+    if (!runInRange) return { from: undefined, to: undefined, invalid: false };
+    const bounds = selectedTapeIds.length === 1 ? selectedTapeBounds : null;
     let from = parseDatetimeLocalToTs(timeRangeFromTs);
     let to = parseDatetimeLocalToTs(timeRangeToTs);
     if (from == null) from = bounds?.startTs ?? undefined;
@@ -711,10 +713,11 @@ export function OptimizerPage() {
       to = nextTo;
     }
     return { from, to, invalid: false };
-  }, [selectedTapeBounds, timeRangeFromTs, timeRangeToTs]);
+  }, [runInRange, selectedTapeBounds, selectedTapeIds.length, timeRangeFromTs, timeRangeToTs]);
 
   const resolveEffectiveTimeRange = useCallback(() => {
-    const bounds = selectedTapeBounds;
+    if (!runInRange) return { from: undefined, to: undefined };
+    const bounds = selectedTapeIds.length === 1 ? selectedTapeBounds : null;
     let from = parseDatetimeLocalToTs(timeRangeFromTs);
     let to = parseDatetimeLocalToTs(timeRangeToTs);
     if (from == null) from = bounds?.startTs ?? undefined;
@@ -728,7 +731,7 @@ export function OptimizerPage() {
       to = nextTo;
     }
     return { from, to };
-  }, [selectedTapeBounds, timeRangeFromTs, timeRangeToTs]);
+  }, [runInRange, selectedTapeBounds, selectedTapeIds.length, timeRangeFromTs, timeRangeToTs]);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -801,8 +804,10 @@ export function OptimizerPage() {
       await startOptimizerLoop({
         tapeIds: selectedTapeIds,
         datasetMode,
-        timeRangeFromTs: effectiveRange.from ?? null,
-        timeRangeToTs: effectiveRange.to ?? null,
+        ...(runInRange ? {
+          timeRangeFromTs: effectiveRange.from,
+          timeRangeToTs: effectiveRange.to,
+        } : {}),
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -991,8 +996,10 @@ export function OptimizerPage() {
       const runRes = await runOptimizationJob({
         tapeIds: selectedTapeIds,
         datasetMode,
-        timeRangeFromTs: effectiveRange.from ?? null,
-        timeRangeToTs: effectiveRange.to ?? null,
+        ...(runInRange ? {
+          timeRangeFromTs: effectiveRange.from,
+          timeRangeToTs: effectiveRange.to,
+        } : {}),
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -1348,7 +1355,7 @@ export function OptimizerPage() {
     });
     return map;
   }, [jobHistory, tapeBoundsById]);
-  const historyColumnCount = historyCompactMode ? 11 : 21;
+  const historyColumnCount = historyCompactMode ? 11 : 18;
   const historyRunIdCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 80 } : HISTORY_CELL_STYLE;
   const historyEndedAtCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 120 } : HISTORY_CELL_STYLE;
   const historyStatusCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 90 } : HISTORY_CELL_STYLE;
@@ -1527,13 +1534,26 @@ export function OptimizerPage() {
               </Col>
               <Col md={3} sm={6} xs={12}>
                 <Form.Group>
+                  <Form.Label style={{ fontSize: 12, visibility: "hidden" }}>range toggle</Form.Label>
+                  <Form.Check
+                    style={{ fontSize: 12, marginTop: 4 }}
+                    type="checkbox"
+                    label="Run in range"
+                    checked={runInRange}
+                    onChange={(e) => setRunInRange(e.currentTarget.checked)}
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={3} sm={6} xs={12}>
+                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>from</Form.Label>
                 <Form.Control
                   value={timeRangeFromTs}
                   onChange={(e) => setTimeRangeFromTs(e.currentTarget.value)}
                   type="datetime-local"
-                  min={toDatetimeLocalValue(selectedTapeBounds?.startTs)}
-                  max={toDatetimeLocalValue(selectedTapeBounds?.endTs)}
+                  min={selectedTapeIds.length === 1 ? toDatetimeLocalValue(selectedTapeBounds?.startTs) : undefined}
+                  max={selectedTapeIds.length === 1 ? toDatetimeLocalValue(selectedTapeBounds?.endTs) : undefined}
+                  disabled={!runInRange}
                 />
                 </Form.Group>
               </Col>
@@ -1544,8 +1564,9 @@ export function OptimizerPage() {
                   value={timeRangeToTs}
                   onChange={(e) => setTimeRangeToTs(e.currentTarget.value)}
                   type="datetime-local"
-                  min={toDatetimeLocalValue(selectedTapeBounds?.startTs)}
-                  max={toDatetimeLocalValue(selectedTapeBounds?.endTs)}
+                  min={selectedTapeIds.length === 1 ? toDatetimeLocalValue(selectedTapeBounds?.startTs) : undefined}
+                  max={selectedTapeIds.length === 1 ? toDatetimeLocalValue(selectedTapeBounds?.endTs) : undefined}
+                  disabled={!runInRange}
                 />
                 </Form.Group>
               </Col>
@@ -1556,7 +1577,9 @@ export function OptimizerPage() {
                     : "Tape range: unknown"}
                 </div>
                 <div style={{ fontSize: 12, opacity: 0.85 }}>
-                  Using: {effectiveTimeRangePreview.from != null ? formatTs(effectiveTimeRangePreview.from) : "-"} → {effectiveTimeRangePreview.to != null ? formatTs(effectiveTimeRangePreview.to) : "-"}
+                  {!runInRange
+                    ? `Using: ${selectedTapeIds.length > 1 ? "full range of each selected tape" : "full tape range"}`
+                    : `Using: ${effectiveTimeRangePreview.from != null ? formatTs(effectiveTimeRangePreview.from) : "-"} → ${effectiveTimeRangePreview.to != null ? formatTs(effectiveTimeRangePreview.to) : "-"}`}
                 </div>
               </Col>
               <Col xs={12}>
@@ -1762,10 +1785,7 @@ export function OptimizerPage() {
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("candidates")}>candidates</th>
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("seed")}>seed</th> : null}
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("minTrades")}>minTrades</th> : null}
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("direction")}>direction</th>
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rememberNegatives")}>rememberNegatives</th> : null}
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("hideNegativeNetPnl")}>hideNegativeNetPnl</th> : null}
                   <th style={HISTORY_CELL_STYLE}>hours</th>
                   <th style={{ ...historyBestNetCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("bestNetPnl")}>bestNetPnl</th>
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestTrades")}>bestTrades</th> : null}
@@ -1792,10 +1812,7 @@ export function OptimizerPage() {
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.optTfMin ?? "-"}</td>
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.candidates}</td>
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.seed}</td> : null}
-                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.minTrades}</td> : null}
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.directionMode}</td>
-                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.rememberNegatives ? "Y" : "N"}</td> : null}
-                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.excludeNegative ? "Y" : "N"}</td> : null}
                         <td style={HISTORY_CELL_STYLE}>{historyHoursByJobId[row.jobId] ?? "-"}</td>
                         <td style={historyBestNetCellStyle}>{row.summary.bestNetPnl == null ? "-" : row.summary.bestNetPnl.toFixed(4)}</td>
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestTrades ?? "-"}</td> : null}
