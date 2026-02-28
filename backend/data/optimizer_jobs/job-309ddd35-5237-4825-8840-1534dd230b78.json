@@ -1,8 +1,8 @@
 {
   "jobId": "309ddd35-5237-4825-8840-1534dd230b78",
-  "status": "running",
+  "status": "paused",
   "startedAtMs": 1772290641483,
-  "updatedAtMs": 1772290641484,
+  "updatedAtMs": 1772296676659,
   "finishedAtMs": null,
   "runPayload": null,
   "results": []

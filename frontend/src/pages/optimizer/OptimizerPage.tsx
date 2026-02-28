@@ -70,6 +70,8 @@ const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
 const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
+const SELECTED_TAPES_STORAGE_KEY = "bots_dev.optimizer.selectedTapeIds";
+const TOP_RESULTS_CACHE_KEY = "bots_dev.optimizer.topResultsCache.v1";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
@@ -413,6 +415,14 @@ export function OptimizerPage() {
 
   const [selectedTapeIds, setSelectedTapeIds] = useState<string[]>([]);
   const [recordingTapeId, setRecordingTapeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SELECTED_TAPES_STORAGE_KEY, JSON.stringify(selectedTapeIds));
+    } catch {
+      // ignore
+    }
+  }, [selectedTapeIds]);
   const [isRecording, setIsRecording] = useState(false);
   const [tapesRefreshKey, setTapesRefreshKey] = useState(0);
   const [tapeBoundsById, setTapeBoundsById] = useState<Record<string, TapeBounds>>({});
@@ -527,7 +537,33 @@ export function OptimizerPage() {
     return { pct, startedAtMs };
   }, []);
 
-  const isNoCurrentJobError = useCallback((err: unknown): boolean => {
+  
+  const loadTopResultsCache = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(TOP_RESULTS_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as any;
+      if (!parsed || typeof parsed !== "object") return null;
+      if (typeof parsed.jobId !== "string") return null;
+      if (!Array.isArray(parsed.results)) return null;
+      return parsed as { jobId: string; results: any[]; totalRows?: number; savedAtMs?: number };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const saveTopResultsCache = useCallback((jobId: string, results: any[], totalRows: number) => {
+    try {
+      localStorage.setItem(
+        TOP_RESULTS_CACHE_KEY,
+        JSON.stringify({ jobId, results, totalRows, savedAtMs: Date.now() })
+      );
+    } catch {
+      // ignore
+    }
+  }, []);
+
+const isNoCurrentJobError = useCallback((err: unknown): boolean => {
     const message = String((err as any)?.message ?? err).toLowerCase();
     return message.includes("404") || message.includes("not found") || message.includes("no current job");
   }, []);
@@ -577,6 +613,17 @@ export function OptimizerPage() {
     setRememberNegatives(localStorage.getItem(REMEMBER_NEGATIVES_STORAGE_KEY) === "1");
     setLoopRunsCount(loadStoredPositiveInt(LOOP_RUNS_COUNT_STORAGE_KEY, "3", 1));
     setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
+    try {
+      const rawTapes = localStorage.getItem(SELECTED_TAPES_STORAGE_KEY);
+      if (rawTapes) {
+        const arr = JSON.parse(rawTapes);
+        if (Array.isArray(arr) && arr.every((x) => typeof x === "string")) {
+          setSelectedTapeIds(arr);
+        }
+      }
+    } catch {
+      // ignore
+    }
     void refreshStatus();
     void refreshJobHistory();
     setTapesRefreshKey((prev) => prev + 1);
@@ -728,6 +775,16 @@ export function OptimizerPage() {
   const activeLoopJobId = loopJobId ?? lastNonNullLoopJobIdRef.current;
   const activeJobId = loopActive ? activeLoopJobId : singleJobId;
 
+  useEffect(() => {
+    if (!activeJobId) return;
+    const cached = loadTopResultsCache();
+    if (cached && cached.jobId === activeJobId && Array.isArray(cached.results) && cached.results.length > 0) {
+      setResults(cached.results as any);
+      setPage(1);
+      setTotalRows(typeof cached.totalRows === "number" ? cached.totalRows : cached.results.length);
+    }
+  }, [activeJobId, loadTopResultsCache]);
+
   const selectedTapeBounds = useMemo(() => {
     const tapeId = selectedTapeIds[0];
     if (!tapeId) return null;
@@ -788,6 +845,10 @@ export function OptimizerPage() {
         }
         setLoopStatus(next);
         setLoopJobId(next.loop?.lastJobId ?? null);
+        const loopTapes = next.loop?.runPayload?.tapeIds;
+        if ((next.loop?.isRunning || next.loop?.isPaused) && Array.isArray(loopTapes) && loopTapes.every((x) => typeof x === "string")) {
+          setSelectedTapeIds(loopTapes);
+        }
       } catch {
         return;
       }
@@ -1028,6 +1089,9 @@ export function OptimizerPage() {
           return b.trades - a.trades;
         });
         setLoopAggRows(() => sortedRows);
+         if (nextPage === 1) {
+           saveTopResultsCache(activeJobId, sortedRows as any, sortedRows.length);
+         }
         setTotalRows(sortedRows.length);
         return next;
       });
@@ -1038,6 +1102,9 @@ export function OptimizerPage() {
     setResults((prev) => (areTopResultsSimilar(prev, nextResults) ? prev : nextResults));
     setPage((prev) => (prev === res.page ? prev : res.page));
     setTotalRows((prev) => (prev === res.totalRows ? prev : res.totalRows));
+    if (nextPage === 1) {
+      saveTopResultsCache(activeJobId, nextResults as any, res.totalRows);
+    }
   }
 
   useEffect(() => {
