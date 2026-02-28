@@ -71,6 +71,7 @@ const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
+const ACTIVE_RESULTS_POLL_MS = 800;
 
 const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
 const HISTORY_CELL_STYLE = { padding: "4px 6px", whiteSpace: "nowrap", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12 } as const;
@@ -384,6 +385,14 @@ function isBetterResult(next: OptimizerResultRow, prev: OptimizerResultRow): boo
   return next.winRatePct > prev.winRatePct;
 }
 
+function areTopResultsSimilar(prev: OptimizationResult[], next: OptimizationResult[]): boolean {
+  if (prev.length !== next.length) return false;
+  if (prev.length === 0) return true;
+  const prevTop = prev[0];
+  const nextTop = next[0];
+  return prevTop.rank === nextTop.rank && prevTop.netPnl === nextTop.netPnl;
+}
+
 function loadStoredPositiveInt(key: string, fallback: string, min: number): string {
   try {
     const raw = localStorage.getItem(key);
@@ -494,6 +503,11 @@ export function OptimizerPage() {
   const clearSingleJobState = useCallback(() => {
     setSingleJobId(null);
     setJobStatus("idle");
+    setDone(0);
+    setTotal(0);
+    setResults([]);
+    setPage(1);
+    setTotalRows(0);
   }, []);
 
   const getStableProgressForJob = useCallback((jobId: string, status: { donePct?: number; done?: number; startedAtMs?: number | null }) => {
@@ -765,6 +779,9 @@ export function OptimizerPage() {
     const refresh = async () => {
       try {
         const next = await getOptimizerLoopStatus();
+        if (next.loop?.isRunning) {
+          lastTableSourceRef.current = "loop";
+        }
         setLoopStatus(next);
         setLoopJobId(next.loop?.lastJobId ?? null);
       } catch {
@@ -1014,10 +1031,29 @@ export function OptimizerPage() {
     }
     const keepPreviousIfEmpty = options?.keepPreviousIfEmpty ?? false;
     if (keepPreviousIfEmpty && nextResults.length === 0) return;
-    setResults(nextResults);
-    setPage(res.page);
-    setTotalRows(res.totalRows);
+    setResults((prev) => (areTopResultsSimilar(prev, nextResults) ? prev : nextResults));
+    setPage((prev) => (prev === res.page ? prev : res.page));
+    setTotalRows((prev) => (prev === res.totalRows ? prev : res.totalRows));
   }
+
+  useEffect(() => {
+    if (!activeJobId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        await fetchResults(1, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+      } catch (e: any) {
+        if (!alive) return;
+        if (isNoCurrentJobError(e)) {
+          clearSingleJobState();
+          return;
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [activeJobId, clearSingleJobState, isNoCurrentJobError, loopActive, sortDir, sortKey]);
 
   async function onRunOptimization() {
     if (!selectedTapeIds.length || rangeError) return;
@@ -1146,7 +1182,7 @@ export function OptimizerPage() {
         }
         setError(String(e?.message ?? e));
       }
-    }, 250);
+    }, ACTIVE_RESULTS_POLL_MS);
 
     return () => {
       alive = false;
@@ -1205,7 +1241,7 @@ export function OptimizerPage() {
       } catch {
         return;
       }
-    }, 1000);
+    }, ACTIVE_RESULTS_POLL_MS);
 
     return () => {
       alive = false;
