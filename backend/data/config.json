@@ -340,31 +340,31 @@
       "PHAUSDT",
       "RLSUSDT"
     ],
-    "klineTfMin": 1
+    "klineTfMin": 5
   },
   "fundingCooldown": {
     "beforeMin": 10,
     "afterMin": 5
   },
   "signals": {
-    "priceThresholdPct": 0.01,
-    "oivThresholdPct": 0.01,
+    "priceThresholdPct": 2,
+    "oivThresholdPct": 1,
     "requireFundingSign": true,
     "dailyTriggerMin": 1,
     "dailyTriggerMax": 999
   },
   "execution": {
-    "mode": "paper"
+    "mode": "demo"
   },
   "paper": {
     "enabled": true,
     "directionMode": "both",
-    "marginUSDT": 100,
-    "leverage": 10,
-    "entryOffsetPct": 0.001,
-    "entryTimeoutSec": 1,
-    "tpRoiPct": 6,
-    "slRoiPct": 3,
+    "marginUSDT": 5,
+    "leverage": 3,
+    "entryOffsetPct": 0.546,
+    "entryTimeoutSec": 1800,
+    "tpRoiPct": 11.3,
+    "slRoiPct": 2.1,
     "makerFeeRate": 0.0002,
     "applyFunding": true,
     "rearmDelayMs": 1000,
