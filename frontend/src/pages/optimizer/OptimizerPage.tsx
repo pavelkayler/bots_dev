@@ -656,6 +656,14 @@ export function OptimizerPage() {
     return tapeBoundsById[tapeId] ?? null;
   }, [selectedTapeIds, tapeBoundsById]);
 
+  const handleTapesLoaded = useCallback((rows: TapeRow[]) => {
+    const next: Record<string, TapeBounds> = {};
+    rows.forEach((row) => {
+      next[row.id] = { startTs: row.startTs, endTs: row.endTs };
+    });
+    setTapeBoundsById(next);
+  }, []);
+
   const effectiveTimeRangePreview = useMemo(() => {
     const bounds = selectedTapeBounds;
     let from = parseDatetimeLocalToTs(timeRangeFromTs);
@@ -664,8 +672,13 @@ export function OptimizerPage() {
     if (to == null) to = bounds?.endTs ?? undefined;
     if (from != null && bounds?.startTs != null && from < bounds.startTs) from = bounds.startTs;
     if (to != null && bounds?.endTs != null && to > bounds.endTs) to = bounds.endTs;
-    const invalid = from != null && to != null && from > to;
-    return { from, to, invalid };
+    if (from != null && to != null && from > to) {
+      const nextFrom = to;
+      const nextTo = from;
+      from = nextFrom;
+      to = nextTo;
+    }
+    return { from, to, invalid: false };
   }, [selectedTapeBounds, timeRangeFromTs, timeRangeToTs]);
 
   const resolveEffectiveTimeRange = useCallback(() => {
@@ -677,7 +690,10 @@ export function OptimizerPage() {
     if (from != null && bounds?.startTs != null && from < bounds.startTs) from = bounds.startTs;
     if (to != null && bounds?.endTs != null && to > bounds.endTs) to = bounds.endTs;
     if (from != null && to != null && from > to) {
-      return { error: "Invalid time range: from is after to." };
+      const nextFrom = to;
+      const nextTo = from;
+      from = nextFrom;
+      to = nextTo;
     }
     return { from, to };
   }, [selectedTapeBounds, timeRangeFromTs, timeRangeToTs]);
@@ -731,10 +747,6 @@ export function OptimizerPage() {
   async function onStartLoop() {
     if (!selectedTapeIds.length || rangeError) return;
     const effectiveRange = resolveEffectiveTimeRange();
-    if ("error" in effectiveRange) {
-      setError(effectiveRange.error ?? "Invalid time range: from is after to.");
-      return;
-    }
     setError(null);
     lastTableSourceRef.current = "loop";
     setLoopBusy(true);
@@ -924,10 +936,6 @@ export function OptimizerPage() {
   async function onRunOptimization() {
     if (!selectedTapeIds.length || rangeError) return;
     const effectiveRange = resolveEffectiveTimeRange();
-    if ("error" in effectiveRange) {
-      setError(effectiveRange.error ?? "Invalid time range: from is after to.");
-      return;
-    }
     setError(null);
     lastTableSourceRef.current = "single";
     setDone(0);
@@ -1387,13 +1395,7 @@ export function OptimizerPage() {
               refreshKey={tapesRefreshKey}
               recordingTapeId={recordingTapeId}
               onError={setError}
-              onTapesLoaded={(rows) => {
-                const next: Record<string, TapeBounds> = {};
-                rows.forEach((row) => {
-                  next[row.id] = { startTs: row.startTs, endTs: row.endTs };
-                });
-                setTapeBoundsById(next);
-              }}
+              onTapesLoaded={handleTapesLoaded}
             />
 
             <details style={{ marginBottom: 12 }}>
@@ -1522,7 +1524,7 @@ export function OptimizerPage() {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button onClick={() => void onRunOptimization()} disabled={!(hasTapeSelected && !loopActive && !singleJobProcessActive && !rangeError && !effectiveTimeRangePreview.invalid)}>
+                <Button onClick={() => void onRunOptimization()} disabled={!(hasTapeSelected && !loopActive && !singleJobProcessActive && !rangeError)}>
                   Run optimization
                 </Button>
               </Col>
@@ -1536,7 +1538,7 @@ export function OptimizerPage() {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || !hasTapeSelected || Boolean(rangeError) || effectiveTimeRangePreview.invalid}>Start loop</Button>
+                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || !hasTapeSelected || Boolean(rangeError)}>Start loop</Button>
               </Col>
               <Col xs="auto">
                 <ButtonGroup>
@@ -1579,7 +1581,6 @@ export function OptimizerPage() {
               </tbody>
             </Table>
             {rangeError ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>{rangeError}</div> : null}
-            {effectiveTimeRangePreview.invalid ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>Invalid time range: from is after to.</div> : null}
 
             <div style={{ fontSize: 12, marginBottom: 8 }}>
               selected tapes: <b>{selectedTapeIds.length}</b>
