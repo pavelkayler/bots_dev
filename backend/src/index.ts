@@ -59,8 +59,9 @@ function loadEnvFile(filePath: string) {
 import Fastify from "fastify";
 import formbody from "@fastify/formbody";
 import cors from "@fastify/cors";
-import { registerHttpRoutes } from "./api/http.js";
+import { registerHttpRoutes, requestOptimizerGracefulPauseAndFlush, setShutdownHandler } from "./api/http.js";
 import { createWsHub } from "./api/wsHub.js";
+import { runtime } from "./runtime/runtime.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: true });
@@ -92,6 +93,34 @@ async function main() {
   const host = process.env.HOST ?? "0.0.0.0";
 
   const app = await buildApp();
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    let exitCode = 0;
+    try {
+      app.log.info({ signal }, "shutdown requested");
+      const st = runtime.getStatus();
+      if (st.sessionState === "RUNNING" || st.sessionState === "PAUSED" || st.sessionState === "STOPPING") {
+        await runtime.stop();
+      }
+      await requestOptimizerGracefulPauseAndFlush({ timeoutMs: 3_000 });
+      await app.close();
+    } catch (err) {
+      exitCode = 1;
+      app.log.error({ err, signal }, "graceful shutdown failed");
+    } finally {
+      process.exit(exitCode);
+    }
+  };
+  setShutdownHandler(() => gracefulShutdown("admin"));
+  process.on("SIGINT", () => {
+    void gracefulShutdown("SIGINT");
+  });
+  process.on("SIGTERM", () => {
+    void gracefulShutdown("SIGTERM");
+  });
+
   await app.listen({ port, host });
 
   app.log.info({ host, port }, "backend listening");
