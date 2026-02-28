@@ -132,6 +132,7 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
 
   const [doctorStatus, setDoctorStatus] = useState<DoctorStatus | null>(null);
   const [doctorLoading, setDoctorLoading] = useState(false);
+  const isDemoMode = draft?.execution.mode === "demo";
 
   const disabled = !draft || !numericDraft;
   const universeLocked = sessionState === "RUNNING" || sessionState === "STOPPING";
@@ -167,6 +168,10 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
     setDoctorLoading(true);
     try {
       const res = await fetch("/api/doctor");
+      if (!res.ok) {
+        setDoctorStatus(null);
+        return;
+      }
       const json = await res.json();
       setDoctorStatus(json as DoctorStatus);
     } catch {
@@ -216,8 +221,13 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
   }, []);
 
   useEffect(() => {
+    if (!isDemoMode) {
+      setDoctorStatus(null);
+      setDoctorLoading(false);
+      return;
+    }
     void loadDoctor();
-  }, [loadDoctor, draft?.execution.mode]);
+  }, [isDemoMode, loadDoctor]);
 
   useEffect(() => {
     if (!config) return;
@@ -473,9 +483,11 @@ function buildConfigForApply(): RuntimeConfig {
                       <option value="empty">Empty (tape only)</option>
                     </Form.Select>
                     <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>
-                      keys {doctorLoading ? "…" : doctorStatus?.demoKeysPresent ? "✅" : "❌"} · auth {doctorLoading ? "…" : doctorStatus?.demoAuthOk ? "✅" : "❌"}
+                      {isDemoMode
+                        ? `keys ${doctorLoading ? "…" : doctorStatus?.demoKeysPresent ? "✅" : "❌"} · auth ${doctorLoading ? "…" : doctorStatus?.demoAuthOk ? "✅" : "❌"}`
+                        : "keys — · auth —"}
                     </span>
-                    <Button size="sm" variant="outline-secondary" onClick={() => void loadDoctor()} disabled={doctorLoading}>
+                    <Button size="sm" variant="outline-secondary" onClick={() => void loadDoctor()} disabled={doctorLoading || !isDemoMode}>
                       ↻
                     </Button>
                   </div>
