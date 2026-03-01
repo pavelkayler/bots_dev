@@ -73,6 +73,7 @@ const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const SELECTED_TAPES_STORAGE_KEY = "bots_dev.optimizer.selectedTapeIds";
 const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
 const TOP_RESULTS_LOOP_STORAGE_KEY = "bots_dev.optimizer.topResults.loop";
+const TABLE_SOURCE_STORAGE_KEY = "bots_dev.optimizer.topResults.source";
 
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
@@ -514,7 +515,10 @@ useEffect(() => {
   const lastNonNullLoopJobIdRef = useRef<string | null>(null);
   const lastPctByJobIdRef = useRef<Record<string, number>>({});
   const startedAtByJobIdRef = useRef<Record<string, number>>({});
-  const lastTableSourceRef = useRef<"loop" | "single">("single");
+  const lastTableSourceRef = useRef<"loop" | "single">((() => {
+  const raw = localStorage.getItem(TABLE_SOURCE_STORAGE_KEY);
+  return raw === "loop" ? "loop" : "single";
+})());
   const historyImportInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -629,6 +633,7 @@ useEffect(() => {
         // Restore only an in-flight single-run job. Completed jobs should not drive UI controls/progress on page load.
         if (statusRes.status === "running" || statusRes.status === "paused") {
           lastTableSourceRef.current = "single";
+          localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "single");
           setSingleJobId(current.jobId);
           const progress = getStableProgressForJob(current.jobId, statusRes as { donePct?: number; done?: number; startedAtMs?: number | null });
           setDone(progress.pct);
@@ -818,6 +823,7 @@ useEffect(() => {
         const next = await getOptimizerLoopStatus();
         if (next.loop?.isRunning) {
           lastTableSourceRef.current = "loop";
+        localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "loop");
         }
         setLoopStatus(next);
         setLoopJobId(next.loop?.lastJobId ?? null);
@@ -870,6 +876,7 @@ useEffect(() => {
     const effectiveRange = resolveEffectiveTimeRange();
     setError(null);
     lastTableSourceRef.current = "loop";
+        localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "loop");
     setLoopBusy(true);
     try {
       const marginPerTrade = Number(simMarginPerTrade);
@@ -1099,6 +1106,7 @@ useEffect(() => {
     const effectiveRange = resolveEffectiveTimeRange();
     setError(null);
     lastTableSourceRef.current = "single";
+          localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "single");
     setDone(0);
     setTotal(0);
     try {
@@ -1146,6 +1154,8 @@ useEffect(() => {
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
       });
+      lastTableSourceRef.current = "single";
+      localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "single");
       setSingleJobId(runRes.jobId);
       const startedAtMs = Date.now();
       startedAtByJobIdRef.current[runRes.jobId] = startedAtMs;
