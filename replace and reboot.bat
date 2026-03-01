@@ -1,3 +1,8 @@
-replace.bat
-m.bat install
-m.bat start
+@echo off
+setlocal EnableExtensions
+
+cd /d "%~dp0"
+
+call "replace.bat"
+call "m.bat" install
+call "m.bat" start
