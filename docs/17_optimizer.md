@@ -1,8 +1,8 @@
-# 17 Optimizer (Tape recording + Replay search)
+# 17 Optimizer (cached REST dataset + search)
 
 Last update: 2026-02-26
 
-This document describes the Optimizer feature used to tune paper-trading parameters via recorded market “tapes” and deterministic replay.
+This document describes the Optimizer feature used to tune paper-trading parameters via cached historical market data and deterministic replay.
 
 ## Goals
 - Record market tapes (JSONL) while runtime session is **RUNNING**.
@@ -18,36 +18,6 @@ Main sections:
 - Optimization inputs (candidates/seed/tf/direction + filters + loop controls)
 - Progress (0.01% precision) + per-run elapsed/ETA + loop elapsed
 - Results table (live incremental updates)
-
-## Tape directory
-- Setting: `tapesDir` (backend filesystem path)
-- Stored: `backend/data/optimizer_settings.json`
-
-## Tape recording (automatic)
-### When it records
-- Recording is **automatic**:
-  - starts on transition into `RUNNING`
-  - stops on any non-RUNNING state (STOPPING/STOPPED/PAUSED)
-
-### JSONL format
-First line is always:
-- `type: "meta"`
-- Includes: tapeId, createdAt, sessionId, universeSelectedId, klineTfMin, symbols
-
-Other line types:
-- `type: "ticker"`
-- `type: "kline_confirm"` (confirmed candles, when available)
-
-### Ticker payload rules
-- **Full-only**: write ticker only if all fields are present and finite:
-  - `markPrice`, `openInterestValue`, `fundingRate`, `nextFundingTime`
-- **Per-symbol throttle**: record each symbol at most once per **5000ms**
-
-### Rotation (hard cap)
-- Max tape segment size: **90 MB**
-- When the active tape reaches the cap, recorder rotates to:
-  - `...-seg2`, `...-seg3`, ...
-- Recording stays ON (no session interruption).
 
 ## Optimization run
 ### Core inputs
@@ -70,7 +40,7 @@ When `rememberNegatives` is enabled:
 
 ### Run key
 Blacklist and seed shifting are scoped by:
-- selected tapeIds (sorted)
+- selected cached dataset symbols/range
 - directionMode
 - tf(opt)
 
@@ -124,7 +94,7 @@ Each result row includes:
 
 ## Remote dataset cache (planned replacement for tapes)
 
-The optimizer is planned to stop depending on tape files.
+The optimizer uses the Receive Data cache under `backend/data/cache/bybit_klines/`.
 Instead, it will operate on a cached historical dataset fetched from Bybit REST history endpoints.
 
 ### Dataset Target

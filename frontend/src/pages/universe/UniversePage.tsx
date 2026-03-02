@@ -95,7 +95,11 @@ export function UniversePage() {
           const res = await listUniverses();
           if (!active) return;
           setItems(res.universes ?? []);
-          const matched = (res.universes ?? []).find((u) => u.minTurnoverUsd === createJob.minTurnoverUsd && u.minVolatilityPct === createJob.minVolatilityPct);
+          const matched = (res.universes ?? []).find(
+            (u) => u.minTurnoverUsd === createJob.minTurnoverUsd
+              && u.minVolatilityPct === createJob.minVolatilityPct
+              && Number(u.updatedAt) >= createJob.pendingSinceMs
+          );
           if (matched) {
             setLastCreated(matched);
             setCreateJob(null);
@@ -283,7 +287,7 @@ export function UniversePage() {
               <CenteredProgressBar
                 now={createJob ? createProgress : creating ? 99 : 0}
                 showPercent={Boolean(createJob || creating)}
-                label={createJob || creating ? undefined : "0.0%"}
+                label={createJob || creating ? undefined : "0%"}
               />
           </div>
 

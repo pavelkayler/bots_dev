@@ -1508,13 +1508,13 @@ useEffect(() => {
           <Card.Header className="d-flex align-items-center justify-content-between">
             <b>Optimizer</b>
             <Button size="sm" variant="outline-secondary" onClick={() => setTapesRefreshKey((prev) => prev + 1)}>
-              Refresh tapes
+              Refresh dataset
             </Button>
           </Card.Header>
           <Card.Body>
             {error ? <Alert variant="danger">{error}</Alert> : null}
 
-            <h6>Tape recording</h6>
+            <h6>Dataset</h6>
             <div className="d-flex align-items-center gap-2 mb-2">
               <Button size="sm" variant="outline-secondary" onClick={() => { setTapesDirDraft(tapesDir); setShowTapesDirModal(true); }}>
                 Tapes directory
@@ -1628,8 +1628,8 @@ useEffect(() => {
               <Col xs={12}>
                 <div style={{ fontSize: 12, opacity: 0.85 }}>
                   {selectedTapeBounds?.startTs != null && selectedTapeBounds?.endTs != null
-                    ? `Tape range: ${formatTs(selectedTapeBounds.startTs)} → ${formatTs(selectedTapeBounds.endTs)}`
-                    : "Tape range: unknown"}
+                    ? `Range: ${formatTs(selectedTapeBounds.startTs)} → ${formatTs(selectedTapeBounds.endTs)}`
+                    : "Range: unknown"}
                 </div>
               </Col>
               <Col xs={12}>
@@ -1638,7 +1638,7 @@ useEffect(() => {
                     <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} disabled={loopActive} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
                   </Form.Group>
                   <Form.Group>
-                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives for this tape" checked={rememberNegatives} disabled={loopActive} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives for this dataset" checked={rememberNegatives} disabled={loopActive} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
                   </Form.Group>
                   <Form.Group>
                     <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} disabled={loopActive} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
@@ -1718,7 +1718,7 @@ useEffect(() => {
             {rangeError ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>{rangeError}</div> : null}
 
             <div style={{ fontSize: 12, marginBottom: 8 }}>
-              selected tapes: <b>{selectedTapeIds.length}</b>
+              selected dataset rows: <b>{selectedTapeIds.length}</b>
               {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
             </div>
             <div style={{ fontSize: 12, marginBottom: 8 }}>
@@ -1730,7 +1730,7 @@ useEffect(() => {
             </div>
 
             {showProgressBlock ? <>
-              <CenteredProgressBar now={pct} showPercent title={`progress ${pct.toFixed(1)} / ${total.toFixed(2)}`} className="mb-2" />
+              <CenteredProgressBar now={pct} showPercent title={`progress ${Math.round(pct)} / ${Math.round(total)}`} className="mb-2" />
               <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec ?? 0)}</b> · ETA: <b>{isRunningStatus ? formatEta(etaSec) : "-"}</b></div>
               <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div>
             </> : null}
@@ -1850,7 +1850,7 @@ useEffect(() => {
                   <th style={{ ...historyEndedAtCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
                   <th style={{ ...historyStatusCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("mode")}>mode</th> : null}
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tapes")}>tapes</th>
+                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tapes")}>dataset</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("candidates")}>candidates</th>
                   <th style={HISTORY_CELL_STYLE}>sim</th>

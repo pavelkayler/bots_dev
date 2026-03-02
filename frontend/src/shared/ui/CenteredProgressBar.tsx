@@ -4,13 +4,13 @@ type CenteredProgressBarProps = {
   now: number;
   label?: string;
   showPercent?: boolean;
-  precision?: number;
   title?: string;
   className?: string;
 };
 
-export function CenteredProgressBar({ now, label, showPercent = false, precision = 1, title, className }: CenteredProgressBarProps) {
-  const display = label ?? (showPercent ? `${Math.max(0, Math.min(100, now)).toFixed(precision)}%` : "");
+export function CenteredProgressBar({ now, label, showPercent = false, title, className }: CenteredProgressBarProps) {
+  const roundedNow = Math.round(Math.max(0, Math.min(100, now)));
+  const display = label ?? (showPercent ? `${roundedNow}%` : "");
   return (
     <div className={className} style={{ position: "relative" }} title={title}>
       <ProgressBar now={now} label="" />
