@@ -801,7 +801,7 @@ function getLoopLastJobStatus() {
   if (!job) return null;
   return {
     status: job.status,
-    donePercent: job.done,
+    donePercent: Math.max(0, Math.min(100, Number(job.done) || 0)),
     ...(job.message ? { message: job.message } : {}),
   };
 }
