@@ -134,7 +134,7 @@ function formatDuration(sec: number | null): string {
 }
 
 function formatEta(sec: number | null): string {
-  if (sec == null || !Number.isFinite(sec) || sec < 0) return "-";
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return "";
   const total = Math.floor(sec);
   const hh = Math.floor(total / 3600);
   const mm = Math.floor((total % 3600) / 60);
@@ -173,12 +173,6 @@ function makeResultSignature(row: OptimizerResultRow): string {
     `timeoutSec=${toSigValue(row.params.timeoutSec)}`,
     `rearmMs=${toSigValue(row.params.rearmMs)}`,
   ].join("|");
-}
-
-function isBetterResult(next: OptimizerResultRow, prev: OptimizerResultRow): boolean {
-  if (next.netPnl !== prev.netPnl) return next.netPnl > prev.netPnl;
-  if (next.trades !== prev.trades) return next.trades > prev.trades;
-  return next.winRatePct > prev.winRatePct;
 }
 
 function areTopResultsSimilar(prev: OptimizationResult[], next: OptimizationResult[]): boolean {
@@ -251,7 +245,6 @@ useEffect(() => {
   saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, loopAggRows);
 }, [loopAggRows]);
 
-  const [, setLoopAggMap] = useState<Map<string, OptimizerResultRow>>(new Map());
   const [page, setPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
@@ -591,7 +584,6 @@ useEffect(() => {
         infinite: loopInfinite,
       });
       setLoopAggRows([]);
-      setLoopAggMap(new Map());
       completedLoopRunIdsRef.current = {};
       localStorage.removeItem(LOOP_RESULTS_DRAFT_STORAGE_KEY);
       setDone(0);
@@ -699,22 +691,13 @@ useEffect(() => {
     return payload;
   }
 
-  const mergeCompletedRunResults = useCallback((rows: OptimizationResult[]) => {
+  const appendCompletedRunResults = useCallback((rows: OptimizationResult[]) => {
     const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
-    setLoopAggMap((prev) => {
-      const next = new Map(prev);
-      for (const row of rows) {
-        if (minTradesLimit > 0 && row.trades < minTradesLimit) continue;
-        const signature = makeResultSignature(row);
-        const existing = next.get(signature);
-        if (!existing || isBetterResult(row, existing)) next.set(signature, row);
-      }
-      const sortedRows = Array.from(next.values()).sort((a, b) => {
-        if (b.netPnl !== a.netPnl) return b.netPnl - a.netPnl;
-        return b.trades - a.trades;
-      });
-      setLoopAggRows(sortedRows);
-      setTotalRows(sortedRows.length);
+    const filteredRows = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
+    if (!filteredRows.length) return;
+    setLoopAggRows((prev) => {
+      const next = prev.concat(filteredRows);
+      setTotalRows(next.length);
       return next;
     });
   }, [minTrades]);
@@ -724,11 +707,11 @@ useEffect(() => {
     completedLoopRunIdsRef.current[jobId] = true;
     try {
       const res = await getJobResults(jobId, { page: 1, sortKey, sortDir });
-      mergeCompletedRunResults(Array.isArray(res.results) ? res.results : []);
+      appendCompletedRunResults(Array.isArray(res.results) ? res.results : []);
     } catch {
       delete completedLoopRunIdsRef.current[jobId];
     }
-  }, [mergeCompletedRunResults, sortDir, sortKey]);
+  }, [appendCompletedRunResults, sortDir, sortKey]);
 
 
   useEffect(() => {
@@ -741,22 +724,16 @@ useEffect(() => {
         if (!mounted) return;
 
         const isRunningNow = Boolean(next.loop?.isRunning);
-        if (isRunningNow) {
-          lastTableSourceRef.current = "loop";
-        }
+        if (isRunningNow) lastTableSourceRef.current = "loop";
 
-        const nextDonePercent = Math.floor(clamp(Number(next.lastJobStatus?.donePercent ?? 0), 0, 100));
-        const didCompleteRun = prevLoopRunningRef.current && nextDonePercent === 100;
+        const donePercent = Math.floor(Number(next.lastJobStatus?.donePercent ?? 0));
+        const didCompleteRun = prevLoopRunningRef.current && donePercent === 100;
         const completedJobId = next.loop?.lastJobId ?? lastNonNullLoopJobIdRef.current;
 
         setLoopStatus(next);
         setNowMs(Date.now());
         setTotal(100);
-        setDone((prev) => {
-          if (nextDonePercent === 100) return 100;
-          if (isRunningNow) return nextDonePercent;
-          return prev;
-        });
+        setDone((prev) => (donePercent === 100 ? 100 : isRunningNow ? donePercent : prev));
 
         const isPausedNow = Boolean(next.loop?.isPaused);
         if (isPausedNow) {
@@ -771,6 +748,10 @@ useEffect(() => {
         }
 
         prevLoopRunningRef.current = isRunningNow;
+        if (!isRunningNow && timer != null) {
+          window.clearInterval(timer);
+          timer = null;
+        }
       } catch {
         return;
       }
@@ -827,7 +808,6 @@ useEffect(() => {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
     const nextResults = res.results ?? [];
     if (loopActive) {
-      mergeCompletedRunResults(nextResults);
       return;
     }
     const keepPreviousIfEmpty = options?.keepPreviousIfEmpty ?? false;
@@ -1114,7 +1094,7 @@ useEffect(() => {
     if (jobHistoryOffset > maxOffset) setJobHistoryOffset(maxOffset);
   }, [jobHistoryLimit, jobHistoryOffset, jobHistoryTotalPages]);
   const isRunningStatus = jobStatus === "running";
-  const loopStartedAtMs = Number((loopStatus as any)?.startedAtMs ?? loopStatus?.loop?.createdAtMs ?? 0) || null;
+  const loopStartedAtMs = Number((loopStatus?.lastJobStatus as any)?.startedAtMs ?? loopStatus?.loop?.createdAtMs ?? 0) || null;
   const startedAtForActiveJobId = loopActive
     ? loopStartedAtMs
     : (activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs);
@@ -1171,7 +1151,7 @@ useEffect(() => {
         <Card>
           <Card.Header className="d-flex align-items-center justify-content-between">
             <b>Optimizer</b>
-            <span style={{ fontSize: 12, opacity: 0.8 }}>Receive Data cache dataset</span>
+            <span style={{ fontSize: 12, opacity: 0.8 }}>RECEIVE_DATA_CACHE</span>
           </Card.Header>
           <Card.Body>
             {error ? <Alert variant="danger">{error}</Alert> : null}
@@ -1246,7 +1226,7 @@ useEffect(() => {
                     <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} disabled={loopActive} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
                   </Form.Group>
                   <Form.Group>
-                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives for this dataset" checked={rememberNegatives} disabled={loopActive} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives" checked={rememberNegatives} disabled={loopActive} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
                   </Form.Group>
                   <Form.Group>
                     <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} disabled={loopActive} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
