@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, Col, Form, Row, Spinner } from "react-bootstrap";
 import { setDatasetTarget, getDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../api/datasetTargetApi";
 import { listUniverses } from "../../universe/api";
 import type { UniverseMeta } from "../../universe/types";
-import { cancelReceiveDataJob, getReceiveDataJob, startReceiveData, type ReceiveDataJob } from "../../dataReceive/api/dataReceiveApi";
+import { DATASET_CACHE_STORAGE_KEY, cancelReceiveDataJob, getReceiveDataJob, startReceiveData, type ReceiveDataJob } from "../../dataReceive/api/dataReceiveApi";
 import { CenteredProgressBar } from "../../../shared/ui/CenteredProgressBar";
 
 type DraftState = {
@@ -18,7 +18,6 @@ const STORAGE_KEY = "datasetTargetDraft";
 const RECEIVE_JOB_STORAGE_KEY = "receiveDataJobId";
 const RECEIVE_LAST_JOB_STORAGE_KEY = "receiveDataLastJob";
 const PRESETS: DatasetRangePreset[] = ["6h", "12h", "24h", "48h", "1w", "2w", "4w", "1mo"];
-const SAVE_DEBOUNCE_MS = 400;
 
 function toDatetimeLocal(ms: number): string {
   if (!Number.isFinite(ms)) return "";
@@ -175,45 +174,6 @@ export default function DatasetTargetCard() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
   }, [draft, loadingInit]);
 
-  const savePayload = useMemo(() => buildSavePayload(draft), [draft]);
-  const lastSavedPayloadRef = useRef<string>("");
-
-  useEffect(() => {
-    if (loadingInit || !savePayload) {
-      setSaving(false);
-      return;
-    }
-    const payloadKey = JSON.stringify(savePayload);
-    if (lastSavedPayloadRef.current === payloadKey) return;
-    let active = true;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        setSaving(true);
-        try {
-          const res = await setDatasetTarget(savePayload);
-          if (!active) return;
-          const next = draftFromTarget(res.datasetTarget);
-          const normalizedPayload = buildSavePayload(next);
-          if (normalizedPayload) {
-            lastSavedPayloadRef.current = JSON.stringify(normalizedPayload);
-          }
-          setDraft(next);
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-        } catch (e: any) {
-          if (!active) return;
-          setError(String(e?.message ?? e));
-        } finally {
-          if (active) setSaving(false);
-        }
-      })();
-    }, SAVE_DEBOUNCE_MS);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [loadingInit, savePayload]);
-
   useEffect(() => {
     const storedJobId = window.localStorage.getItem(RECEIVE_JOB_STORAGE_KEY);
     if (storedJobId) {
@@ -235,6 +195,10 @@ export default function DatasetTargetCard() {
           const res = await getReceiveDataJob(receiveJobId);
           if (!active) return;
           setReceiveJob(res.job);
+          if (res.job.status === "done") {
+            const datasetCache = res.datasetCache ?? res.job.id;
+            window.localStorage.setItem(DATASET_CACHE_STORAGE_KEY, datasetCache);
+          }
           if (res.job.status === "done" || res.job.status === "error" || res.job.status === "cancelled") {
             window.localStorage.setItem(RECEIVE_LAST_JOB_STORAGE_KEY, JSON.stringify(res.job));
             setReceiveJobId(null);
@@ -259,11 +223,37 @@ export default function DatasetTargetCard() {
 
   const receiveRunning = receiveJob?.status === "queued" || receiveJob?.status === "running";
 
+
+  async function onApplyDatasetTarget() {
+    const payload = buildSavePayload(draft);
+    if (!payload) {
+      setError("Invalid dataset range.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const res = await setDatasetTarget(payload);
+      const next = draftFromTarget(res.datasetTarget);
+      setDraft(next);
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function onReceiveData() {
     if (receiveRunning) return;
     setError("");
+    const payload = buildSavePayload(draft);
+    if (!payload) {
+      setError("Invalid dataset range.");
+      return;
+    }
     try {
-      const started = await startReceiveData();
+      const started = await startReceiveData(payload);
       window.localStorage.removeItem(RECEIVE_LAST_JOB_STORAGE_KEY);
       setReceiveJobId(started.jobId);
       window.localStorage.setItem(RECEIVE_JOB_STORAGE_KEY, started.jobId);
@@ -367,6 +357,10 @@ export default function DatasetTargetCard() {
 
           <Col xl={3} lg={3} md={12} sm={12} xs={12}>
             <div className="d-flex gap-2">
+              <Button variant="outline-primary" onClick={() => void onApplyDatasetTarget()} disabled={receiveRunning || saving || loadingInit}>
+                {saving ? <Spinner size="sm" animation="border" className="me-2" /> : null}
+                Apply
+              </Button>
               <Button variant="primary" onClick={() => void onReceiveData()} disabled={receiveRunning || saving || loadingInit}>
                 {receiveRunning ? <Spinner size="sm" animation="border" className="me-2" /> : null}
                 Receive Data
@@ -385,9 +379,14 @@ export default function DatasetTargetCard() {
             showPercent
           />
           <div style={{ fontSize: 12, marginTop: 6, minHeight: 18 }}>
-            {receiveJob ? [receiveJob.progress.currentSymbol, receiveJob.progress.message].filter(Boolean).join(" — ") : ""}
+            {receiveJob ? [
+              `${receiveJob.progress.completedSteps}/${receiveJob.progress.totalSteps}`,
+              receiveJob.progress.currentSymbol,
+              receiveJob.progress.message,
+            ].filter(Boolean).join(" — ") : ""}
           </div>
         </div>
+        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>Bybit history retrieval is throttled in backend (~500 req / 5s) with incremental progress updates.</div>
         {error ? <div style={{ color: "#b02a37", marginTop: 8, fontSize: 12 }}>{error}</div> : null}
       </Card.Body>
     </Card>
