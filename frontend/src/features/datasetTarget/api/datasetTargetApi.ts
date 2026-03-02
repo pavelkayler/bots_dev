@@ -1,0 +1,23 @@
+import { getJson, postJson } from "../../../shared/api/http";
+
+export type DatasetRangePreset = "24h" | "48h" | "1w" | "2w" | "4w" | "1mo";
+
+export type DatasetRange =
+  | { kind: "preset"; preset: DatasetRangePreset }
+  | { kind: "manual"; startMs: number; endMs: number };
+
+export type DatasetTarget = {
+  universeId: string | null;
+  range: DatasetRange;
+  updatedAtMs: number;
+};
+
+export async function getDatasetTarget(): Promise<{ datasetTarget: DatasetTarget }> {
+  const base = "";
+  return await getJson<{ datasetTarget: DatasetTarget }>(`${base}/api/dataset-target`);
+}
+
+export async function setDatasetTarget(payload: Partial<DatasetTarget> | any): Promise<{ datasetTarget: DatasetTarget }> {
+  const base = "";
+  return await postJson<{ datasetTarget: DatasetTarget }>(`${base}/api/dataset-target`, payload);
+}

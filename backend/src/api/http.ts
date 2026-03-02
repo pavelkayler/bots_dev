@@ -28,6 +28,7 @@ import {
 import { optimizerWorkerManager } from "../optimizer/worker/workerManager.js";
 import { getDataDirPath, isLowDiskBestEffort, MIN_FREE_BYTES, readFreeBytesBestEffort } from "../utils/diskGuard.js";
 import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
+import { readDatasetTarget, writeDatasetTarget, normalizeDatasetTarget } from "../dataset/datasetTargetStore.js";
 
 type OptimizerJob = {
   status: "running" | "paused" | "done" | "error" | "cancelled";
@@ -1008,6 +1009,27 @@ export function registerHttpRoutes(app: FastifyInstance) {
   app.post("/api/session/stop", async () => runtime.stop());
   app.post("/api/session/pause", async () => runtime.pause());
   app.post("/api/session/resume", async () => runtime.resume());
+
+
+  app.get("/api/dataset-target", async (req, reply) => {
+    try {
+      return { datasetTarget: readDatasetTarget() };
+    } catch (e: any) {
+      reply.code(500);
+      return { error: "dataset_target_error", message: String(e?.message ?? "Failed to read dataset target.") };
+    }
+  });
+
+  app.post("/api/dataset-target", async (req, reply) => {
+    try {
+      const normalized = normalizeDatasetTarget((req as any).body);
+      writeDatasetTarget(normalized);
+      return { datasetTarget: normalized };
+    } catch (e: any) {
+      reply.code(500);
+      return { error: "dataset_target_error", message: String(e?.message ?? "Failed to persist dataset target.") };
+    }
+  });
 
   app.get("/api/config", async () => {
     return { config: configStore.get() };

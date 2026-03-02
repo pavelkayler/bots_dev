@@ -304,3 +304,33 @@ Notes:
 - All endpoints should remain localhost-safe where needed.
 - Progress updates should be throttled (10–20 updates/sec max).
 
+
+## (2026-03-02) Dataset Target
+
+### GET `/api/dataset-target`
+Returns the current persisted dataset target.
+
+Response:
+```json
+{
+  "datasetTarget": {
+    "universeId": null,
+    "range": { "kind": "preset", "preset": "24h" },
+    "updatedAtMs": 0
+  }
+}
+```
+
+### POST `/api/dataset-target`
+Validates, normalizes, persists, and returns the dataset target.
+
+Response:
+```json
+{
+  "datasetTarget": {
+    "universeId": "top_10m_6pct",
+    "range": { "kind": "manual", "startMs": 1709251200000, "endMs": 1709337600000 },
+    "updatedAtMs": 1772400000000
+  }
+}
+```
