@@ -26,7 +26,6 @@ import {
   type OptimizerSortKeyExtended,
   type OptimizerHistorySortKey,
 } from "../../features/optimizer/api/optimizerApi";
-import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard";
 import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
 
 type OptimizerResultRow = OptimizationResult;
@@ -68,6 +67,7 @@ const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
 const ACTIVE_RESULTS_POLL_MS = 800;
+const LOOP_STATUS_POLL_MS = 1000;
 
 const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
 const HISTORY_CELL_STYLE = { padding: "4px 6px", whiteSpace: "nowrap", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12 } as const;
@@ -276,10 +276,8 @@ useEffect(() => {
   const [historyTransferMessage, setHistoryTransferMessage] = useState<string | null>(null);
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
-  const loopPollTokenRef = useRef(0);
   const prevLoopJobIdRef = useRef<string | null>(null);
   const prevLoopActiveRef = useRef(false);
-  const loopJobIdRef = useRef<string | null>(null);
   const lastNonNullLoopJobIdRef = useRef<string | null>(null);
   const lastPctByJobIdRef = useRef<Record<string, number>>({});
   const pauseFreezeAtMsRef = useRef<number | null>(null);
@@ -287,6 +285,7 @@ useEffect(() => {
   const lastTableSourceRef = useRef<"loop" | "single">("single");
   const historyImportInputRef = useRef<HTMLInputElement | null>(null);
   const completedLoopRunIdsRef = useRef<Record<string, boolean>>({});
+  const prevLoopRunningRef = useRef(false);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -516,41 +515,6 @@ useEffect(() => {
   const activeJobId = loopActive ? activeLoopJobId : singleJobId;
 
   useEffect(() => {
-    let timer: number | null = null;
-    const refresh = async () => {
-      try {
-        const next = await getOptimizerLoopStatus();
-        if (next.loop?.isRunning) {
-          lastTableSourceRef.current = "loop";
-        }
-        setLoopStatus(next);
-        if (typeof next.lastJobStatus?.donePercent === "number") {
-          setDone((prev) => Math.max(prev, Math.round(clamp(next.lastJobStatus?.donePercent ?? 0, 0, 100))));
-          setTotal(100);
-        }
-        const isPausedNow = Boolean(next.loop?.isPaused);
-        if (isPausedNow) {
-          if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
-        } else {
-          pauseFreezeAtMsRef.current = null;
-        }
-        setLoopJobId(next.loop?.lastJobId ?? null);
-      } catch {
-        return;
-      }
-    };
-    void refresh();
-    if (loopActive) {
-      timer = window.setInterval(() => {
-        void refresh();
-      }, 500);
-    }
-    return () => {
-      if (timer != null) window.clearInterval(timer);
-    };
-  }, [loopActive]);
-
-  useEffect(() => {
     const prev = prevLoopJobIdRef.current;
     if (loopJobId !== null && prev !== loopJobId) {
       // Do not reset to 0 first: it causes visible 0->100->0 flicker.
@@ -566,7 +530,6 @@ useEffect(() => {
   }, [loopJobId]);
 
   useEffect(() => {
-    loopJobIdRef.current = loopJobId;
     if (loopJobId) lastNonNullLoopJobIdRef.current = loopJobId;
   }, [loopJobId]);
 
@@ -769,14 +732,65 @@ useEffect(() => {
 
 
   useEffect(() => {
-    const prev = prevLoopJobIdRef.current;
-    if (prev && prev !== loopJobId) {
-      void appendCompletedRunByJobId(prev);
+    let mounted = true;
+    let timer: number | null = null;
+
+    const refresh = async () => {
+      try {
+        const next = await getOptimizerLoopStatus();
+        if (!mounted) return;
+
+        const isRunningNow = Boolean(next.loop?.isRunning);
+        if (isRunningNow) {
+          lastTableSourceRef.current = "loop";
+        }
+
+        const nextDonePercent = Math.floor(clamp(Number(next.lastJobStatus?.donePercent ?? 0), 0, 100));
+        const didCompleteRun = prevLoopRunningRef.current && nextDonePercent === 100;
+        const completedJobId = next.loop?.lastJobId ?? lastNonNullLoopJobIdRef.current;
+
+        setLoopStatus(next);
+        setNowMs(Date.now());
+        setTotal(100);
+        setDone((prev) => {
+          if (nextDonePercent === 100) return 100;
+          if (isRunningNow) return nextDonePercent;
+          return prev;
+        });
+
+        const isPausedNow = Boolean(next.loop?.isPaused);
+        if (isPausedNow) {
+          if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
+        } else {
+          pauseFreezeAtMsRef.current = null;
+        }
+        setLoopJobId(next.loop?.lastJobId ?? null);
+
+        if (didCompleteRun && completedJobId) {
+          void appendCompletedRunByJobId(completedJobId);
+        }
+
+        prevLoopRunningRef.current = isRunningNow;
+      } catch {
+        return;
+      }
+    };
+
+    void refresh();
+    if (loopStatus?.loop?.isRunning) {
+      timer = window.setInterval(() => {
+        void refresh();
+      }, LOOP_STATUS_POLL_MS);
     }
-    if (!loopActive && lastNonNullLoopJobIdRef.current) {
-      void appendCompletedRunByJobId(lastNonNullLoopJobIdRef.current);
-    }
-  }, [appendCompletedRunByJobId, loopActive, loopJobId]);
+
+    return () => {
+      mounted = false;
+      if (timer != null) window.clearInterval(timer);
+    };
+  }, [appendCompletedRunByJobId, loopStatus?.loop?.isRunning]);
+
+
+
   const onRangeChange =
     (key: RangeKey, bound: "min" | "max") => (e: ChangeEvent<HTMLInputElement>) => {
       const nextValue = e.currentTarget.value;
@@ -910,47 +924,6 @@ useEffect(() => {
       window.clearInterval(timer);
     };
   }, [clearSingleJobState, getStableProgressForJob, isNoCurrentJobError, jobActive, loopActive, page, singleJobId, sortDir, sortKey]);
-
-  useEffect(() => {
-    if (!loopActive || !activeLoopJobId) return;
-    const token = ++loopPollTokenRef.current;
-    let alive = true;
-    const timer = window.setInterval(async () => {
-      const reqJobId = loopJobIdRef.current ?? lastNonNullLoopJobIdRef.current;
-      const reqToken = loopPollTokenRef.current;
-      if (!reqJobId || reqToken !== token) return;
-      try {
-        const res = await getJobStatus(reqJobId);
-        if (!alive) return;
-        if (loopPollTokenRef.current !== token) return;
-        if ((loopJobIdRef.current ?? lastNonNullLoopJobIdRef.current) !== reqJobId) return;
-        const progress = getStableProgressForJob(reqJobId, res as { donePct?: number; done?: number; startedAtMs?: number | null });
-        setDone((prev) => (prev === progress.pct ? prev : progress.pct));
-        setTotal((prev) => (prev === res.total ? prev : res.total));
-        setJobStartedAtMs((prev) => {
-          const next = progress.startedAtMs;
-          return prev === next ? prev : next;
-        });
-        setJobUpdatedAtMs((prev) => {
-          const next = res.updatedAtMs ?? null;
-          return prev === next ? prev : next;
-        });
-        setJobFinishedAtMs((prev) => {
-          const next = res.finishedAtMs ?? null;
-          return prev === next ? prev : next;
-        });
-        setJobStatus((prev) => (prev === res.status ? prev : res.status));
-        setNowMs(Date.now());
-      } catch {
-        return;
-      }
-    }, 300);
-
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [activeLoopJobId, getStableProgressForJob, loopActive]);
 
   useEffect(() => {
     if (!loopActive || !loopJobId) return;
@@ -1141,16 +1114,19 @@ useEffect(() => {
     if (jobHistoryOffset > maxOffset) setJobHistoryOffset(maxOffset);
   }, [jobHistoryLimit, jobHistoryOffset, jobHistoryTotalPages]);
   const isRunningStatus = jobStatus === "running";
-  const startedAtForActiveJobId = activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs;
+  const loopStartedAtMs = Number((loopStatus as any)?.startedAtMs ?? loopStatus?.loop?.createdAtMs ?? 0) || null;
+  const startedAtForActiveJobId = loopActive
+    ? loopStartedAtMs
+    : (activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs);
   const endMs = !startedAtForActiveJobId
     ? null
-    : isRunningStatus
+    : (loopActive || isRunningStatus)
       ? nowMs
       : (jobFinishedAtMs ?? jobUpdatedAtMs ?? startedAtForActiveJobId);
   const elapsedSec = endMs == null || !startedAtForActiveJobId ? null : Math.max(0, (endMs - startedAtForActiveJobId) / 1000);
-  const pctDone = Math.round(clamp(done, 0, 100));
-  const etaSec = isRunningStatus && elapsedSec != null && startedAtForActiveJobId != null && pctDone > 0.1 && pctDone < 100
-    ? (elapsedSec * (100 - pctDone)) / pctDone
+  const pctDone = Math.floor(clamp(done, 0, 100));
+  const etaSec = elapsedSec != null && pctDone > 0 && pctDone < 100
+    ? elapsedSec * (100 / pctDone - 1)
     : null;
   const lastJobSnapshotExists = Boolean(
     jobStatus !== "idle" ||
@@ -1192,7 +1168,6 @@ useEffect(() => {
       />
 
       <Container fluid className="py-2 px-2">
-        <DatasetTargetCard />
         <Card>
           <Card.Header className="d-flex align-items-center justify-content-between">
             <b>Optimizer</b>
@@ -1201,7 +1176,6 @@ useEffect(() => {
           <Card.Body>
             {error ? <Alert variant="danger">{error}</Alert> : null}
 
-            <h6>Dataset</h6>
             <div style={{ fontSize: 12, marginBottom: 8 }}>Data source: <b>{String(optimizerDataSource ?? "-").toUpperCase()}</b></div>
             {optimizerStatusWarning ? <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>{optimizerStatusWarning}</div> : null}
 
@@ -1360,8 +1334,11 @@ useEffect(() => {
             </div>
 
             {showProgressBlock ? <>
-              <CenteredProgressBar now={pct} showPercent title={`progress ${Math.round(pct)} / ${Math.round(total)}`} className="mb-2" />
-              <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec ?? 0)}</b> · ETA: <b>{isRunningStatus ? formatEta(etaSec) : "-"}</b></div>
+              <CenteredProgressBar now={pct} showPercent title={`progress ${Math.floor(pct)} / ${Math.round(total)}`} className="mb-2" />
+              <div style={{ fontSize: 12, marginBottom: 8 }}>
+                Elapsed: <b>{formatDuration(elapsedSec)}</b>
+                {etaSec != null ? <> · ETA: <b>{formatEta(etaSec)}</b></> : null}
+              </div>
               <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div>
             </> : null}
 
