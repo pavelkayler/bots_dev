@@ -1242,20 +1242,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/api/optimizer/tapes", async () => {
-    const tapes = listTapes().map((tape) => {
-      const baseTapeId = toBaseTapeId(tape.id);
-      const bounds = readTapeBounds(baseTapeId);
-      return {
-        ...tape,
-        startTs: bounds.startTs,
-        endTs: bounds.endTs,
-      };
-    });
-    return { tapes };
-  });
-
-
   app.get("/api/optimizer/settings", async () => {
     return getOptimizerSettings();
   });
@@ -1268,21 +1254,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: "invalid_optimizer_settings", message: String(e?.message ?? e) };
     }
-  });
-
-  app.post("/api/optimizer/tapes/start", async (_req, reply) => {
-    reply.code(409);
-    return { error: "tape_recording_lifecycle_managed", message: "Tape recording is controlled by Session RUNNING state." };
-  });
-
-  app.post("/api/optimizer/tapes/stop", async (_req, reply) => {
-    reply.code(409);
-    return { error: "tape_recording_lifecycle_managed", message: "Tape recording is controlled by Session RUNNING state." };
-  });
-
-  app.get("/api/optimizer/status", async () => {
-    const state = tapeRecorder.getState();
-    return { isRecording: state.isRecording, tapeId: state.currentTapeId };
   });
 
   app.post("/api/optimizer/run", async (req, reply) => {
