@@ -193,9 +193,9 @@ export async function stopTape(): Promise<{ ok: true }> {
   return await postJson<{ ok: true }>(`${base}/api/optimizer/tapes/stop`, {});
 }
 
-export async function getStatus(): Promise<{ isRecording: boolean; tapeId: string | null }> {
+export async function getStatus(): Promise<{ isRecording: boolean; tapeId: string | null; dataSource: "tapes" }> {
   const base = getApiBase();
-  return await getJson<{ isRecording: boolean; tapeId: string | null }>(`${base}/api/optimizer/status`);
+  return await getJson<{ isRecording: boolean; tapeId: string | null; dataSource: "tapes" }>(`${base}/api/optimizer/status`);
 }
 
 export async function runOptimizationJob(payload: {

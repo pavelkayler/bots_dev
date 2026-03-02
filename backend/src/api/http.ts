@@ -1256,6 +1256,73 @@ export function registerHttpRoutes(app: FastifyInstance) {
     }
   });
 
+  app.get("/api/optimizer/tapes", async (_req, reply) => {
+    try {
+      const tapes = listTapes().map((t) => {
+        const baseTapeId = toBaseTapeId(t.id);
+        const bounds = readTapeBounds(baseTapeId);
+        const symbolsCount = Array.isArray(t.meta?.symbols) ? t.meta.symbols.length : 0;
+        const klineTfMin = Number(t.meta?.klineTfMin);
+        return {
+          id: t.id,
+          createdAt: t.createdAt,
+          fileSizeBytes: t.fileSizeBytes,
+          symbolsCount,
+          runsCount: t.runsTotal,
+          firstTsMs: bounds.startTs,
+          lastTsMs: bounds.endTs,
+          klineTfMin: Number.isFinite(klineTfMin) ? klineTfMin : undefined,
+          runsTotal: t.runsTotal,
+          startTs: bounds.startTs,
+          endTs: bounds.endTs,
+          meta: t.meta,
+        };
+      });
+      return { tapes };
+    } catch (e: any) {
+      reply.code(500);
+      return { error: "optimizer_tapes_error", message: String(e?.message ?? "Failed to list optimizer tapes.") };
+    }
+  });
+
+  app.post("/api/optimizer/tapes/start", async (_req, reply) => {
+    try {
+      const state = tapeRecorder.getState();
+      if (state.isRecording && state.currentTapeId) {
+        return { tapeId: state.currentTapeId };
+      }
+      const started = tapeRecorder.startRecording();
+      return { tapeId: started.tapeId };
+    } catch (e: any) {
+      if (String(e?.message ?? "") === "session_not_running") {
+        reply.code(409);
+        return { error: "recording_controlled_by_session" };
+      }
+      reply.code(500);
+      return { error: "optimizer_tapes_start_error", message: String(e?.message ?? "Failed to start optimizer tape recording.") };
+    }
+  });
+
+  app.post("/api/optimizer/tapes/stop", async (_req, reply) => {
+    try {
+      tapeRecorder.stopRecording();
+      return { ok: true as const };
+    } catch (e: any) {
+      reply.code(500);
+      return { error: "optimizer_tapes_stop_error", message: String(e?.message ?? "Failed to stop optimizer tape recording.") };
+    }
+  });
+
+  app.get("/api/optimizer/status", async (_req, reply) => {
+    try {
+      const state = tapeRecorder.getState();
+      return { isRecording: state.isRecording, tapeId: state.currentTapeId, dataSource: "tapes" as const };
+    } catch (e: any) {
+      reply.code(500);
+      return { error: "optimizer_status_error", message: String(e?.message ?? "Failed to read optimizer status.") };
+    }
+  });
+
   app.post("/api/optimizer/run", async (req, reply) => {
     const body = safeBody((req as any).body) as any;
     const tapeIdsRaw = Array.isArray(body?.tapeIds) ? body.tapeIds : undefined;

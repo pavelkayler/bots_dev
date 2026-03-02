@@ -420,6 +420,8 @@ export function OptimizerPage() {
   const [tapesRefreshKey, setTapesRefreshKey] = useState(0);
   const [tapeBoundsById, setTapeBoundsById] = useState<Record<string, TapeBounds>>({});
   const [error, setError] = useState<string | null>(null);
+  const [optimizerDataSource, setOptimizerDataSource] = useState<string | null>(null);
+  const [optimizerStatusWarning, setOptimizerStatusWarning] = useState<string | null>(null);
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
@@ -552,13 +554,17 @@ useEffect(() => {
   async function refreshStatus() {
     try {
       const statusRes = await getStatus();
+      setOptimizerStatusWarning(null);
+      setOptimizerDataSource(statusRes.dataSource ?? null);
       setIsRecording(Boolean(statusRes.isRecording));
       setRecordingTapeId(statusRes.tapeId ?? null);
       if (statusRes.tapeId) {
         setSelectedTapeIds((prev) => (prev.includes(statusRes.tapeId as string) ? prev : [...prev, statusRes.tapeId as string]));
       }
     } catch (e: any) {
-      setError(String(e?.message ?? e));
+      const message = String(e?.message ?? e ?? "");
+      if (message.toLowerCase().includes("aborterror")) return;
+      setOptimizerStatusWarning("Status unavailable");
     }
   }
 
@@ -1515,6 +1521,8 @@ useEffect(() => {
             {error ? <Alert variant="danger">{error}</Alert> : null}
 
             <h6>Dataset</h6>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>Data source: <b>{String(optimizerDataSource ?? "-").toUpperCase()}</b></div>
+            {optimizerStatusWarning ? <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>{optimizerStatusWarning}</div> : null}
             <div className="d-flex align-items-center gap-2 mb-2">
               <Button size="sm" variant="outline-secondary" onClick={() => { setTapesDirDraft(tapesDir); setShowTapesDirModal(true); }}>
                 Tapes directory
@@ -1762,51 +1770,51 @@ useEffect(() => {
             </div>
             {historyTransferMessage ? <div style={{ fontSize: 12, marginBottom: 8 }}>{historyTransferMessage}</div> : null}
 
-            <Table striped bordered hover size="sm">
+            <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
               <thead>
                 <tr>
-                  <th>Rank</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("netPnl")}>netPnl</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("trades")}>trades</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("winRatePct")}>winRate</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("expectancy")}>expectancy</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("profitFactor")}>profitFactor</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("maxDrawdownUsdt")}>maxDD</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("ordersPlaced")}>placed</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("ordersFilled")}>filled</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("ordersExpired")}>expired</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("priceTh")}>priceTh</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("oivTh")}>oivTh</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("tp")}>tp</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("sl")}>sl</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("offset")}>offset</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("timeoutSec")}>timeoutSec</th>
-                  <th style={{ cursor: "pointer" }} onClick={() => void onSort("rearmMs")}>rearmMs</th>
-                  <th>action</th>
+                  <th style={{ width: 60, textAlign: "center", whiteSpace: "nowrap" }}>Rank</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trades")}>trades</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("winRatePct")}>winRate</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("expectancy")}>expectancy</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("profitFactor")}>profitFactor</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("maxDrawdownUsdt")}>maxDD</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersPlaced")}>placed</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersFilled")}>filled</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersExpired")}>expired</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("priceTh")}>priceTh</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("oivTh")}>oivTh</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("tp")}>tp</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("sl")}>sl</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("offset")}>offset</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("timeoutSec")}>timeoutSec</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("rearmMs")}>rearmMs</th>
+                  <th style={{ whiteSpace: "nowrap" }}>action</th>
                 </tr>
               </thead>
               <tbody>
                 {loopDisplayRows.map((r) => {
                   return (
                     <tr key={`${r.rank}-${r.netPnl}`}>
-                      <td>{r.rank}</td>
-                      <td>{r.netPnl.toFixed(4)}</td>
-                      <td>{r.trades}</td>
-                      <td>{r.winRatePct.toFixed(2)}%</td>
-                      <td>{r.expectancy.toFixed(4)}</td>
-                      <td>{r.profitFactor.toFixed(3)}</td>
-                      <td>{r.maxDrawdownUsdt.toFixed(4)}</td>
-                      <td>{r.ordersPlaced}</td>
-                      <td>{r.ordersFilled}</td>
-                      <td>{r.ordersExpired}</td>
-                      <td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td>
-                      <td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td>
-                      <td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td>
-                      <td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td>
-                      <td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td>
-                      <td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
-                      <td>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
-                      <td>
+                      <td style={{ textAlign: "center", whiteSpace: "nowrap" }}>{r.rank}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.netPnl.toFixed(4)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.trades}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.winRatePct.toFixed(2)}%</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.expectancy.toFixed(4)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.profitFactor.toFixed(3)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.maxDrawdownUsdt.toFixed(4)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.ordersPlaced}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.ordersFilled}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.ordersExpired}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
                         <Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button>
                       </td>
                     </tr>
@@ -1814,7 +1822,7 @@ useEffect(() => {
                 })}
                 {!loopDisplayRows.length ? (
                   <tr>
-                    <td colSpan={19} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
+                    <td colSpan={18} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
                   </tr>
                 ) : null}
               </tbody>
