@@ -1,5 +1,5 @@
 import { Fragment, memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Modal, Pagination, ProgressBar, Row, Table } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Modal, Pagination, Row, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -38,6 +38,7 @@ import {
   type OptimizerHistorySortKey,
 } from "../../features/optimizer/api/optimizerApi";
 import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard";
+import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
 
 type OptimizerResultRow = OptimizationResult;
 
@@ -1922,7 +1923,7 @@ useEffect(() => {
             </div>
 
             {showProgressBlock ? <>
-              <ProgressBar now={pct} label={`${pct.toFixed(2)}%`} title={`progress ${pct.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
+              <CenteredProgressBar now={pct} label={`${pct.toFixed(2)}%`} title={`progress ${pct.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
               <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec ?? 0)}</b> · ETA: <b>{isRunningStatus ? formatEta(etaSec) : "-"}</b></div>
               <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div>
             </> : null}
