@@ -1,5 +1,5 @@
-import { Fragment, memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Modal, Pagination, Row, Table } from "react-bootstrap";
+import { Fragment, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Pagination, Row, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -65,7 +65,6 @@ const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
 const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
-const SELECTED_TAPES_STORAGE_KEY = "bots_dev.optimizer.selectedTapeIds";
 const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
 const TOP_RESULTS_LOOP_STORAGE_KEY = "bots_dev.optimizer.topResults.loop";
 
@@ -77,180 +76,6 @@ const ACTIVE_RESULTS_POLL_MS = 800;
 const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
 const HISTORY_CELL_STYLE = { padding: "4px 6px", whiteSpace: "nowrap", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12 } as const;
 const HISTORY_DETAILS_CELL_STYLE = { padding: 0, borderTop: 0 } as const;
-
-type TapeRow = { id: string; createdAt: number; symbolsCount: number; tf: number | null; initialBytes: number; runsTotal: number; startTs: number | null; endTs: number | null };
-type TapeBounds = { startTs: number | null; endTs: number | null };
-
-
-const TapeSizeCell = memo(function TapeSizeCell({
-  tapeId,
-  initialBytes,
-  pollActive,
-}: {
-  tapeId: string;
-  initialBytes: number;
-  pollActive: boolean;
-}) {
-  const [bytes, setBytes] = useState(initialBytes);
-
-  useEffect(() => {
-    setBytes(initialBytes);
-  }, [initialBytes]);
-
-  useEffect(() => {
-    if (!pollActive) return;
-    const intervalId = window.setInterval(() => {
-      void (async () => {
-        try {
-          const res = await listTapes();
-          const next = (res.tapes ?? []).find((t) => t.id === tapeId);
-          if (!next) return;
-          setBytes(Number(next.fileSizeBytes) || 0);
-        } catch {
-          return;
-        }
-      })();
-    }, 5000);
-    return () => window.clearInterval(intervalId);
-  }, [pollActive, tapeId]);
-
-  return <>{formatSize(bytes)}</>;
-});
-
-const TapeTableRow = memo(function TapeTableRow({
-  tape,
-  checked,
-  onToggleTape,
-  isRecording,
-  recordingTapeId,
-}: {
-  tape: TapeRow;
-  checked: boolean;
-  onToggleTape: (id: string, checked: boolean) => void;
-  isRecording: boolean;
-  recordingTapeId: string | null;
-}) {
-  const onCheckChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement>) => {
-      onToggleTape(tape.id, e.currentTarget.checked);
-    },
-    [onToggleTape, tape.id]
-  );
-
-  return (
-    <tr>
-      <td>
-        <Form.Check type="checkbox" checked={checked} onChange={onCheckChange} />
-      </td>
-      <td style={{ fontSize: 12 }}>{tape.id}</td>
-      <td style={{ fontSize: 12 }}>{new Date(tape.createdAt).toLocaleString()}</td>
-      <td style={{ fontSize: 12 }}>{tape.symbolsCount}</td>
-      <td style={{ fontSize: 12 }}>{tape.tf ?? "-"}</td>
-      <td style={{ fontSize: 12 }}>{tape.runsTotal}</td>
-      <td style={{ fontSize: 12 }}>
-        <TapeSizeCell
-          tapeId={tape.id}
-          initialBytes={tape.initialBytes}
-          pollActive={Boolean(isRecording && recordingTapeId === tape.id)}
-        />
-      </td>
-    </tr>
-  );
-});
-
-const TapesTable = memo(function TapesTable({
-  isRecording,
-  selectedTapeIds,
-  onToggleTape,
-  refreshKey,
-  recordingTapeId,
-  onError,
-  onTapesLoaded,
-}: {
-  isRecording: boolean;
-  selectedTapeIds: string[];
-  onToggleTape: (id: string, checked: boolean) => void;
-  refreshKey: number;
-  recordingTapeId: string | null;
-  onError: (message: string) => void;
-  onTapesLoaded: (rows: TapeRow[]) => void;
-}) {
-  const [rows, setRows] = useState<TapeRow[]>([]);
-
-  const fetchTapes = useCallback(async () => {
-    try {
-      const res = await listTapes();
-      const nextTapes = res.tapes ?? [];
-      setRows((prev) => {
-        const prevById = new Map(prev.map((r) => [r.id, r]));
-        const nextRows = nextTapes.map((t) => {
-          const next: TapeRow = {
-            id: t.id,
-            createdAt: t.createdAt,
-            symbolsCount: Array.isArray(t.meta?.symbols) ? t.meta.symbols.length : 0,
-            tf: t.meta?.klineTfMin ?? null,
-            initialBytes: Number(t.fileSizeBytes) || 0,
-            runsTotal: Number(t.runsTotal) || 0,
-            startTs: Number.isFinite(Number(t.startTs)) ? Number(t.startTs) : null,
-            endTs: Number.isFinite(Number(t.endTs)) ? Number(t.endTs) : null,
-          };
-          const old = prevById.get(t.id);
-          if (!old) return next;
-          if (old.createdAt === next.createdAt && old.symbolsCount === next.symbolsCount && old.tf === next.tf && old.initialBytes === next.initialBytes && old.runsTotal === next.runsTotal && old.startTs === next.startTs && old.endTs === next.endTs) return old;
-          return next;
-        });
-        onTapesLoaded(nextRows);
-        return nextRows;
-      });
-    } catch (e: any) {
-      onError(String(e?.message ?? e));
-    }
-  }, [onError, onTapesLoaded]);
-
-  useEffect(() => {
-    void fetchTapes();
-  }, [fetchTapes, refreshKey]);
-
-  return (
-    <Table striped bordered hover size="sm" className="mb-3">
-      <thead>
-        <tr>
-          <th style={{ width: 50 }}>Use</th>
-          <th>id</th>
-          <th>createdAt</th>
-          <th>symbolsCount</th>
-          <th>tf</th>
-          <th>runs</th>
-          <th>size</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((t) => (
-          <TapeTableRow
-            key={t.id}
-            tape={t}
-            checked={selectedTapeIds.includes(t.id)}
-            onToggleTape={onToggleTape}
-            isRecording={isRecording}
-            recordingTapeId={recordingTapeId}
-          />
-        ))}
-        {!rows.length ? (
-          <tr>
-            <td colSpan={7} style={{ fontSize: 12, opacity: 0.75 }}>No tapes</td>
-          </tr>
-        ) : null}
-      </tbody>
-    </Table>
-  );
-});
-
-function formatSize(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  if (bytes < 1024) return `${bytes.toFixed(0)} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function parseMaybeNumber(value: string): number | undefined {
   if (!value.trim()) return undefined;
@@ -268,22 +93,7 @@ function formatHistoryEndedAt(tsMs: number): string {
   return `${mm}-${dd} ${hh}:${min}:${sec}`;
 }
 
-function parseDatetimeLocalToTs(value: string): number | undefined {
-  if (!value.trim()) return undefined;
-  const ts = new Date(value).getTime();
-  return Number.isFinite(ts) ? ts : undefined;
-}
 
-function formatTs(tsMs: number | null | undefined): string {
-  if (!Number.isFinite(tsMs)) return "-";
-  const d = new Date(Number(tsMs));
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
-}
 
 function isValidRangeState(value: unknown): value is RangeState {
   if (!value || typeof value !== "object") return false;
@@ -407,15 +217,6 @@ export function OptimizerPage() {
   const { conn, lastServerTime, wsUrl, streams } = useWsFeedLite();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
-  const [selectedTapeIds, setSelectedTapeIds] = useState<string[]>(() => {
-  const arr = safeJsonParse<unknown>(localStorage.getItem(SELECTED_TAPES_STORAGE_KEY));
-  if (Array.isArray(arr) && arr.every((x) => typeof x === "string")) return arr;
-  return [];
-});
-  const [recordingTapeId, setRecordingTapeId] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [tapesRefreshKey, setTapesRefreshKey] = useState(0);
-  const [tapeBoundsById, setTapeBoundsById] = useState<Record<string, TapeBounds>>({});
   const [error, setError] = useState<string | null>(null);
   const [optimizerDataSource, setOptimizerDataSource] = useState<string | null>(null);
   const [optimizerStatusWarning, setOptimizerStatusWarning] = useState<string | null>(null);
@@ -430,9 +231,6 @@ export function OptimizerPage() {
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [datasetMode, setDatasetMode] = useState<"snapshot" | "followTail">("snapshot");
-  const [runInRange] = useState(false);
-  const [timeRangeFromTs] = useState("");
-  const [timeRangeToTs] = useState("");
   const [optTfMin, setOptTfMin] = useState<string>("1");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
@@ -451,10 +249,6 @@ export function OptimizerPage() {
   const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>(() => safeJsonParse<OptimizerResultRow[]>(localStorage.getItem(TOP_RESULTS_LOOP_STORAGE_KEY)) ?? []);
 
 useEffect(() => {
-  saveJson(SELECTED_TAPES_STORAGE_KEY, selectedTapeIds);
-}, [selectedTapeIds]);
-
-useEffect(() => {
   saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, results);
 }, [results]);
 
@@ -468,9 +262,6 @@ useEffect(() => {
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
   const [jobPrecisionById] = useState<Record<string, OptimizerPrecision>>({});
-  const [tapesDir, setTapesDir] = useState("");
-  const [showTapesDirModal, setShowTapesDirModal] = useState(false);
-  const [tapesDirDraft, setTapesDirDraft] = useState("");
 
   const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
   const [loopRunsCount, setLoopRunsCount] = useState("3");
@@ -553,11 +344,6 @@ useEffect(() => {
       const statusRes = await getStatus();
       setOptimizerStatusWarning(null);
       setOptimizerDataSource(statusRes.dataSource ?? null);
-      setIsRecording(Boolean(statusRes.isRecording));
-      setRecordingTapeId(statusRes.tapeId ?? null);
-      if (statusRes.tapeId) {
-        setSelectedTapeIds((prev) => (prev.includes(statusRes.tapeId as string) ? prev : [...prev, statusRes.tapeId as string]));
-      }
     } catch (e: any) {
       const message = String(e?.message ?? e ?? "");
       if (message.toLowerCase().includes("aborterror")) return;
@@ -566,13 +352,6 @@ useEffect(() => {
   }
 
 
-  useEffect(() => {
-    if (!isRecording) return;
-    const id = window.setInterval(() => {
-      void refreshStatus();
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [isRecording]);
 
   useEffect(() => {
     setRanges(loadSavedRanges());
@@ -743,38 +522,6 @@ useEffect(() => {
   const activeLoopJobId = loopJobId ?? lastNonNullLoopJobIdRef.current;
   const activeJobId = loopActive ? activeLoopJobId : singleJobId;
 
-  const selectedTapeBounds = useMemo(() => {
-    const tapeId = selectedTapeIds[0];
-    if (!tapeId) return null;
-    return tapeBoundsById[tapeId] ?? null;
-  }, [selectedTapeIds, tapeBoundsById]);
-
-  const handleTapesLoaded = useCallback((rows: TapeRow[]) => {
-    const next: Record<string, TapeBounds> = {};
-    rows.forEach((row) => {
-      next[row.id] = { startTs: row.startTs, endTs: row.endTs };
-    });
-    setTapeBoundsById(next);
-  }, []);
-
-  const resolveEffectiveTimeRange = useCallback(() => {
-    if (!runInRange) return { from: undefined, to: undefined };
-    const bounds = selectedTapeIds.length === 1 ? selectedTapeBounds : null;
-    let from = parseDatetimeLocalToTs(timeRangeFromTs);
-    let to = parseDatetimeLocalToTs(timeRangeToTs);
-    if (from == null) from = bounds?.startTs ?? undefined;
-    if (to == null) to = bounds?.endTs ?? undefined;
-    if (from != null && bounds?.startTs != null && from < bounds.startTs) from = bounds.startTs;
-    if (to != null && bounds?.endTs != null && to > bounds.endTs) to = bounds.endTs;
-    if (from != null && to != null && from > to) {
-      const nextFrom = to;
-      const nextTo = from;
-      from = nextFrom;
-      to = nextTo;
-    }
-    return { from, to };
-  }, [runInRange, selectedTapeBounds, selectedTapeIds.length, timeRangeFromTs, timeRangeToTs]);
-
   useEffect(() => {
     let timer: number | null = null;
     const refresh = async () => {
@@ -784,6 +531,10 @@ useEffect(() => {
           lastTableSourceRef.current = "loop";
         }
         setLoopStatus(next);
+        if (typeof next.lastJobStatus?.donePercent === "number") {
+          setDone((prev) => Math.max(prev, Math.round(clamp(next.lastJobStatus?.donePercent ?? 0, 0, 100))));
+          setTotal(100);
+        }
         const isPausedNow = Boolean(next.loop?.isPaused);
         if (isPausedNow) {
           if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
@@ -836,8 +587,7 @@ useEffect(() => {
   }, [loopActive, loopAggRows.length]);
 
   async function onStartLoop() {
-    if (!selectedTapeIds.length || rangeError) return;
-    const effectiveRange = resolveEffectiveTimeRange();
+    if (rangeError) return;
     setError(null);
     lastTableSourceRef.current = "loop";
     setLoopBusy(true);
@@ -863,12 +613,8 @@ useEffect(() => {
         rearmMs: Math.max(countDecimals(ranges.rearmMs.min), countDecimals(ranges.rearmMs.max)),
       };
       await startOptimizerLoop({
-        tapeIds: selectedTapeIds,
+        tapeIds: [],
         datasetMode,
-        ...(runInRange ? {
-          timeRangeFromTs: effectiveRange.from,
-          timeRangeToTs: effectiveRange.to,
-        } : {}),
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -890,6 +636,8 @@ useEffect(() => {
       });
       setLoopAggRows([]);
       setLoopAggMap(new Map());
+      setDone(0);
+      setTotal(100);
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
         const isPausedNow = Boolean(next.loop?.isPaused);
@@ -1018,15 +766,6 @@ useEffect(() => {
       }
     };
   }, [rangeError, ranges]);
-
-  const onToggleTape = useCallback((id: string, checked: boolean) => {
-    setSelectedTapeIds((prev) => {
-      if (checked) {
-        return prev.includes(id) ? prev : [...prev, id];
-      }
-      return prev.filter((v) => v !== id);
-    });
-  }, []);
 
   async function fetchResults(
     nextPage: number,
@@ -1237,7 +976,7 @@ useEffect(() => {
     const patch = {
       source: "optimizer",
       ts: Date.now(),
-      tapeId: selectedTapeIds[0] ?? null,
+      tapeId: null,
       jobId: activeJobId,
       rank: row.rank,
       patch: {
@@ -1256,20 +995,6 @@ useEffect(() => {
     };
     localStorage.setItem("bots_dev.pendingConfigPatch", JSON.stringify(patch));
   }
-
-  async function onApplyTapesDir() {
-    setError(null);
-    try {
-      const next = await setSettings({ tapesDir: tapesDirDraft });
-      setTapesDir(next.tapesDir);
-      setShowTapesDirModal(false);
-      setSelectedTapeIds([]);
-      setTapesRefreshKey((prev) => prev + 1);
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    }
-  }
-
 
 
   async function refreshSoakLast() {
@@ -1398,36 +1123,17 @@ useEffect(() => {
   const historyHoursByJobId = useMemo(() => {
     const map: Record<string, string> = {};
     jobHistory.forEach((row) => {
-      const tapeIds = row.runPayload.tapeIds ?? [];
-      if (tapeIds.length < 1) {
-        map[row.jobId] = "-";
-        return;
-      }
-      const baseIds = Array.from(new Set(tapeIds.map((id) => String(id).replace(/-seg\d+$/, ""))));
-      if (baseIds.length !== 1) {
-        // Multi-tape runs are not resolved to a single time window in the UI.
-        map[row.jobId] = "-";
-        return;
-      }
-      const tapeId = baseIds[0];
-      const bounds = tapeBoundsById[tapeId];
-      let fromTs = row.runPayload.timeRangeFromTs;
-      let toTs = row.runPayload.timeRangeToTs;
-      if (!Number.isFinite(Number(fromTs))) fromTs = bounds?.startTs ?? undefined;
-      if (!Number.isFinite(Number(toTs))) toTs = bounds?.endTs ?? undefined;
+      const fromTs = row.runPayload.timeRangeFromTs;
+      const toTs = row.runPayload.timeRangeToTs;
       if (!Number.isFinite(Number(fromTs)) || !Number.isFinite(Number(toTs))) {
         map[row.jobId] = "-";
         return;
       }
       const delta = Number(toTs) - Number(fromTs);
-      if (!Number.isFinite(delta) || delta < 0) {
-        map[row.jobId] = "-";
-        return;
-      }
-      map[row.jobId] = (delta / 3600000).toFixed(2);
+      map[row.jobId] = Number.isFinite(delta) && delta >= 0 ? (delta / 3600000).toFixed(2) : "-";
     });
     return map;
-  }, [jobHistory, tapeBoundsById]);
+  }, [jobHistory]);
   const historyColumnCount = historyCompactMode ? 12 : 19;
   const historyRunIdCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 80 } : HISTORY_CELL_STYLE;
   const historyEndedAtCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 120 } : HISTORY_CELL_STYLE;
@@ -1445,7 +1151,6 @@ useEffect(() => {
     if (jobHistoryOffset > maxOffset) setJobHistoryOffset(maxOffset);
   }, [jobHistoryLimit, jobHistoryOffset, jobHistoryTotalPages]);
   const isRunningStatus = jobStatus === "running";
-  const hasTapeSelected = true;
   const startedAtForActiveJobId = activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs;
   const endMs = !startedAtForActiveJobId
     ? null
@@ -1453,7 +1158,7 @@ useEffect(() => {
       ? nowMs
       : (jobFinishedAtMs ?? jobUpdatedAtMs ?? startedAtForActiveJobId);
   const elapsedSec = endMs == null || !startedAtForActiveJobId ? null : Math.max(0, (endMs - startedAtForActiveJobId) / 1000);
-  const pctDone = clamp(roundTo2(done), 0, 100);
+  const pctDone = Math.round(clamp(done, 0, 100));
   const etaSec = isRunningStatus && elapsedSec != null && startedAtForActiveJobId != null && pctDone > 0.1 && pctDone < 100
     ? (elapsedSec * (100 - pctDone)) / pctDone
     : null;
@@ -1596,13 +1301,6 @@ useEffect(() => {
                   <option value="followTail">Follow Tail</option>
                 </Form.Select>
                 </Form.Group>
-              </Col>
-              <Col xs={12}>
-                <div style={{ fontSize: 12, opacity: 0.85 }}>
-                  {selectedTapeBounds?.startTs != null && selectedTapeBounds?.endTs != null
-                    ? `Range: ${formatTs(selectedTapeBounds.startTs)} → ${formatTs(selectedTapeBounds.endTs)}`
-                    : "Range: unknown"}
-                </div>
               </Col>
               <Col xs={12}>
                 <div className="d-flex flex-wrap gap-3">
@@ -1755,7 +1453,7 @@ useEffect(() => {
               <tbody>
                 {loopDisplayRows.map((r, i) => {
                   return (
-                    <tr key={`${r.params.priceThresholdPct}|${r.params.oivThresholdPct}|${r.params.tpRoiPct}|${r.params.slRoiPct}|${r.params.entryOffsetPct}|${r.params.timeoutSec}|${r.params.rearmMs}#${i}`}>
+                    <tr key={`${r.netPnl}-${r.trades}-${r.params.priceThresholdPct}-${r.params.oivThresholdPct}-${i}`}>
                                             <td style={{ whiteSpace: "nowrap" }}>{r.netPnl.toFixed(4)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.trades}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.winRatePct.toFixed(2)}%</td>
@@ -1879,7 +1577,7 @@ useEffect(() => {
                                   </thead>
                                   <tbody>
                                     {detailsRows.map((r, i) => (
-                                      <tr key={`${row.jobId}-${r.params.priceThresholdPct}|${r.params.oivThresholdPct}|${r.params.tpRoiPct}|${r.params.slRoiPct}|${r.params.entryOffsetPct}|${r.params.timeoutSec}|${r.params.rearmMs}#${i}`}>
+                                      <tr key={`${row.jobId}-${r.netPnl}-${r.trades}-${r.params.priceThresholdPct}-${r.params.oivThresholdPct}-${i}`}>
                                         <td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
                                         <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
                                         <td><Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button></td>

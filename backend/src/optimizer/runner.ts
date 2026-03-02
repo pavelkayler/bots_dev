@@ -422,13 +422,36 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       for (const line of raw.split(/\r?\n/)) {
         const text = line.trim();
         if (!text) continue;
-        const row = JSON.parse(text) as { startMs?: number; close?: string; open?: string; high?: string; low?: string };
+        const row = JSON.parse(text) as {
+          startMs?: number;
+          close?: string;
+          open?: string;
+          high?: string;
+          low?: string;
+          turnover?: string;
+          volume?: string;
+        };
         const candleStart = Number(row.startMs);
         if (!Number.isFinite(candleStart) || candleStart < startMs || candleStart > endMs) continue;
+        const open = Number(row.open);
         const close = Number(row.close);
         if (!Number.isFinite(close) || close <= 0) continue;
+        const turnoverNum = Number(row.turnover);
+        const volumeNum = Number(row.volume);
+        const openInterestValue = Number.isFinite(turnoverNum)
+          ? turnoverNum
+          : Number.isFinite(volumeNum)
+            ? volumeNum
+            : 0;
+        const candleDelta = (Number.isFinite(open) ? open : close) - close;
+        const fundingRate = candleDelta === 0 ? 0 : (candleDelta < 0 ? 1e-6 : -1e-6);
         const ts = candleStart + 60_000;
-        events.push({ type: "ticker", ts, symbol, payload: { markPrice: close, openInterest: 0, fundingRate: 0 } });
+        events.push({
+          type: "ticker",
+          ts,
+          symbol,
+          payload: { markPrice: close, openInterest: openInterestValue, openInterestValue, fundingRate },
+        });
         events.push({ type: "kline_confirm", ts, symbol, payload: { close } });
         if (firstTsMs == null || ts < firstTsMs) firstTsMs = ts;
         if (lastTsMs == null || ts > lastTsMs) lastTsMs = ts;

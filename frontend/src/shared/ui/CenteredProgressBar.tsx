@@ -13,14 +13,13 @@ export function CenteredProgressBar({ now, label, showPercent = false, title, cl
   const display = label ?? (showPercent ? `${roundedNow}%` : "");
   return (
     <div className={className} style={{ position: "relative" }} title={title}>
-      <ProgressBar now={now} label="" />
+      <ProgressBar now={roundedNow} label="" />
       <div
         style={{
           position: "absolute",
-          inset: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
           pointerEvents: "none",
           fontSize: 12,
         }}
