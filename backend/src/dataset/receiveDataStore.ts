@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { readDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../dataset/datasetTargetStore.js";
+import { readDatasetTarget, writeDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../dataset/datasetTargetStore.js";
 import { readUniverse } from "../universe/universeStore.js";
 
 type ReceiveStatus = "queued" | "running" | "done" | "error" | "cancelled";
@@ -287,6 +287,8 @@ export function startReceiveDataJob(input?: Partial<DatasetTarget>) {
   if (!resolved || !(resolved.endMs > resolved.startMs) || resolved.endMs - resolved.startMs > MAX_RANGE_MS) {
     return { error: "invalid_range" as const };
   }
+
+  writeDatasetTarget(target);
 
   const id = randomUUID();
   jobs.set(id, {
