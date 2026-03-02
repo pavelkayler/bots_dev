@@ -10,9 +10,6 @@ let cancelled = false;
 let currentJobId: string | null = null;
 let runStarted = false;
 const PROGRESS_THROTTLE_MS = 75;
-const LOADING_PROGRESS_MAX = 5;
-const RUN_PROGRESS_START = 5;
-const RUN_PROGRESS_SCALE = 0.95;
 
 type PendingProgress = {
   done: number;
@@ -122,15 +119,12 @@ parentPort.on("message", async (msg: any) => {
       shouldCancel: () => cancelled,
       shouldPause: () => paused,
       waitWhilePaused,
-      onLoadProgress: (bytesRead, totalBytes) => {
-        const ratio = totalBytes > 0 ? bytesRead / totalBytes : 1;
-        const loadingPct = LOADING_PROGRESS_MAX * Math.max(0, Math.min(1, ratio));
-        queueProgress(0, 100, [], loadingPct);
+      onLoadProgress: () => {
+        queueProgress(0, 100, [], 0);
       },
       onProgress: (_done, total, previewResults) => {
         const done = Number(_done) || 0;
-        const runPct = total > 0 ? (done / total) * 100 : 0;
-        const donePct = RUN_PROGRESS_START + runPct * RUN_PROGRESS_SCALE;
+        const donePct = total > 0 ? Math.floor((done / total) * 100) : 0;
         queueProgress(done, total, Array.isArray(previewResults) ? previewResults : [], donePct);
       },
       onCheckpoint: ({ done, total, donePercent, partialResults }) => {

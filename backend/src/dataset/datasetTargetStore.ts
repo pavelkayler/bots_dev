@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type DatasetRangePreset = "24h" | "48h" | "1w" | "2w" | "4w" | "1mo";
+export type DatasetRangePreset = "6h" | "12h" | "24h" | "48h" | "1w" | "2w" | "4w" | "1mo";
 
 export type DatasetRange =
   | { kind: "preset"; preset: DatasetRangePreset }
@@ -15,7 +15,7 @@ export type DatasetTarget = {
 
 const DATASET_TARGET_PATH = path.resolve(process.cwd(), "data", "dataset_target.json");
 const DEFAULT_PRESET: DatasetRangePreset = "24h";
-const PRESET_SET = new Set<DatasetRangePreset>(["24h", "48h", "1w", "2w", "4w", "1mo"]);
+const PRESET_SET = new Set<DatasetRangePreset>(["6h", "12h", "24h", "48h", "1w", "2w", "4w", "1mo"]);
 
 function defaultTarget(): DatasetTarget {
   return {

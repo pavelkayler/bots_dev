@@ -114,6 +114,7 @@ export type OptimizerJobHistoryRecord = {
     directionMode: "both" | "long" | "short";
     rememberNegatives: boolean;
     excludeNegative: boolean;
+    datasetHours?: number;
     sim?: OptimizerSimulationParams;
   };
   summary: {

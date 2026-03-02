@@ -1,7 +1,7 @@
 import { getJson, postJson } from "../../../shared/api/http";
 import { getApiBase } from "../../../shared/config/env";
 
-export type DatasetRangePreset = "24h" | "48h" | "1w" | "2w" | "4w" | "1mo";
+export type DatasetRangePreset = "6h" | "12h" | "24h" | "48h" | "1w" | "2w" | "4w" | "1mo";
 
 export type DatasetRange =
   | { kind: "preset"; preset: DatasetRangePreset }

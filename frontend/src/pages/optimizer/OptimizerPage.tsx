@@ -15,16 +15,12 @@ import {
   pauseOptimizerLoop,
   resumeOptimizerLoop,
   getOptimizerLoopStatus,
-  getDoctorStatus,
-  getLastSoakSnapshot,
   getOptimizerJobHistory,
   exportOptimizerHistory,
   importOptimizerHistory,
-  type DoctorStatus,
   type OptimizerJobHistoryRecord,
   type OptimizerLoopStatus,
   type OptimizationResult,
-  type SoakLastStatus,
   type OptimizerPrecision,
   type OptimizerSortDir,
   type OptimizerSortKeyExtended,
@@ -66,7 +62,7 @@ const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
 const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
-const TOP_RESULTS_LOOP_STORAGE_KEY = "bots_dev.optimizer.topResults.loop";
+const LOOP_RESULTS_DRAFT_STORAGE_KEY = "optimizerLoopResultsDraft";
 
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
@@ -230,7 +226,6 @@ export function OptimizerPage() {
   const [simFundingBpsPer8h, setSimFundingBpsPer8h] = useState(() => localStorage.getItem(SIM_FUNDING_BPS_STORAGE_KEY) ?? "0");
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
-  const [datasetMode, setDatasetMode] = useState<"snapshot" | "followTail">("snapshot");
   const [optTfMin, setOptTfMin] = useState<string>("1");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
@@ -246,14 +241,14 @@ export function OptimizerPage() {
   const [total, setTotal] = useState(0);
 
   const [results, setResults] = useState<OptimizationResult[]>(() => safeJsonParse<OptimizationResult[]>(localStorage.getItem(TOP_RESULTS_SINGLE_STORAGE_KEY)) ?? []);
-  const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>(() => safeJsonParse<OptimizerResultRow[]>(localStorage.getItem(TOP_RESULTS_LOOP_STORAGE_KEY)) ?? []);
+  const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>(() => safeJsonParse<OptimizerResultRow[]>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY)) ?? []);
 
 useEffect(() => {
   saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, results);
 }, [results]);
 
 useEffect(() => {
-  saveJson(TOP_RESULTS_LOOP_STORAGE_KEY, loopAggRows);
+  saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, loopAggRows);
 }, [loopAggRows]);
 
   const [, setLoopAggMap] = useState<Map<string, OptimizerResultRow>>(new Map());
@@ -268,9 +263,6 @@ useEffect(() => {
   const [loopInfinite, setLoopInfinite] = useState(false);
   const [loopStatus, setLoopStatus] = useState<OptimizerLoopStatus | null>(null);
   const [loopBusy, setLoopBusy] = useState(false);
-  const [doctorStatus, setDoctorStatus] = useState<DoctorStatus | null>(null);
-  const [doctorBusy, setDoctorBusy] = useState(false);
-  const [lastSoak, setLastSoak] = useState<SoakLastStatus["snapshot"]>(null);
   const [jobHistory, setJobHistory] = useState<OptimizerJobHistoryRecord[]>([]);
   const [jobHistoryTotal, setJobHistoryTotal] = useState(0);
   const [jobHistoryLimit, setJobHistoryLimit] = useState<(typeof HISTORY_PAGE_SIZES)[number]>(25);
@@ -294,6 +286,7 @@ useEffect(() => {
   const startedAtByJobIdRef = useRef<Record<string, number>>({});
   const lastTableSourceRef = useRef<"loop" | "single">("single");
   const historyImportInputRef = useRef<HTMLInputElement | null>(null);
+  const completedLoopRunIdsRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     let timer: number | null = null;
@@ -577,6 +570,7 @@ useEffect(() => {
     if (loopJobId) lastNonNullLoopJobIdRef.current = loopJobId;
   }, [loopJobId]);
 
+
   useEffect(() => {
     const prevLoopActive = prevLoopActiveRef.current;
     if (prevLoopActive && !loopActive && loopAggRows.length > 0) {
@@ -614,7 +608,6 @@ useEffect(() => {
       };
       await startOptimizerLoop({
         tapeIds: [],
-        datasetMode,
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -636,6 +629,8 @@ useEffect(() => {
       });
       setLoopAggRows([]);
       setLoopAggMap(new Map());
+      completedLoopRunIdsRef.current = {};
+      localStorage.removeItem(LOOP_RESULTS_DRAFT_STORAGE_KEY);
       setDone(0);
       setTotal(100);
       const next = await getOptimizerLoopStatus();
@@ -741,6 +736,47 @@ useEffect(() => {
     return payload;
   }
 
+  const mergeCompletedRunResults = useCallback((rows: OptimizationResult[]) => {
+    const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
+    setLoopAggMap((prev) => {
+      const next = new Map(prev);
+      for (const row of rows) {
+        if (minTradesLimit > 0 && row.trades < minTradesLimit) continue;
+        const signature = makeResultSignature(row);
+        const existing = next.get(signature);
+        if (!existing || isBetterResult(row, existing)) next.set(signature, row);
+      }
+      const sortedRows = Array.from(next.values()).sort((a, b) => {
+        if (b.netPnl !== a.netPnl) return b.netPnl - a.netPnl;
+        return b.trades - a.trades;
+      });
+      setLoopAggRows(sortedRows);
+      setTotalRows(sortedRows.length);
+      return next;
+    });
+  }, [minTrades]);
+
+  const appendCompletedRunByJobId = useCallback(async (jobId: string) => {
+    if (!jobId || completedLoopRunIdsRef.current[jobId]) return;
+    completedLoopRunIdsRef.current[jobId] = true;
+    try {
+      const res = await getJobResults(jobId, { page: 1, sortKey, sortDir });
+      mergeCompletedRunResults(Array.isArray(res.results) ? res.results : []);
+    } catch {
+      delete completedLoopRunIdsRef.current[jobId];
+    }
+  }, [mergeCompletedRunResults, sortDir, sortKey]);
+
+
+  useEffect(() => {
+    const prev = prevLoopJobIdRef.current;
+    if (prev && prev !== loopJobId) {
+      void appendCompletedRunByJobId(prev);
+    }
+    if (!loopActive && lastNonNullLoopJobIdRef.current) {
+      void appendCompletedRunByJobId(lastNonNullLoopJobIdRef.current);
+    }
+  }, [appendCompletedRunByJobId, loopActive, loopJobId]);
   const onRangeChange =
     (key: RangeKey, bound: "min" | "max") => (e: ChangeEvent<HTMLInputElement>) => {
       const nextValue = e.currentTarget.value;
@@ -777,26 +813,7 @@ useEffect(() => {
     const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
     const nextResults = res.results ?? [];
     if (loopActive) {
-      const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
-      setLoopAggMap((prev) => {
-        const next = new Map(prev);
-        for (const row of nextResults) {
-          if (excludeNegative && row.netPnl < 0) continue;
-          if (minTradesLimit > 0 && row.trades < minTradesLimit) continue;
-          const signature = makeResultSignature(row);
-          const existing = next.get(signature);
-          if (!existing || isBetterResult(row, existing)) {
-            next.set(signature, row);
-          }
-        }
-        const sortedRows = Array.from(next.values()).sort((a, b) => {
-          if (b.netPnl !== a.netPnl) return b.netPnl - a.netPnl;
-          return b.trades - a.trades;
-        });
-        setLoopAggRows(() => sortedRows);
-        setTotalRows(sortedRows.length);
-        return next;
-      });
+      mergeCompletedRunResults(nextResults);
       return;
     }
     const keepPreviousIfEmpty = options?.keepPreviousIfEmpty ?? false;
@@ -997,14 +1014,6 @@ useEffect(() => {
   }
 
 
-  async function refreshSoakLast() {
-    try {
-      const res = await getLastSoakSnapshot();
-      setLastSoak(res.snapshot);
-    } catch {
-      setLastSoak(null);
-    }
-  }
 
   async function refreshJobHistory() {
     try {
@@ -1053,19 +1062,6 @@ useEffect(() => {
     setJobHistoryOffset(0);
   }
 
-  async function onCheckDoctor() {
-    setDoctorBusy(true);
-    setError(null);
-    try {
-      const next = await getDoctorStatus();
-      setDoctorStatus(next);
-      await refreshSoakLast();
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    } finally {
-      setDoctorBusy(false);
-    }
-  }
 
   async function onExportHistory() {
     setHistoryTransferMessage(null);
@@ -1111,7 +1107,7 @@ useEffect(() => {
   }
 
   const isLoopDisplay = lastTableSourceRef.current === "loop";
-  const displayedRows = isLoopDisplay ? loopAggRows : results;
+  const displayedRows = isLoopDisplay ? (excludeNegative ? loopAggRows.filter((row) => row.netPnl >= 0) : loopAggRows) : results;
   const loopDisplayRows = useMemo(() => {
     if (!isLoopDisplay) return displayedRows;
     const start = (page - 1) * pageSize;
@@ -1123,14 +1119,8 @@ useEffect(() => {
   const historyHoursByJobId = useMemo(() => {
     const map: Record<string, string> = {};
     jobHistory.forEach((row) => {
-      const fromTs = row.runPayload.timeRangeFromTs;
-      const toTs = row.runPayload.timeRangeToTs;
-      if (!Number.isFinite(Number(fromTs)) || !Number.isFinite(Number(toTs))) {
-        map[row.jobId] = "-";
-        return;
-      }
-      const delta = Number(toTs) - Number(fromTs);
-      map[row.jobId] = Number.isFinite(delta) && delta >= 0 ? (delta / 3600000).toFixed(2) : "-";
+      const hours = Number(row.runPayload.datasetHours);
+      map[row.jobId] = Number.isFinite(hours) ? String(Math.max(0, Math.floor(hours))) : "-";
     });
     return map;
   }, [jobHistory]);
@@ -1214,23 +1204,6 @@ useEffect(() => {
             <h6>Dataset</h6>
             <div style={{ fontSize: 12, marginBottom: 8 }}>Data source: <b>{String(optimizerDataSource ?? "-").toUpperCase()}</b></div>
             {optimizerStatusWarning ? <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>{optimizerStatusWarning}</div> : null}
-            <details style={{ marginBottom: 12 }}>
-              <summary style={{ cursor: "pointer", fontSize: 13 }}><b>Doctor</b></summary>
-              <div style={{ marginTop: 8, fontSize: 12 }}>
-                <Button size="sm" variant="outline-secondary" onClick={() => void onCheckDoctor()} disabled={doctorBusy}>Check</Button>
-                {doctorStatus ? (
-                  <div style={{ marginTop: 8 }}>
-                    <div>ok: <b>{doctorStatus.ok ? "true" : "false"}</b></div>
-                    <div>http: <b>{doctorStatus.ports.http}</b></div>
-                    <div>dataDir free: <b>{doctorStatus.dataDirBytesFree == null ? "-" : doctorStatus.dataDirBytesFree.toLocaleString()}</b></div>
-                    <div>low disk: <b>{doctorStatus.warnings.includes("low_disk") ? "YES" : "NO"}</b></div>
-                    <div>warnings: <b>{doctorStatus.warnings.length}</b></div>
-                    {doctorStatus.warnings.length ? <ul style={{ marginBottom: 0 }}>{doctorStatus.warnings.map((w) => <li key={w}>{w}</li>)}</ul> : null}
-                    <div>Last soak snapshot: <b>{lastSoak?.tsMs ? new Date(lastSoak.tsMs).toLocaleString() : "-"}</b></div>
-                  </div>
-                ) : null}
-              </div>
-            </details>
 
             <h6>Optimization</h6>
             <Row className="g-2 align-items-end mb-2">
@@ -1291,15 +1264,6 @@ useEffect(() => {
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>runsCount</Form.Label>
                 <Form.Control value={loopRunsCount} onChange={(e) => setLoopRunsCount(e.currentTarget.value)} type="number" min={1} step={1} disabled={loopInfinite} />
-                </Form.Group>
-              </Col>
-              <Col md={2} sm={4} xs={6}>
-                <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>dataset</Form.Label>
-                <Form.Select value={datasetMode} onChange={(e) => setDatasetMode(e.currentTarget.value as "snapshot" | "followTail")}>
-                  <option value="snapshot">Snapshot</option>
-                  <option value="followTail">Follow Tail</option>
-                </Form.Select>
                 </Form.Group>
               </Col>
               <Col xs={12}>
@@ -1453,7 +1417,7 @@ useEffect(() => {
               <tbody>
                 {loopDisplayRows.map((r, i) => {
                   return (
-                    <tr key={`${r.netPnl}-${r.trades}-${r.params.priceThresholdPct}-${r.params.oivThresholdPct}-${i}`}>
+                    <tr key={`${makeResultSignature(r)}-${r.netPnl}-${r.trades}-${i}`}>
                                             <td style={{ whiteSpace: "nowrap" }}>{r.netPnl.toFixed(4)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.trades}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.winRatePct.toFixed(2)}%</td>

@@ -116,6 +116,7 @@ type OptimizerJobHistoryRecord = {
     directionMode: "both" | "long" | "short";
     rememberNegatives: boolean;
     excludeNegative: boolean;
+    datasetHours?: number;
     sim?: OptimizerSimulationParams;
   };
   summary: {
@@ -274,6 +275,7 @@ function toHistoryRunPayload(runPayload: Record<string, unknown> | null): Optimi
     directionMode: ["both", "long", "short"].includes(String((runPayload as any)?.directionMode)) ? String((runPayload as any)?.directionMode) as "both" | "long" | "short" : "both",
     rememberNegatives: Boolean((runPayload as any)?.rememberNegatives),
     excludeNegative: Boolean((runPayload as any)?.excludeNegative),
+    ...(Number.isFinite(Number((runPayload as any)?.datasetHours)) ? { datasetHours: Math.max(0, Math.floor(Number((runPayload as any)?.datasetHours))) } : {}),
     ...(((runPayload as any)?.sim && typeof (runPayload as any).sim === "object") ? { sim: (runPayload as any).sim as OptimizerSimulationParams } : {}),
   };
 }
@@ -819,9 +821,19 @@ function normalizeOptionalTs(value: unknown): number | undefined {
   return n;
 }
 
+
+function computeDatasetHoursFromTarget(target: ReturnType<typeof readDatasetTarget>["range"]): number {
+  if (target.kind === "manual") {
+    const delta = target.endMs - target.startMs;
+    return Number.isFinite(delta) && delta > 0 ? Math.max(0, Math.round(delta / 3_600_000)) : 0;
+  }
+  const presetToHours: Record<string, number> = { "6h": 6, "12h": 12, "24h": 24, "48h": 48, "1w": 168, "2w": 336, "4w": 672, "1mo": 720 };
+  return presetToHours[String((target as any).preset ?? "24h")] ?? 24;
+}
+
 function resolveDatasetRangeMs(target: ReturnType<typeof readDatasetTarget>["range"], nowMs: number): { startMs: number; endMs: number } | null {
   if (target.kind === "manual") return { startMs: target.startMs, endMs: target.endMs };
-  const presetToMs: Record<string, number> = { "24h": 24 * 60 * 60 * 1000, "48h": 48 * 60 * 60 * 1000, "1w": 7 * 24 * 60 * 60 * 1000, "2w": 14 * 24 * 60 * 60 * 1000, "4w": 28 * 24 * 60 * 60 * 1000, "1mo": 30 * 24 * 60 * 60 * 1000 };
+  const presetToMs: Record<string, number> = { "6h": 6 * 60 * 60 * 1000, "12h": 12 * 60 * 60 * 1000, "24h": 24 * 60 * 60 * 1000, "48h": 48 * 60 * 60 * 1000, "1w": 7 * 24 * 60 * 60 * 1000, "2w": 14 * 24 * 60 * 60 * 1000, "4w": 28 * 24 * 60 * 60 * 1000, "1mo": 30 * 24 * 60 * 60 * 1000 };
   const preset = String((target as any).preset ?? "24h");
   const span = presetToMs[preset] ?? 24 * 60 * 60 * 1000;
   return { startMs: nowMs - span, endMs: nowMs };
@@ -1357,6 +1369,7 @@ export function registerHttpRoutes(app: FastifyInstance) {
       minTrades,
       excludeNegative,
       rememberNegatives,
+      datasetHours: computeDatasetHoursFromTarget(target.range),
       sim,
     };
     job.runPayload = runPayload;
