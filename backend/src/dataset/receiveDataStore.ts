@@ -87,6 +87,8 @@ function resolveRangeMs(target: DatasetTarget["range"], nowMs: number): { startM
   }
 
   const presetToMs: Record<DatasetRangePreset, number> = {
+    "6h": 6 * 60 * 60 * 1000,
+    "12h": 12 * 60 * 60 * 1000,
     "24h": 24 * 60 * 60 * 1000,
     "48h": 48 * 60 * 60 * 1000,
     "1w": 7 * 24 * 60 * 60 * 1000,

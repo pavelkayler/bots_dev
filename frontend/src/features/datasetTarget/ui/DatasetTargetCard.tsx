@@ -17,7 +17,7 @@ type DraftState = {
 const STORAGE_KEY = "datasetTargetDraft";
 const RECEIVE_JOB_STORAGE_KEY = "receiveDataJobId";
 const RECEIVE_LAST_JOB_STORAGE_KEY = "receiveDataLastJob";
-const PRESETS: DatasetRangePreset[] = ["24h", "48h", "1w", "2w", "4w", "1mo"];
+const PRESETS: DatasetRangePreset[] = ["6h", "12h", "24h", "48h", "1w", "2w", "4w", "1mo"];
 const SAVE_DEBOUNCE_MS = 400;
 
 function toDatetimeLocal(ms: number): string {
