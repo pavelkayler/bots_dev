@@ -1,23 +1,6 @@
 import { getApiBase } from "../../../shared/config/env";
 import { getJson, postJson } from "../../../shared/api/http";
 
-export type OptimizerTape = {
-  id: string;
-  createdAt: number;
-  fileSizeBytes: number;
-  runsTotal: number;
-  startTs: number | null;
-  endTs: number | null;
-  meta: {
-    tapeId?: string;
-    createdAt?: number;
-    sessionId?: string | null;
-    universeSelectedId?: string;
-    klineTfMin?: number;
-    symbols?: string[];
-  } | null;
-};
-
 export type OptimizationResult = {
   rank: number;
   netPnl: number;
@@ -87,7 +70,6 @@ export type OptimizerHistorySortKey =
   | "rowsPositive"
   | "rowsTotal";
 export type OptimizerPrecision = Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", number>;
-export type OptimizerSettings = { tapesDir: string };
 export type OptimizerSimulationParams = {
   initialBalance?: number;
   marginPerTrade?: number;
@@ -168,34 +150,9 @@ export type OptimizerHistoryExport = {
   loopState?: unknown;
 };
 
-export async function listTapes(): Promise<{ tapes: OptimizerTape[] }> {
+export async function getStatus(): Promise<{ dataSource: "receive_data_cache" }> {
   const base = getApiBase();
-  return await getJson<{ tapes: OptimizerTape[] }>(`${base}/api/optimizer/tapes`);
-}
-
-export async function getSettings(): Promise<OptimizerSettings> {
-  const base = getApiBase();
-  return await getJson<OptimizerSettings>(`${base}/api/optimizer/settings`);
-}
-
-export async function setSettings(payload: OptimizerSettings): Promise<OptimizerSettings> {
-  const base = getApiBase();
-  return await postJson<OptimizerSettings>(`${base}/api/optimizer/settings`, payload);
-}
-
-export async function startTape(): Promise<{ tapeId: string }> {
-  const base = getApiBase();
-  return await postJson<{ tapeId: string }>(`${base}/api/optimizer/tapes/start`, {});
-}
-
-export async function stopTape(): Promise<{ ok: true }> {
-  const base = getApiBase();
-  return await postJson<{ ok: true }>(`${base}/api/optimizer/tapes/stop`, {});
-}
-
-export async function getStatus(): Promise<{ isRecording: boolean; tapeId: string | null; dataSource: "tapes" }> {
-  const base = getApiBase();
-  return await getJson<{ isRecording: boolean; tapeId: string | null; dataSource: "tapes" }>(`${base}/api/optimizer/status`);
+  return await getJson<{ dataSource: "receive_data_cache" }>(`${base}/api/optimizer/status`);
 }
 
 export async function runOptimizationJob(payload: {

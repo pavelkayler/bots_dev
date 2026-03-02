@@ -819,6 +819,14 @@ function normalizeOptionalTs(value: unknown): number | undefined {
   return n;
 }
 
+function resolveDatasetRangeMs(target: ReturnType<typeof readDatasetTarget>["range"], nowMs: number): { startMs: number; endMs: number } | null {
+  if (target.kind === "manual") return { startMs: target.startMs, endMs: target.endMs };
+  const presetToMs: Record<string, number> = { "24h": 24 * 60 * 60 * 1000, "48h": 48 * 60 * 60 * 1000, "1w": 7 * 24 * 60 * 60 * 1000, "2w": 14 * 24 * 60 * 60 * 1000, "4w": 28 * 24 * 60 * 60 * 1000, "1mo": 30 * 24 * 60 * 60 * 1000 };
+  const preset = String((target as any).preset ?? "24h");
+  const span = presetToMs[preset] ?? 24 * 60 * 60 * 1000;
+  return { startMs: nowMs - span, endMs: nowMs };
+}
+
 function resolveTapeFilesAtRunStart(baseTapeIds: string[], explicitTapeIds: string[]): Array<{ tapeId: string; bytes: number }> {
   const resolvedIds = [
     ...baseTapeIds.flatMap((baseTapeId) => listTapeSegments(baseTapeId)),
@@ -1242,97 +1250,27 @@ export function registerHttpRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/api/optimizer/settings", async () => {
-    return getOptimizerSettings();
-  });
-
-  app.post("/api/optimizer/settings", async (req, reply) => {
-    const body = safeBody((req as any).body) as any;
-    try {
-      return setOptimizerSettings({ tapesDir: String(body?.tapesDir ?? "") });
-    } catch (e: any) {
-      reply.code(400);
-      return { error: "invalid_optimizer_settings", message: String(e?.message ?? e) };
-    }
-  });
-
-  app.get("/api/optimizer/tapes", async (_req, reply) => {
-    try {
-      const tapes = listTapes().map((t) => {
-        const baseTapeId = toBaseTapeId(t.id);
-        const bounds = readTapeBounds(baseTapeId);
-        const symbolsCount = Array.isArray(t.meta?.symbols) ? t.meta.symbols.length : 0;
-        const klineTfMin = Number(t.meta?.klineTfMin);
-        return {
-          id: t.id,
-          createdAt: t.createdAt,
-          fileSizeBytes: t.fileSizeBytes,
-          symbolsCount,
-          runsCount: t.runsTotal,
-          firstTsMs: bounds.startTs,
-          lastTsMs: bounds.endTs,
-          klineTfMin: Number.isFinite(klineTfMin) ? klineTfMin : undefined,
-          runsTotal: t.runsTotal,
-          startTs: bounds.startTs,
-          endTs: bounds.endTs,
-          meta: t.meta,
-        };
-      });
-      return { tapes };
-    } catch (e: any) {
-      reply.code(500);
-      return { error: "optimizer_tapes_error", message: String(e?.message ?? "Failed to list optimizer tapes.") };
-    }
-  });
-
-  app.post("/api/optimizer/tapes/start", async (_req, reply) => {
-    try {
-      const state = tapeRecorder.getState();
-      if (state.isRecording && state.currentTapeId) {
-        return { tapeId: state.currentTapeId };
-      }
-      const started = tapeRecorder.startRecording();
-      return { tapeId: started.tapeId };
-    } catch (e: any) {
-      if (String(e?.message ?? "") === "session_not_running") {
-        reply.code(409);
-        return { error: "recording_controlled_by_session" };
-      }
-      reply.code(500);
-      return { error: "optimizer_tapes_start_error", message: String(e?.message ?? "Failed to start optimizer tape recording.") };
-    }
-  });
-
-  app.post("/api/optimizer/tapes/stop", async (_req, reply) => {
-    try {
-      tapeRecorder.stopRecording();
-      return { ok: true as const };
-    } catch (e: any) {
-      reply.code(500);
-      return { error: "optimizer_tapes_stop_error", message: String(e?.message ?? "Failed to stop optimizer tape recording.") };
-    }
-  });
-
-  app.get("/api/optimizer/status", async (_req, reply) => {
-    try {
-      const state = tapeRecorder.getState();
-      return { isRecording: state.isRecording, tapeId: state.currentTapeId, dataSource: "tapes" as const };
-    } catch (e: any) {
-      reply.code(500);
-      return { error: "optimizer_status_error", message: String(e?.message ?? "Failed to read optimizer status.") };
-    }
-  });
+  app.get("/api/optimizer/status", async () => ({ dataSource: "receive_data_cache" as const }));
 
   app.post("/api/optimizer/run", async (req, reply) => {
     const body = safeBody((req as any).body) as any;
-    const tapeIdsRaw = Array.isArray(body?.tapeIds) ? body.tapeIds : undefined;
-    const tapeIds = (tapeIdsRaw ?? [body?.tapeId]).map((v: unknown) => String(v ?? "").trim()).filter(Boolean);
-    const datasetMode: DatasetMode = body?.datasetMode === "followTail" ? "followTail" : "snapshot";
-    const timeRangeFromTs = normalizeOptionalTs(body?.timeRangeFromTs);
-    const timeRangeToTs = normalizeOptionalTs(body?.timeRangeToTs);
-    if (timeRangeFromTs != null && timeRangeToTs != null && timeRangeFromTs > timeRangeToTs) {
+    const target = readDatasetTarget();
+    if (!target.universeId) {
       reply.code(400);
-      return { error: "invalid_time_range" };
+      return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+    }
+    const universe = readUniverse(target.universeId);
+    const symbols = universe.symbols.filter((v) => typeof v === "string" && v.trim());
+    const resolvedRange = resolveDatasetRangeMs(target.range, Date.now());
+    if (!resolvedRange || !symbols.length) {
+      reply.code(400);
+      return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+    }
+    for (const symbol of symbols) {
+      if (!fs.existsSync(path.resolve(process.cwd(), "data", "cache", "bybit_klines", `${symbol}.jsonl`))) {
+        reply.code(400);
+        return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+      }
     }
     const candidates = Number(body?.candidates);
     const seed = Number(body?.seed ?? 1);
@@ -1350,15 +1288,11 @@ export function registerHttpRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
-    const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${directionMode}|tf=${optTfMin ?? 0}`;
+    const runKey = `dataset=${target.universeId}|dir=${directionMode}|tf=${optTfMin ?? 0}`;
 
     if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
       reply.code(400);
       return { error: "invalid_candidates" };
-    }
-    if (!tapeIds.length) {
-      reply.code(400);
-      return { error: "invalid_tape_id", message: "No tape IDs provided" };
     }
     if (!["both", "long", "short"].includes(directionMode)) {
       reply.code(400);
@@ -1372,20 +1306,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: "invalid_min_trades" };
     }
-    try {
-      tapeIds.forEach((id: string) => safeId(id));
-    } catch (e: any) {
-      reply.code(400);
-      return { error: "invalid_tape_id", message: String(e?.message ?? e) };
-    }
-
-    const explicitTapeIds = tapeIds.filter((id: string) => id.includes("-seg"));
-    const baseTapeIds = tapeIds.filter((id: string) => !id.includes("-seg"));
-    const snapshotTapeFiles = datasetMode === "snapshot" ? resolveTapeFilesAtRunStart(baseTapeIds, explicitTapeIds) : [];
-    if (datasetMode === "snapshot" && !snapshotTapeFiles.length) {
-      reply.code(400);
-      return { error: "invalid_tape_id", message: "No readable tape files found" };
-    }
 
     let ranges: OptimizerRanges | undefined;
     let precision: Partial<OptimizerPrecision> | undefined;
@@ -1396,8 +1316,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
-
-    incrementTapeRuns(tapeIds);
 
     const jobId = randomUUID();
     const totalCandidates = Math.floor(candidates);
@@ -1428,26 +1346,8 @@ export function registerHttpRoutes(app: FastifyInstance) {
     writeJobSnapshot(jobId, job);
 
     const runPayload = {
-      tapeIds: datasetMode === "snapshot" ? snapshotTapeFiles.map((file) => file.tapeId) : tapeIds,
-      ...(datasetMode === "snapshot"
-        ? {
-            snapshot: {
-              datasetMode: "snapshot",
-              tapeFiles: snapshotTapeFiles,
-              ...(timeRangeFromTs != null ? { timeRangeFromTs } : {}),
-              ...(timeRangeToTs != null ? { timeRangeToTs } : {}),
-            } as SnapshotDescriptor,
-            tapeFiles: snapshotTapeFiles,
-          }
-        : {
-            followTail: {
-              datasetMode: "followTail",
-              baseTapeIds,
-              explicitTapeIds,
-              ...(timeRangeFromTs != null ? { timeRangeFromTs } : {}),
-              ...(timeRangeToTs != null ? { timeRangeToTs } : {}),
-            } as FollowTailDescriptor,
-          }),
+      tapeIds: [],
+      cacheDataset: { symbols, startMs: resolvedRange.startMs, endMs: resolvedRange.endMs },
       candidates: totalCandidates,
       seed: Number.isFinite(seed) ? seed : 1,
       ...(ranges ? { ranges } : {}),
@@ -1457,8 +1357,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
       minTrades,
       excludeNegative,
       rememberNegatives,
-      ...(timeRangeFromTs != null ? { timeRangeFromTs } : {}),
-      ...(timeRangeToTs != null ? { timeRangeToTs } : {}),
       sim,
     };
     job.runPayload = runPayload;
@@ -1554,20 +1452,23 @@ export function registerHttpRoutes(app: FastifyInstance) {
     }
 
     const body = safeBody((req as any).body) as any;
-    const normalizedTapeIds = (Array.isArray(body?.tapeIds) ? body.tapeIds : [body?.tapeId]).map((v: unknown) => String(v ?? "").trim()).filter(Boolean);
-    const datasetMode: DatasetMode = body?.datasetMode === "followTail" ? "followTail" : "snapshot";
-    const timeRangeFromTs = normalizeOptionalTs(body?.timeRangeFromTs);
-    const timeRangeToTs = normalizeOptionalTs(body?.timeRangeToTs);
-    if (timeRangeFromTs != null && timeRangeToTs != null && timeRangeFromTs > timeRangeToTs) {
+    const target = readDatasetTarget();
+    if (!target.universeId) {
       reply.code(400);
-      return { error: "invalid_time_range" };
+      return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
     }
-    const explicitTapeIds = normalizedTapeIds.filter((id: string) => id.includes("-seg"));
-    const baseTapeIds = normalizedTapeIds.filter((id: string) => !id.includes("-seg"));
-    const snapshotTapeFiles = datasetMode === "snapshot" ? resolveTapeFilesAtRunStart(baseTapeIds, explicitTapeIds) : [];
-    if (datasetMode === "snapshot" && !snapshotTapeFiles.length) {
+    const universe = readUniverse(target.universeId);
+    const symbols = universe.symbols.filter((v) => typeof v === "string" && v.trim());
+    const resolvedRange = resolveDatasetRangeMs(target.range, Date.now());
+    if (!resolvedRange || !symbols.length) {
       reply.code(400);
-      return { error: "invalid_tape_id", message: "No readable tape files found" };
+      return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+    }
+    for (const symbol of symbols) {
+      if (!fs.existsSync(path.resolve(process.cwd(), "data", "cache", "bybit_klines", `${symbol}.jsonl`))) {
+        reply.code(400);
+        return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+      }
     }
     let sim: OptimizerSimulationParams;
     try {
@@ -1578,34 +1479,14 @@ export function registerHttpRoutes(app: FastifyInstance) {
     }
     const payload: OptimizerLoopRunPayload = {
       ...body,
-      tapeIds: normalizedTapeIds,
-      ...(datasetMode === "snapshot"
-        ? {
-            snapshot: {
-              datasetMode: "snapshot",
-              tapeFiles: snapshotTapeFiles,
-              ...(timeRangeFromTs != null ? { timeRangeFromTs } : {}),
-              ...(timeRangeToTs != null ? { timeRangeToTs } : {}),
-            } as SnapshotDescriptor,
-          }
-        : {
-            followTail: {
-              datasetMode: "followTail",
-              baseTapeIds,
-              explicitTapeIds,
-              ...(timeRangeFromTs != null ? { timeRangeFromTs } : {}),
-              ...(timeRangeToTs != null ? { timeRangeToTs } : {}),
-            } as FollowTailDescriptor,
-          }),
-      datasetMode,
+      tapeIds: [],
+      cacheDataset: { symbols, startMs: resolvedRange.startMs, endMs: resolvedRange.endMs },
       candidates: Number(body?.candidates),
       seed: Number(body?.seed ?? 1),
       directionMode: body?.directionMode == null ? "both" : String(body.directionMode) as "both" | "long" | "short",
       minTrades: body?.minTrades == null || String(body.minTrades).trim() === "" ? 1 : Math.floor(Number(body.minTrades)),
       excludeNegative: Boolean(body?.excludeNegative),
       rememberNegatives: Boolean(body?.rememberNegatives),
-      ...(timeRangeFromTs != null ? { timeRangeFromTs } : {}),
-      ...(timeRangeToTs != null ? { timeRangeToTs } : {}),
       ...(body?.optTfMin == null || String(body.optTfMin).trim() === "" ? {} : { optTfMin: Math.floor(Number(body.optTfMin)) }),
       ...(body?.ranges ? { ranges: body.ranges } : {}),
       ...(body?.precision ? { precision: body.precision } : {}),

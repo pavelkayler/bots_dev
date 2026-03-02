@@ -7,10 +7,7 @@ import {
   getJobResults,
   getJobStatus,
   getCurrentJob,
-  getSettings,
   getStatus,
-  listTapes,
-  setSettings,
   getJobExportUrl,
   getCurrentJobExportUrl,
   startOptimizerLoop,
@@ -602,15 +599,6 @@ useEffect(() => {
     setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
     void refreshStatus();
     void refreshJobHistory();
-    setTapesRefreshKey((prev) => prev + 1);
-    void (async () => {
-      try {
-        const settings = await getSettings();
-        setTapesDir(settings.tapesDir);
-      } catch (e: any) {
-        setError(String(e?.message ?? e));
-      }
-    })();
     void (async () => {
       try {
         const current = await getCurrentJob();
@@ -1457,7 +1445,7 @@ useEffect(() => {
     if (jobHistoryOffset > maxOffset) setJobHistoryOffset(maxOffset);
   }, [jobHistoryLimit, jobHistoryOffset, jobHistoryTotalPages]);
   const isRunningStatus = jobStatus === "running";
-  const hasTapeSelected = selectedTapeIds.length > 0;
+  const hasTapeSelected = true;
   const startedAtForActiveJobId = activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs;
   const endMs = !startedAtForActiveJobId
     ? null
@@ -1513,9 +1501,7 @@ useEffect(() => {
         <Card>
           <Card.Header className="d-flex align-items-center justify-content-between">
             <b>Optimizer</b>
-            <Button size="sm" variant="outline-secondary" onClick={() => setTapesRefreshKey((prev) => prev + 1)}>
-              Refresh dataset
-            </Button>
+            <span style={{ fontSize: 12, opacity: 0.8 }}>Receive Data cache dataset</span>
           </Card.Header>
           <Card.Body>
             {error ? <Alert variant="danger">{error}</Alert> : null}
@@ -1523,28 +1509,6 @@ useEffect(() => {
             <h6>Dataset</h6>
             <div style={{ fontSize: 12, marginBottom: 8 }}>Data source: <b>{String(optimizerDataSource ?? "-").toUpperCase()}</b></div>
             {optimizerStatusWarning ? <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>{optimizerStatusWarning}</div> : null}
-            <div className="d-flex align-items-center gap-2 mb-2">
-              <Button size="sm" variant="outline-secondary" onClick={() => { setTapesDirDraft(tapesDir); setShowTapesDirModal(true); }}>
-                Tapes directory
-              </Button>
-              <span style={{ fontSize: 12 }}>
-                recording: <b>{isRecording ? "ON" : "OFF"}</b>
-                {recordingTapeId ? ` · ${recordingTapeId}` : ""}
-              </span>
-              <span style={{ fontSize: 12, opacity: 0.8 }}>Recording is controlled by Session RUNNING state.</span>
-            </div>
-            <div style={{ fontSize: 12, marginBottom: 8 }}>tapesDir: <b>{tapesDir || "-"}</b></div>
-
-            <TapesTable
-              isRecording={isRecording}
-              selectedTapeIds={selectedTapeIds}
-              onToggleTape={onToggleTape}
-              refreshKey={tapesRefreshKey}
-              recordingTapeId={recordingTapeId}
-              onError={setError}
-              onTapesLoaded={handleTapesLoaded}
-            />
-
             <details style={{ marginBottom: 12 }}>
               <summary style={{ cursor: "pointer", fontSize: 13 }}><b>Doctor</b></summary>
               <div style={{ marginTop: 8, fontSize: 12 }}>
@@ -1681,7 +1645,7 @@ useEffect(() => {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || !hasTapeSelected || Boolean(rangeError)}>Start loop</Button>
+                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || Boolean(rangeError)}>Start loop</Button>
               </Col>
               <Col xs="auto">
                 <ButtonGroup>
@@ -1726,10 +1690,6 @@ useEffect(() => {
             {rangeError ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>{rangeError}</div> : null}
 
             <div style={{ fontSize: 12, marginBottom: 8 }}>
-              selected dataset rows: <b>{selectedTapeIds.length}</b>
-              {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
-            </div>
-            <div style={{ fontSize: 12, marginBottom: 8 }}>
               Loop: <b>{loopActive ? (loopPaused ? "paused" : "running") : "stopped"}</b>
               {loopExists && loopStatus?.loop ? ` · Run ${loopStatus.runsCompleted ?? loopStatus.loop.runIndex}/${loopStatus.runsTotal == null ? "∞" : loopStatus.runsTotal}` : ""}
             </div>
@@ -1773,8 +1733,7 @@ useEffect(() => {
             <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
               <thead>
                 <tr>
-                  <th style={{ width: 60, textAlign: "center", whiteSpace: "nowrap" }}>Rank</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
+                                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trades")}>trades</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("winRatePct")}>winRate</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("expectancy")}>expectancy</th>
@@ -1794,11 +1753,10 @@ useEffect(() => {
                 </tr>
               </thead>
               <tbody>
-                {loopDisplayRows.map((r) => {
+                {loopDisplayRows.map((r, i) => {
                   return (
-                    <tr key={`${r.rank}-${r.netPnl}`}>
-                      <td style={{ textAlign: "center", whiteSpace: "nowrap" }}>{r.rank}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.netPnl.toFixed(4)}</td>
+                    <tr key={`${r.params.priceThresholdPct}|${r.params.oivThresholdPct}|${r.params.tpRoiPct}|${r.params.slRoiPct}|${r.params.entryOffsetPct}|${r.params.timeoutSec}|${r.params.rearmMs}#${i}`}>
+                                            <td style={{ whiteSpace: "nowrap" }}>{r.netPnl.toFixed(4)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.trades}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.winRatePct.toFixed(2)}%</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.expectancy.toFixed(4)}</td>
@@ -1822,7 +1780,7 @@ useEffect(() => {
                 })}
                 {!loopDisplayRows.length ? (
                   <tr>
-                    <td colSpan={18} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
+                    <td colSpan={17} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -1915,14 +1873,14 @@ useEffect(() => {
                                 <Table striped bordered hover size="sm" className="mb-0" style={{ marginTop: 8, marginLeft: 8 }}>
                                   <thead>
                                     <tr>
-                                      <th>Rank</th><th>netPnl</th><th>trades</th><th>winRate</th><th>expectancy</th><th>profitFactor</th><th>maxDD</th>
+                                      <th>netPnl</th><th>trades</th><th>winRate</th><th>expectancy</th><th>profitFactor</th><th>maxDD</th>
                                       <th>placed</th><th>filled</th><th>expired</th><th>priceTh</th><th>oivTh</th><th>tp</th><th>sl</th><th>offset</th><th>timeoutSec</th><th>rearmMs</th><th>action</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {detailsRows.map((r) => (
-                                      <tr key={`${row.jobId}-${r.rank}-${r.netPnl}`}>
-                                        <td>{r.rank}</td><td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
+                                    {detailsRows.map((r, i) => (
+                                      <tr key={`${row.jobId}-${r.params.priceThresholdPct}|${r.params.oivThresholdPct}|${r.params.tpRoiPct}|${r.params.slRoiPct}|${r.params.entryOffsetPct}|${r.params.timeoutSec}|${r.params.rearmMs}#${i}`}>
+                                        <td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
                                         <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
                                         <td><Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button></td>
                                       </tr>
@@ -1968,21 +1926,7 @@ useEffect(() => {
           </Card.Body>
         </Card>
       </Container>
-      <Modal show={showTapesDirModal} onHide={() => setShowTapesDirModal(false)}>
-        <Modal.Header closeButton>
-          <Modal.Title>Tapes directory</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form.Group>
-            <Form.Label>Directory path</Form.Label>
-            <Form.Control value={tapesDirDraft} onChange={(e) => setTapesDirDraft(e.currentTarget.value)} />
-          </Form.Group>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowTapesDirModal(false)}>Cancel</Button>
-          <Button onClick={() => void onApplyTapesDir()}>Apply</Button>
-        </Modal.Footer>
-      </Modal>
+
     </>
   );
 }
