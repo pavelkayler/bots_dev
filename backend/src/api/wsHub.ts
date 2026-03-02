@@ -10,7 +10,6 @@ import { SignalEngine, type SignalSide } from "../engine/SignalEngine.js";
 import { runtime } from "../runtime/runtime.js";
 import type { LogEvent } from "../logging/EventLogger.js";
 import { configStore, type RuntimeConfig } from "../runtime/configStore.js";
-import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 
 type SymbolRowBase = {
   symbol: string;
@@ -547,19 +546,6 @@ export function createWsHub(app: FastifyInstance) {
         const openInterestValue = Number(row?.openInterestValue);
         const fundingRate = Number(row?.fundingRate);
         const nextFundingTime = Number(row?.nextFundingTime);
-        if (
-          Number.isFinite(markPrice) &&
-          Number.isFinite(openInterestValue) &&
-          Number.isFinite(fundingRate) &&
-          Number.isFinite(nextFundingTime)
-        ) {
-          tapeRecorder.recordTicker(Date.now(), symbol, {
-            markPrice,
-            openInterestValue,
-            fundingRate,
-            nextFundingTime,
-          });
-        }
       },
       onKline: (topic, _type, data) => {
         const symbol = parseKlineSymbol(topic);
@@ -568,9 +554,6 @@ export function createWsHub(app: FastifyInstance) {
         if (!klineRow || typeof klineRow !== "object") return;
         const confirmRaw = (klineRow as any)?.confirm;
         const isConfirm = confirmRaw === true || confirmRaw === "true" || confirmRaw === 1 || confirmRaw === "1";
-        if (isConfirm) {
-          tapeRecorder.recordKlineConfirm(Date.now(), symbol, { close: (klineRow as any)?.close ?? (klineRow as any)?.c ?? (klineRow as any)?.closePrice });
-        }
         candles.ingestKline(symbol, klineRow);
       },
     });

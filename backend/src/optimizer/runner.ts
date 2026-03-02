@@ -98,6 +98,7 @@ export type OptimizerSimulationParams = {
 type CloseSnapshot = { ts: number; realizedPnl: number };
 
 const MAX_TICK_INTERVAL_SAMPLES = 20_000;
+const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
 
 function pctChange(now: number, ref: number): number | null {
   if (!Number.isFinite(now) || !Number.isFinite(ref) || ref === 0) return null;
@@ -356,6 +357,11 @@ export type RunOptimizationArgs = {
   timeRangeFromTs?: number;
   timeRangeToTs?: number;
   sim?: OptimizerSimulationParams;
+  cacheDataset?: {
+    symbols: string[];
+    startMs: number;
+    endMs: number;
+  };
 };
 
 export type RunOptimizationHooks = {
@@ -403,6 +409,35 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
   const tapes: Array<{ tapeId: string; meta: TapeMeta | null; events: TapeEvent[]; firstTsMs: number | null; lastTsMs: number | null }> = [];
   const globalTickIntervals: number[] = [];
+  if (args.cacheDataset) {
+    const symbols = Array.isArray(args.cacheDataset.symbols) ? args.cacheDataset.symbols : [];
+    const startMs = Number(args.cacheDataset.startMs);
+    const endMs = Number(args.cacheDataset.endMs);
+    for (const symbol of symbols) {
+      const fp = path.join(CACHE_DIR, `${symbol}.jsonl`);
+      const raw = await fs.promises.readFile(fp, "utf8");
+      const events: TapeEvent[] = [];
+      let firstTsMs: number | null = null;
+      let lastTsMs: number | null = null;
+      for (const line of raw.split(/\r?\n/)) {
+        const text = line.trim();
+        if (!text) continue;
+        const row = JSON.parse(text) as { startMs?: number; close?: string; open?: string; high?: string; low?: string };
+        const candleStart = Number(row.startMs);
+        if (!Number.isFinite(candleStart) || candleStart < startMs || candleStart > endMs) continue;
+        const close = Number(row.close);
+        if (!Number.isFinite(close) || close <= 0) continue;
+        const ts = candleStart + 60_000;
+        events.push({ type: "ticker", ts, symbol, payload: { markPrice: close, openInterest: 0, fundingRate: 0 } });
+        events.push({ type: "kline_confirm", ts, symbol, payload: { close } });
+        if (firstTsMs == null || ts < firstTsMs) firstTsMs = ts;
+        if (lastTsMs == null || ts > lastTsMs) lastTsMs = ts;
+      }
+      tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: 1 }, events, firstTsMs, lastTsMs });
+    }
+    hooks?.onLoadProgress?.(100, 100);
+  }
+  if (!args.cacheDataset) {
   const tapePathEntries = tapeFiles.map((file) => ({ tapeId: file.tapeId, tapePath: getTapePath(file.tapeId), byteLimit: file.bytes > -1 ? file.bytes : undefined }));
   const tapeSizes = await Promise.all(tapePathEntries.map(async ({ tapePath, byteLimit }) => {
     const statSize = (await fs.promises.stat(tapePath)).size;
@@ -437,6 +472,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
   }
   hooks?.onLoadProgress?.(totalTapeBytes, totalTapeBytes);
+  }
   const medianTickIntervalSec = median(globalTickIntervals);
 
   const results: OptimizerResult[] = [];
