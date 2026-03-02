@@ -27,6 +27,8 @@ import {
   type OptimizerHistorySortKey,
 } from "../../features/optimizer/api/optimizerApi";
 import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
+import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard";
+import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataReceiveApi";
 
 type OptimizerResultRow = OptimizationResult;
 
@@ -62,6 +64,7 @@ const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
 const LOOP_RESULTS_DRAFT_STORAGE_KEY = "optimizerLoopResultsDraft";
+const DATASET_CACHE_ERROR = "Run Receive Data first";
 
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
@@ -210,6 +213,7 @@ export function OptimizerPage() {
   const [error, setError] = useState<string | null>(null);
   const [optimizerDataSource, setOptimizerDataSource] = useState<string | null>(null);
   const [optimizerStatusWarning, setOptimizerStatusWarning] = useState<string | null>(null);
+  const [datasetCache, setDatasetCache] = useState<string | null>(() => localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
@@ -240,6 +244,21 @@ export function OptimizerPage() {
 useEffect(() => {
   saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, results);
 }, [results]);
+
+  useEffect(() => {
+    const syncDatasetCache = () => setDatasetCache(localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
+    syncDatasetCache();
+    const timer = window.setInterval(syncDatasetCache, 500);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === DATASET_CACHE_STORAGE_KEY) syncDatasetCache();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.clearInterval(timer);
+    };
+  }, []);
+
 
 useEffect(() => {
   saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, loopAggRows);
@@ -538,6 +557,10 @@ useEffect(() => {
 
   async function onStartLoop() {
     if (rangeError) return;
+    if (!datasetCache) {
+      setError(DATASET_CACHE_ERROR);
+      return;
+    }
     setError(null);
     lastTableSourceRef.current = "loop";
     setLoopBusy(true);
@@ -582,6 +605,7 @@ useEffect(() => {
         precision,
         runsCount: Math.max(1, Math.floor(Number(loopRunsCount) || 1)),
         infinite: loopInfinite,
+        datasetCache,
       });
       setLoopAggRows([]);
       completedLoopRunIdsRef.current = {};
@@ -1159,6 +1183,11 @@ useEffect(() => {
             <div style={{ fontSize: 12, marginBottom: 8 }}>Data source: <b>{String(optimizerDataSource ?? "-").toUpperCase()}</b></div>
             {optimizerStatusWarning ? <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>{optimizerStatusWarning}</div> : null}
 
+            <h6>Receive Data</h6>
+            <DatasetTargetCard />
+            {!datasetCache ? <Alert variant="warning" className="py-2">Run Receive Data first</Alert> : null}
+
+            <fieldset disabled={!datasetCache}>
             <h6>Optimization</h6>
             <Row className="g-2 align-items-end mb-2">
               <Col md={2} sm={4} xs={6}>
@@ -1261,7 +1290,7 @@ useEffect(() => {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={loopBusy || loopRunning || loopPaused || Boolean(rangeError)}>Start loop</Button>
+                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={!datasetCache || loopBusy || loopRunning || loopPaused || Boolean(rangeError)}>Start loop</Button>
               </Col>
               <Col xs="auto">
                 <ButtonGroup>
@@ -1304,6 +1333,7 @@ useEffect(() => {
               </tbody>
             </Table>
             {rangeError ? <div style={{ color: "#b00020", fontSize: 12, marginBottom: 8 }}>{rangeError}</div> : null}
+            </fieldset>
 
             <div style={{ fontSize: 12, marginBottom: 8 }}>
               Loop: <b>{loopActive ? (loopPaused ? "paused" : "running") : "stopped"}</b>
