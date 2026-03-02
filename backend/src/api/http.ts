@@ -29,6 +29,7 @@ import { optimizerWorkerManager } from "../optimizer/worker/workerManager.js";
 import { getDataDirPath, isLowDiskBestEffort, MIN_FREE_BYTES, readFreeBytesBestEffort } from "../utils/diskGuard.js";
 import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 import { readDatasetTarget, writeDatasetTarget, normalizeDatasetTarget } from "../dataset/datasetTargetStore.js";
+import { cancelReceiveDataJob, getReceiveDataJob, startReceiveDataJob } from "../dataset/receiveDataStore.js";
 
 type OptimizerJob = {
   status: "running" | "paused" | "done" | "error" | "cancelled";
@@ -1029,6 +1030,36 @@ export function registerHttpRoutes(app: FastifyInstance) {
       reply.code(500);
       return { error: "dataset_target_error", message: String(e?.message ?? "Failed to persist dataset target.") };
     }
+  });
+
+  app.post("/api/data/receive", async (req, reply) => {
+    const body = ((req as any).body && typeof (req as any).body === "object") ? ((req as any).body as Record<string, unknown>) : undefined;
+    const started = startReceiveDataJob(body as any);
+    if ("error" in started) {
+      reply.code(400);
+      return { error: started.error };
+    }
+    return { jobId: started.jobId };
+  });
+
+  app.get("/api/data/receive/:jobId", async (req, reply) => {
+    const jobId = String((req.params as any).jobId ?? "");
+    const job = getReceiveDataJob(jobId);
+    if (!job) {
+      reply.code(404);
+      return { error: "receive_job_not_found" };
+    }
+    return { job };
+  });
+
+  app.post("/api/data/receive/:jobId/cancel", async (req, reply) => {
+    const jobId = String((req.params as any).jobId ?? "");
+    const ok = cancelReceiveDataJob(jobId);
+    if (!ok) {
+      reply.code(404);
+      return { error: "receive_job_not_found" };
+    }
+    return { ok: true };
   });
 
   app.get("/api/config", async () => {
