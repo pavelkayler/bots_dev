@@ -16,6 +16,7 @@ type DraftState = {
 
 const STORAGE_KEY = "datasetTargetDraft";
 const RECEIVE_JOB_STORAGE_KEY = "receiveDataJobId";
+const RECEIVE_LAST_JOB_STORAGE_KEY = "receiveDataLastJob";
 const PRESETS: DatasetRangePreset[] = ["24h", "48h", "1w", "2w", "4w", "1mo"];
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -102,6 +103,18 @@ function buildSavePayload(draft: DraftState): SavePayload | null {
     range: { kind: "manual", startMs, endMs },
   };
 }
+
+function parseStoredReceiveJob(raw: string | null): ReceiveDataJob | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as ReceiveDataJob;
+    if (!parsed?.id || !parsed?.status || !parsed?.progress) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export default function DatasetTargetCard() {
   const [universes, setUniverses] = useState<UniverseMeta[]>([]);
   const [draft, setDraft] = useState<DraftState>(() => defaultDraft());
@@ -203,8 +216,14 @@ export default function DatasetTargetCard() {
 
   useEffect(() => {
     const storedJobId = window.localStorage.getItem(RECEIVE_JOB_STORAGE_KEY);
-    if (!storedJobId) return;
-    setReceiveJobId(storedJobId);
+    if (storedJobId) {
+      setReceiveJobId(storedJobId);
+      return;
+    }
+    const lastJob = parseStoredReceiveJob(window.localStorage.getItem(RECEIVE_LAST_JOB_STORAGE_KEY));
+    if (lastJob) {
+      setReceiveJob(lastJob);
+    }
   }, []);
 
   useEffect(() => {
@@ -217,6 +236,7 @@ export default function DatasetTargetCard() {
           if (!active) return;
           setReceiveJob(res.job);
           if (res.job.status === "done" || res.job.status === "error" || res.job.status === "cancelled") {
+            window.localStorage.setItem(RECEIVE_LAST_JOB_STORAGE_KEY, JSON.stringify(res.job));
             setReceiveJobId(null);
             window.localStorage.removeItem(RECEIVE_JOB_STORAGE_KEY);
           }
@@ -244,6 +264,7 @@ export default function DatasetTargetCard() {
     setError("");
     try {
       const started = await startReceiveData();
+      window.localStorage.removeItem(RECEIVE_LAST_JOB_STORAGE_KEY);
       setReceiveJobId(started.jobId);
       window.localStorage.setItem(RECEIVE_JOB_STORAGE_KEY, started.jobId);
       setReceiveJob({
@@ -280,6 +301,7 @@ export default function DatasetTargetCard() {
               <Form.Select
                 value={draft.universeId ?? ""}
                 onChange={(e) => setDraft((prev) => ({ ...prev, universeId: e.currentTarget.value || null }))}
+                disabled={receiveRunning}
               >
                 <option value="">Not selected</option>
                 {universes.map((u) => (
@@ -295,6 +317,7 @@ export default function DatasetTargetCard() {
               <Form.Select
                 value={draft.rangeKind}
                 onChange={(e) => setDraft((prev) => ({ ...prev, rangeKind: e.currentTarget.value === "manual" ? "manual" : "preset" }))}
+                disabled={receiveRunning}
               >
                 <option value="preset">Preset</option>
                 <option value="manual">Manual</option>
@@ -309,6 +332,7 @@ export default function DatasetTargetCard() {
                 <Form.Select
                   value={draft.preset}
                   onChange={(e) => setDraft((prev) => ({ ...prev, preset: e.currentTarget.value as DatasetRangePreset }))}
+                  disabled={receiveRunning}
                 >
                   {PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
                 </Form.Select>
@@ -323,6 +347,7 @@ export default function DatasetTargetCard() {
                     type="datetime-local"
                     value={draft.manualStart}
                     onChange={(e) => setDraft((prev) => ({ ...prev, manualStart: e.currentTarget.value }))}
+                    disabled={receiveRunning}
                   />
                 </Form.Group>
               </Col>
@@ -333,6 +358,7 @@ export default function DatasetTargetCard() {
                     type="datetime-local"
                     value={draft.manualEnd}
                     onChange={(e) => setDraft((prev) => ({ ...prev, manualEnd: e.currentTarget.value }))}
+                    disabled={receiveRunning}
                   />
                 </Form.Group>
               </Col>
