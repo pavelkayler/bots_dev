@@ -382,7 +382,7 @@ export default function DatasetTargetCard() {
         <div style={{ marginTop: 10, minHeight: 48 }}>
           <CenteredProgressBar
             now={receiveJob?.progress.pct ?? 0}
-            label={`${(receiveJob?.progress.pct ?? 0).toFixed(2)}%`}
+            showPercent
           />
           <div style={{ fontSize: 12, marginTop: 6, minHeight: 18 }}>
             {receiveJob ? [receiveJob.progress.currentSymbol, receiveJob.progress.message].filter(Boolean).join(" — ") : ""}

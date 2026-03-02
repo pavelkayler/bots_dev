@@ -158,11 +158,11 @@ export function UniversePage() {
       setCreateJob(null);
       persistCreateJob(null);
     } catch (e: any) {
-      if (logToConsole) {
-        console.log("Universe create error", e);
-      }
       if (e?.name === "AbortError") {
         return;
+      }
+      if (logToConsole) {
+        console.log("Universe create error", e);
       }
       setError(String(e?.message ?? e));
       setCreateJob(null);
@@ -280,10 +280,11 @@ export function UniversePage() {
           </Form>
 
           <div style={{ marginBottom: 10, minHeight: 44 }}>
-            <CenteredProgressBar
-              now={createJob ? createProgress : creating ? 99 : 0}
-              label={createJob || creating ? "Creating..." : "Idle"}
-            />
+              <CenteredProgressBar
+                now={createJob ? createProgress : creating ? 99 : 0}
+                showPercent={Boolean(createJob || creating)}
+                label={createJob || creating ? undefined : "0.0%"}
+              />
           </div>
 
           {lastCreated ? (

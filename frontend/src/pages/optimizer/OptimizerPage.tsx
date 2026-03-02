@@ -6,14 +6,10 @@ import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntim
 import {
   getJobResults,
   getJobStatus,
-  cancelCurrentJob,
-  pauseCurrentJob,
-  resumeCurrentJob,
   getCurrentJob,
   getSettings,
   getStatus,
   listTapes,
-  runOptimizationJob,
   setSettings,
   getJobExportUrl,
   getCurrentJobExportUrl,
@@ -275,17 +271,6 @@ function formatHistoryEndedAt(tsMs: number): string {
   return `${mm}-${dd} ${hh}:${min}:${sec}`;
 }
 
-function toDatetimeLocalValue(tsMs: number | null | undefined): string {
-  if (!Number.isFinite(tsMs)) return "";
-  const d = new Date(Number(tsMs));
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-}
-
 function parseDatetimeLocalToTs(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const ts = new Date(value).getTime();
@@ -446,9 +431,9 @@ export function OptimizerPage() {
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [datasetMode, setDatasetMode] = useState<"snapshot" | "followTail">("snapshot");
-  const [runInRange, setRunInRange] = useState(false);
-  const [timeRangeFromTs, setTimeRangeFromTs] = useState("");
-  const [timeRangeToTs, setTimeRangeToTs] = useState("");
+  const [runInRange] = useState(false);
+  const [timeRangeFromTs] = useState("");
+  const [timeRangeToTs] = useState("");
   const [optTfMin, setOptTfMin] = useState<string>("1");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
@@ -483,7 +468,7 @@ useEffect(() => {
   const [totalRows, setTotalRows] = useState(0);
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
-  const [jobPrecisionById, setJobPrecisionById] = useState<Record<string, OptimizerPrecision>>({});
+  const [jobPrecisionById] = useState<Record<string, OptimizerPrecision>>({});
   const [tapesDir, setTapesDir] = useState("");
   const [showTapesDirModal, setShowTapesDirModal] = useState(false);
   const [tapesDirDraft, setTapesDirDraft] = useState("");
@@ -777,24 +762,6 @@ useEffect(() => {
     });
     setTapeBoundsById(next);
   }, []);
-
-  const effectiveTimeRangePreview = useMemo(() => {
-    if (!runInRange) return { from: undefined, to: undefined, invalid: false };
-    const bounds = selectedTapeIds.length === 1 ? selectedTapeBounds : null;
-    let from = parseDatetimeLocalToTs(timeRangeFromTs);
-    let to = parseDatetimeLocalToTs(timeRangeToTs);
-    if (from == null) from = bounds?.startTs ?? undefined;
-    if (to == null) to = bounds?.endTs ?? undefined;
-    if (from != null && bounds?.startTs != null && from < bounds.startTs) from = bounds.startTs;
-    if (to != null && bounds?.endTs != null && to > bounds.endTs) to = bounds.endTs;
-    if (from != null && to != null && from > to) {
-      const nextFrom = to;
-      const nextTo = from;
-      from = nextFrom;
-      to = nextTo;
-    }
-    return { from, to, invalid: false };
-  }, [runInRange, selectedTapeBounds, selectedTapeIds.length, timeRangeFromTs, timeRangeToTs]);
 
   const resolveEffectiveTimeRange = useCallback(() => {
     if (!runInRange) return { from: undefined, to: undefined };
@@ -1127,76 +1094,6 @@ useEffect(() => {
     };
   }, [activeJobId, clearSingleJobState, isNoCurrentJobError, loopActive, sortDir, sortKey]);
 
-  async function onRunOptimization() {
-    if (!selectedTapeIds.length || rangeError) return;
-    const effectiveRange = resolveEffectiveTimeRange();
-    setError(null);
-    lastTableSourceRef.current = "single";
-    setDone(0);
-    setTotal(0);
-    try {
-      const marginPerTrade = Number(simMarginPerTrade);
-      const leverage = Number(simLeverage);
-      if (!Number.isFinite(marginPerTrade) || marginPerTrade <= 0) {
-        setError("marginPerTrade must be > 0");
-        return;
-      }
-      if (!Number.isFinite(leverage) || leverage < 1) {
-        setError("leverage must be >= 1");
-        return;
-      }
-      const rangePayload = buildRangesPayload();
-      const precision: OptimizerPrecision = {
-        priceTh: Math.max(countDecimals(ranges.priceTh.min), countDecimals(ranges.priceTh.max)),
-        oivTh: Math.max(countDecimals(ranges.oivTh.min), countDecimals(ranges.oivTh.max)),
-        tp: Math.max(countDecimals(ranges.tp.min), countDecimals(ranges.tp.max)),
-        sl: Math.max(countDecimals(ranges.sl.min), countDecimals(ranges.sl.max)),
-        offset: Math.max(countDecimals(ranges.offset.min), countDecimals(ranges.offset.max)),
-        timeoutSec: Math.max(countDecimals(ranges.timeoutSec.min), countDecimals(ranges.timeoutSec.max)),
-        rearmMs: Math.max(countDecimals(ranges.rearmMs.min), countDecimals(ranges.rearmMs.max)),
-      };
-      const runRes = await runOptimizationJob({
-        tapeIds: selectedTapeIds,
-        datasetMode,
-        ...(runInRange ? {
-          timeRangeFromTs: effectiveRange.from,
-          timeRangeToTs: effectiveRange.to,
-        } : {}),
-        candidates: Number(candidates),
-        seed: Number(seed),
-        minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
-        directionMode,
-        optTfMin: Number(optTfMin),
-        excludeNegative,
-        rememberNegatives,
-        sim: {
-          marginPerTrade,
-          leverage,
-          feeBps: Number(simFeeBps) || 0,
-          fundingBpsPer8h: Number(simFundingBpsPer8h) || 0,
-          slippageBps: Number(simSlippageBps) || 0,
-        },
-        ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
-        precision,
-      });
-      setSingleJobId(runRes.jobId);
-      const startedAtMs = Date.now();
-      startedAtByJobIdRef.current[runRes.jobId] = startedAtMs;
-      lastPctByJobIdRef.current[runRes.jobId] = 0;
-      setJobStartedAtMs(startedAtMs);
-      setJobUpdatedAtMs(Date.now());
-      setJobFinishedAtMs(null);
-      setJobStatus("running");
-      setOptimizerPaused(false);
-      setJobPrecisionById((prev) => ({ ...prev, [runRes.jobId]: precision }));
-      setResults([]);
-      setPage(1);
-      setTotalRows(0);
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    }
-  }
-
   useEffect(() => {
     if (loopActive || !singleJobId || !jobActive) return;
     let alive = true;
@@ -1322,38 +1219,6 @@ useEffect(() => {
       window.clearInterval(timer);
     };
   }, [loopActive, loopJobId, sortDir, sortKey]);
-
-
-  async function onStopOptimization() {
-    setError(null);
-    try {
-      await cancelCurrentJob();
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    }
-  }
-
-
-  async function onPauseOptimization() {
-    setError(null);
-    try {
-      await pauseCurrentJob();
-      setOptimizerPaused(true);
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    }
-  }
-
-  async function onResumeOptimization() {
-    setError(null);
-    try {
-      await resumeCurrentJob();
-      setOptimizerPaused(false);
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    }
-  }
-
   async function onSort(nextSortKey: OptimizerSortKeyExtended) {
     if (!activeJobId) return;
     const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
@@ -1587,7 +1452,6 @@ useEffect(() => {
   }, [jobHistoryLimit, jobHistoryOffset, jobHistoryTotalPages]);
   const isRunningStatus = jobStatus === "running";
   const hasTapeSelected = selectedTapeIds.length > 0;
-  const singleJobProcessActive = !loopActive && Boolean(singleJobId) && (jobStatus === "running" || jobStatus === "paused");
   const startedAtForActiveJobId = activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs;
   const endMs = !startedAtForActiveJobId
     ? null
@@ -1761,54 +1625,11 @@ useEffect(() => {
                 </Form.Select>
                 </Form.Group>
               </Col>
-              <Col md={3} sm={6} xs={12}>
-                <Form.Group>
-                  <Form.Label style={{ fontSize: 12, visibility: "hidden" }}>range toggle</Form.Label>
-                  <Form.Check
-                    style={{ fontSize: 12, marginTop: 4 }}
-                    type="checkbox"
-                    label="Run in range"
-                    checked={runInRange}
-                    onChange={(e) => setRunInRange(e.currentTarget.checked)}
-                  />
-                </Form.Group>
-              </Col>
-              <Col md={3} sm={6} xs={12}>
-                <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>from</Form.Label>
-                <Form.Control
-                  value={timeRangeFromTs}
-                  onChange={(e) => setTimeRangeFromTs(e.currentTarget.value)}
-                  type="datetime-local"
-                  min={selectedTapeIds.length === 1 ? toDatetimeLocalValue(selectedTapeBounds?.startTs) : undefined}
-                  max={selectedTapeIds.length === 1 ? toDatetimeLocalValue(selectedTapeBounds?.endTs) : undefined}
-                  disabled={!runInRange}
-                />
-                </Form.Group>
-              </Col>
-              <Col md={3} sm={6} xs={12}>
-                <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>to</Form.Label>
-                <Form.Control
-                  value={timeRangeToTs}
-                  onChange={(e) => setTimeRangeToTs(e.currentTarget.value)}
-                  type="datetime-local"
-                  min={selectedTapeIds.length === 1 ? toDatetimeLocalValue(selectedTapeBounds?.startTs) : undefined}
-                  max={selectedTapeIds.length === 1 ? toDatetimeLocalValue(selectedTapeBounds?.endTs) : undefined}
-                  disabled={!runInRange}
-                />
-                </Form.Group>
-              </Col>
               <Col xs={12}>
                 <div style={{ fontSize: 12, opacity: 0.85 }}>
                   {selectedTapeBounds?.startTs != null && selectedTapeBounds?.endTs != null
                     ? `Tape range: ${formatTs(selectedTapeBounds.startTs)} → ${formatTs(selectedTapeBounds.endTs)}`
                     : "Tape range: unknown"}
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.85 }}>
-                  {!runInRange
-                    ? `Using: ${selectedTapeIds.length > 1 ? "full range of each selected tape" : "full tape range"}`
-                    : `Using: ${effectiveTimeRangePreview.from != null ? formatTs(effectiveTimeRangePreview.from) : "-"} → ${effectiveTimeRangePreview.to != null ? formatTs(effectiveTimeRangePreview.to) : "-"}`}
                 </div>
               </Col>
               <Col xs={12}>
@@ -1848,20 +1669,6 @@ useEffect(() => {
                     </Col>
                   </Row>
                 </details>
-              </Col>
-            </Row>
-            <Row className="g-2 align-items-center mb-2">
-              <Col xs="auto">
-                <Button onClick={() => void onRunOptimization()} disabled={!(hasTapeSelected && !loopActive && !singleJobProcessActive && !rangeError)}>
-                  Run optimization
-                </Button>
-              </Col>
-              <Col xs="auto">
-                <ButtonGroup>
-                  <Button variant="outline-warning" onClick={() => void onPauseOptimization()} disabled={!hasTapeSelected || !singleJobProcessActive || jobStatus !== "running"}>Pause</Button>
-                  <Button variant="outline-primary" onClick={() => void onResumeOptimization()} disabled={!hasTapeSelected || !singleJobProcessActive || jobStatus !== "paused"}>Resume</Button>
-                  <Button variant="outline-danger" onClick={() => void onStopOptimization()} disabled={!hasTapeSelected || !singleJobProcessActive}>Stop</Button>
-                </ButtonGroup>
               </Col>
             </Row>
             <Row className="g-2 align-items-center mb-2">
@@ -1923,7 +1730,7 @@ useEffect(() => {
             </div>
 
             {showProgressBlock ? <>
-              <CenteredProgressBar now={pct} label={`${pct.toFixed(2)}%`} title={`progress ${pct.toFixed(2)} / ${total.toFixed(2)}`} className="mb-2" />
+              <CenteredProgressBar now={pct} showPercent title={`progress ${pct.toFixed(1)} / ${total.toFixed(2)}`} className="mb-2" />
               <div style={{ fontSize: 12, marginBottom: 8 }}>Elapsed: <b>{formatDuration(elapsedSec ?? 0)}</b> · ETA: <b>{isRunningStatus ? formatEta(etaSec) : "-"}</b></div>
               <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div>
             </> : null}

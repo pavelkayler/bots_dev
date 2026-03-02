@@ -2,12 +2,15 @@ import { ProgressBar } from "react-bootstrap";
 
 type CenteredProgressBarProps = {
   now: number;
-  label: string;
+  label?: string;
+  showPercent?: boolean;
+  precision?: number;
   title?: string;
   className?: string;
 };
 
-export function CenteredProgressBar({ now, label, title, className }: CenteredProgressBarProps) {
+export function CenteredProgressBar({ now, label, showPercent = false, precision = 1, title, className }: CenteredProgressBarProps) {
+  const display = label ?? (showPercent ? `${Math.max(0, Math.min(100, now)).toFixed(precision)}%` : "");
   return (
     <div className={className} style={{ position: "relative" }} title={title}>
       <ProgressBar now={now} label="" />
@@ -22,7 +25,7 @@ export function CenteredProgressBar({ now, label, title, className }: CenteredPr
           fontSize: 12,
         }}
       >
-        {label}
+        {display}
       </div>
     </div>
   );

@@ -1147,14 +1147,20 @@ export function registerHttpRoutes(app: FastifyInstance) {
         minVolatilityPct,
         collectMs: 5000
       });
-const now = Date.now();
+      const now = Date.now();
+      let createdAt = now;
+      try {
+        createdAt = readUniverse(id).meta.createdAt ?? now;
+      } catch {
+        createdAt = now;
+      }
       const file = writeUniverse({
         meta: {
           id,
           name,
           minTurnoverUsd,
           minVolatilityPct,
-          createdAt: now,
+          createdAt,
           updatedAt: now,
           count: res.symbols.length
         },
