@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { Button, Card, Col, Form, ProgressBar, Row, Spinner } from "react-bootstrap";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Button, Card, Col, Form, Row, Spinner } from "react-bootstrap";
 import { setDatasetTarget, getDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../api/datasetTargetApi";
 import { listUniverses } from "../../universe/api";
 import type { UniverseMeta } from "../../universe/types";
 import { cancelReceiveDataJob, getReceiveDataJob, startReceiveData, type ReceiveDataJob } from "../../dataReceive/api/dataReceiveApi";
+import { CenteredProgressBar } from "../../../shared/ui/CenteredProgressBar";
 
 type DraftState = {
   universeId: string | null;
@@ -14,7 +15,9 @@ type DraftState = {
 };
 
 const STORAGE_KEY = "datasetTargetDraft";
+const RECEIVE_JOB_STORAGE_KEY = "receiveDataJobId";
 const PRESETS: DatasetRangePreset[] = ["24h", "48h", "1w", "2w", "4w", "1mo"];
+const SAVE_DEBOUNCE_MS = 400;
 
 function toDatetimeLocal(ms: number): string {
   if (!Number.isFinite(ms)) return "";
@@ -78,12 +81,32 @@ function parseStoredDraft(raw: string | null): DraftState | null {
   }
 }
 
+
+
+type SavePayload =
+  | { universeId: string | null; range: { kind: "preset"; preset: DatasetRangePreset } }
+  | { universeId: string | null; range: { kind: "manual"; startMs: number; endMs: number } };
+
+function buildSavePayload(draft: DraftState): SavePayload | null {
+  if (draft.rangeKind === "preset") {
+    return {
+      universeId: draft.universeId,
+      range: { kind: "preset", preset: draft.preset },
+    };
+  }
+  const startMs = fromDatetimeLocal(draft.manualStart);
+  const endMs = fromDatetimeLocal(draft.manualEnd);
+  if (startMs == null || endMs == null || endMs <= startMs) return null;
+  return {
+    universeId: draft.universeId,
+    range: { kind: "manual", startMs, endMs },
+  };
+}
 export default function DatasetTargetCard() {
   const [universes, setUniverses] = useState<UniverseMeta[]>([]);
   const [draft, setDraft] = useState<DraftState>(() => defaultDraft());
   const [loadingInit, setLoadingInit] = useState(true);
-  const [applying, setApplying] = useState(false);
-  const [receiving, setReceiving] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [receiveJobId, setReceiveJobId] = useState<string | null>(null);
   const [receiveJob, setReceiveJob] = useState<ReceiveDataJob | null>(null);
   const [error, setError] = useState<string>("");
@@ -139,27 +162,74 @@ export default function DatasetTargetCard() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
   }, [draft, loadingInit]);
 
+  const savePayload = useMemo(() => buildSavePayload(draft), [draft]);
+  const lastSavedPayloadRef = useRef<string>("");
+
+  useEffect(() => {
+    if (loadingInit || !savePayload) {
+      setSaving(false);
+      return;
+    }
+    const payloadKey = JSON.stringify(savePayload);
+    if (lastSavedPayloadRef.current === payloadKey) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setSaving(true);
+        try {
+          const res = await setDatasetTarget(savePayload);
+          if (!active) return;
+          const next = draftFromTarget(res.datasetTarget);
+          const normalizedPayload = buildSavePayload(next);
+          if (normalizedPayload) {
+            lastSavedPayloadRef.current = JSON.stringify(normalizedPayload);
+          }
+          setDraft(next);
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch (e: any) {
+          if (!active) return;
+          setError(String(e?.message ?? e));
+        } finally {
+          if (active) setSaving(false);
+        }
+      })();
+    }, SAVE_DEBOUNCE_MS);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [loadingInit, savePayload]);
+
+  useEffect(() => {
+    const storedJobId = window.localStorage.getItem(RECEIVE_JOB_STORAGE_KEY);
+    if (!storedJobId) return;
+    setReceiveJobId(storedJobId);
+  }, []);
+
   useEffect(() => {
     if (!receiveJobId) return;
     let active = true;
-    const timer = window.setInterval(() => {
+    const fetchJob = () => {
       void (async () => {
         try {
           const res = await getReceiveDataJob(receiveJobId);
           if (!active) return;
           setReceiveJob(res.job);
           if (res.job.status === "done" || res.job.status === "error" || res.job.status === "cancelled") {
-            setReceiving(false);
             setReceiveJobId(null);
+            window.localStorage.removeItem(RECEIVE_JOB_STORAGE_KEY);
           }
         } catch (e: any) {
           if (!active) return;
-          setReceiving(false);
           setReceiveJobId(null);
+          window.localStorage.removeItem(RECEIVE_JOB_STORAGE_KEY);
           setError(String(e?.message ?? e));
         }
       })();
-    }, 400);
+    };
+    fetchJob();
+    const timer = window.setInterval(fetchJob, 400);
 
     return () => {
       active = false;
@@ -167,53 +237,24 @@ export default function DatasetTargetCard() {
     };
   }, [receiveJobId]);
 
-  const applyDisabled = useMemo(() => {
-    if (applying || loadingInit) return true;
-    if (draft.rangeKind !== "manual") return false;
-    const startMs = fromDatetimeLocal(draft.manualStart);
-    const endMs = fromDatetimeLocal(draft.manualEnd);
-    return startMs == null || endMs == null || endMs <= startMs;
-  }, [applying, draft, loadingInit]);
-
-  async function onApply() {
-    if (applyDisabled) return;
-    setError("");
-    setApplying(true);
-    try {
-      const payload = draft.rangeKind === "preset"
-        ? { universeId: draft.universeId, range: { kind: "preset", preset: draft.preset } }
-        : {
-          universeId: draft.universeId,
-          range: {
-            kind: "manual",
-            startMs: Number(fromDatetimeLocal(draft.manualStart)),
-            endMs: Number(fromDatetimeLocal(draft.manualEnd)),
-          },
-        };
-      const res = await setDatasetTarget(payload);
-      const next = draftFromTarget(res.datasetTarget);
-      setDraft(next);
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    } finally {
-      setApplying(false);
-    }
-  }
+  const receiveRunning = receiveJob?.status === "queued" || receiveJob?.status === "running";
 
   async function onReceiveData() {
-    if (receiving) return;
+    if (receiveRunning) return;
     setError("");
     try {
       const started = await startReceiveData();
       setReceiveJobId(started.jobId);
-      setReceiving(true);
-      const res = await getReceiveDataJob(started.jobId);
-      setReceiveJob(res.job);
+      window.localStorage.setItem(RECEIVE_JOB_STORAGE_KEY, started.jobId);
+      setReceiveJob({
+        id: started.jobId,
+        status: "queued",
+        progress: { pct: 0, completedSteps: 0, totalSteps: 0 },
+      });
     } catch (e: any) {
       setError(String(e?.message ?? e));
-      setReceiving(false);
       setReceiveJobId(null);
+      window.localStorage.removeItem(RECEIVE_JOB_STORAGE_KEY);
     }
   }
 
@@ -300,12 +341,8 @@ export default function DatasetTargetCard() {
 
           <Col xl={3} lg={3} md={12} sm={12} xs={12}>
             <div className="d-flex gap-2">
-              <Button onClick={() => void onApply()} disabled={applyDisabled}>
-                {applying ? <Spinner size="sm" animation="border" className="me-2" /> : null}
-                Apply
-              </Button>
-              <Button variant="primary" onClick={() => void onReceiveData()} disabled={receiving || applying || loadingInit}>
-                {receiving ? <Spinner size="sm" animation="border" className="me-2" /> : null}
+              <Button variant="primary" onClick={() => void onReceiveData()} disabled={receiveRunning || saving || loadingInit}>
+                {receiveRunning ? <Spinner size="sm" animation="border" className="me-2" /> : null}
                 Receive Data
               </Button>
               {(receiveJob?.status === "queued" || receiveJob?.status === "running") ? (
@@ -316,16 +353,15 @@ export default function DatasetTargetCard() {
             </div>
           </Col>
         </Row>
-        {receiveJob ? (
-          <div style={{ marginTop: 10 }}>
-            <ProgressBar now={receiveJob.progress.pct} label={`${receiveJob.progress.pct}%`} />
-            {(receiveJob.progress.currentSymbol || receiveJob.progress.message) ? (
-              <div style={{ fontSize: 12, marginTop: 6 }}>
-                {[receiveJob.progress.currentSymbol, receiveJob.progress.message].filter(Boolean).join(" — ")}
-              </div>
-            ) : null}
+        <div style={{ marginTop: 10, minHeight: 48 }}>
+          <CenteredProgressBar
+            now={receiveJob?.progress.pct ?? 0}
+            label={`${(receiveJob?.progress.pct ?? 0).toFixed(2)}%`}
+          />
+          <div style={{ fontSize: 12, marginTop: 6, minHeight: 18 }}>
+            {receiveJob ? [receiveJob.progress.currentSymbol, receiveJob.progress.message].filter(Boolean).join(" — ") : ""}
           </div>
-        ) : null}
+        </div>
         {error ? <div style={{ color: "#b02a37", marginTop: 8, fontSize: 12 }}>{error}</div> : null}
       </Card.Body>
     </Card>
