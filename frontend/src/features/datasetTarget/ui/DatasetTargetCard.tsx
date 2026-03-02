@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Card, Col, Form, Row, Spinner } from "react-bootstrap";
+import { Button, Card, Col, Form, ProgressBar, Row, Spinner } from "react-bootstrap";
 import { setDatasetTarget, getDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../api/datasetTargetApi";
 import { listUniverses } from "../../universe/api";
 import type { UniverseMeta } from "../../universe/types";
+import { cancelReceiveDataJob, getReceiveDataJob, startReceiveData, type ReceiveDataJob } from "../../dataReceive/api/dataReceiveApi";
 
 type DraftState = {
   universeId: string | null;
@@ -82,6 +83,9 @@ export default function DatasetTargetCard() {
   const [draft, setDraft] = useState<DraftState>(() => defaultDraft());
   const [loadingInit, setLoadingInit] = useState(true);
   const [applying, setApplying] = useState(false);
+  const [receiving, setReceiving] = useState(false);
+  const [receiveJobId, setReceiveJobId] = useState<string | null>(null);
+  const [receiveJob, setReceiveJob] = useState<ReceiveDataJob | null>(null);
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
@@ -135,6 +139,34 @@ export default function DatasetTargetCard() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
   }, [draft, loadingInit]);
 
+  useEffect(() => {
+    if (!receiveJobId) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const res = await getReceiveDataJob(receiveJobId);
+          if (!active) return;
+          setReceiveJob(res.job);
+          if (res.job.status === "done" || res.job.status === "error" || res.job.status === "cancelled") {
+            setReceiving(false);
+            setReceiveJobId(null);
+          }
+        } catch (e: any) {
+          if (!active) return;
+          setReceiving(false);
+          setReceiveJobId(null);
+          setError(String(e?.message ?? e));
+        }
+      })();
+    }, 400);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [receiveJobId]);
+
   const applyDisabled = useMemo(() => {
     if (applying || loadingInit) return true;
     if (draft.rangeKind !== "manual") return false;
@@ -169,6 +201,31 @@ export default function DatasetTargetCard() {
     }
   }
 
+  async function onReceiveData() {
+    if (receiving) return;
+    setError("");
+    try {
+      const started = await startReceiveData();
+      setReceiveJobId(started.jobId);
+      setReceiving(true);
+      const res = await getReceiveDataJob(started.jobId);
+      setReceiveJob(res.job);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+      setReceiving(false);
+      setReceiveJobId(null);
+    }
+  }
+
+  async function onCancelReceive() {
+    if (!receiveJobId) return;
+    try {
+      await cancelReceiveDataJob(receiveJobId);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }
+
   return (
     <Card className="mb-2">
       <Card.Header>
@@ -176,7 +233,7 @@ export default function DatasetTargetCard() {
       </Card.Header>
       <Card.Body>
         <Row className="g-2 align-items-end">
-          <Col md={3} sm={6} xs={12}>
+          <Col xl={3} lg={3} md={6} sm={6} xs={12}>
             <Form.Group>
               <Form.Label style={{ fontSize: 12 }}>Universe</Form.Label>
               <Form.Select
@@ -191,7 +248,7 @@ export default function DatasetTargetCard() {
             </Form.Group>
           </Col>
 
-          <Col md={3} sm={6} xs={12}>
+          <Col xl={2} lg={2} md={6} sm={6} xs={12}>
             <Form.Group>
               <Form.Label style={{ fontSize: 12 }}>Range mode</Form.Label>
               <Form.Select
@@ -205,7 +262,7 @@ export default function DatasetTargetCard() {
           </Col>
 
           {draft.rangeKind === "preset" ? (
-            <Col md={3} sm={6} xs={12}>
+            <Col xl={2} lg={2} md={6} sm={6} xs={12}>
               <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>Preset</Form.Label>
                 <Form.Select
@@ -218,7 +275,7 @@ export default function DatasetTargetCard() {
             </Col>
           ) : (
             <>
-              <Col md={3} sm={6} xs={12}>
+              <Col xl={2} lg={2} md={6} sm={6} xs={12}>
                 <Form.Group>
                   <Form.Label style={{ fontSize: 12 }}>Start</Form.Label>
                   <Form.Control
@@ -228,7 +285,7 @@ export default function DatasetTargetCard() {
                   />
                 </Form.Group>
               </Col>
-              <Col md={3} sm={6} xs={12}>
+              <Col xl={2} lg={2} md={6} sm={6} xs={12}>
                 <Form.Group>
                   <Form.Label style={{ fontSize: 12 }}>End</Form.Label>
                   <Form.Control
@@ -241,13 +298,34 @@ export default function DatasetTargetCard() {
             </>
           )}
 
-          <Col md="auto" sm={6} xs={12}>
-            <Button onClick={() => void onApply()} disabled={applyDisabled}>
-              {applying ? <Spinner size="sm" animation="border" className="me-2" /> : null}
-              Set/Apply
-            </Button>
+          <Col xl={3} lg={3} md={12} sm={12} xs={12}>
+            <div className="d-flex gap-2">
+              <Button onClick={() => void onApply()} disabled={applyDisabled}>
+                {applying ? <Spinner size="sm" animation="border" className="me-2" /> : null}
+                Apply
+              </Button>
+              <Button variant="primary" onClick={() => void onReceiveData()} disabled={receiving || applying || loadingInit}>
+                {receiving ? <Spinner size="sm" animation="border" className="me-2" /> : null}
+                Receive Data
+              </Button>
+              {(receiveJob?.status === "queued" || receiveJob?.status === "running") ? (
+                <Button variant="outline-secondary" onClick={() => void onCancelReceive()}>
+                  Cancel
+                </Button>
+              ) : null}
+            </div>
           </Col>
         </Row>
+        {receiveJob ? (
+          <div style={{ marginTop: 10 }}>
+            <ProgressBar now={receiveJob.progress.pct} label={`${receiveJob.progress.pct}%`} />
+            {(receiveJob.progress.currentSymbol || receiveJob.progress.message) ? (
+              <div style={{ fontSize: 12, marginTop: 6 }}>
+                {[receiveJob.progress.currentSymbol, receiveJob.progress.message].filter(Boolean).join(" — ")}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {error ? <div style={{ color: "#b02a37", marginTop: 8, fontSize: 12 }}>{error}</div> : null}
       </Card.Body>
     </Card>

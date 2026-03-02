@@ -334,3 +334,60 @@ Response:
   }
 }
 ```
+
+## 2026-03-02 — Data receive job (Bybit REST → cache)
+
+### POST /api/data/receive
+Starts a receive-data job using persisted dataset target (`/api/dataset-target`) by default.
+
+Success response:
+```json
+{ "jobId": "2f25f17e-0cb4-42b3-9098-f2e0eddd67ce" }
+```
+
+Validation errors:
+- `400 { "error": "universe_not_selected" }`
+- `400 { "error": "invalid_range" }`
+
+### GET /api/data/receive/:jobId
+Returns receive-data job state and throttled progress.
+
+Response:
+```json
+{
+  "job": {
+    "id": "2f25f17e-0cb4-42b3-9098-f2e0eddd67ce",
+    "status": "running",
+    "progress": {
+      "pct": 37,
+      "completedSteps": 102,
+      "totalSteps": 276,
+      "currentSymbol": "BTCUSDT",
+      "message": "Receiving BTCUSDT"
+    },
+    "startedAtMs": 1762133005000
+  }
+}
+```
+
+Terminal error example:
+```json
+{
+  "job": {
+    "id": "2f25f17e-0cb4-42b3-9098-f2e0eddd67ce",
+    "status": "error",
+    "progress": { "pct": 12, "completedSteps": 33, "totalSteps": 276 },
+    "startedAtMs": 1762133005000,
+    "finishedAtMs": 1762133008000,
+    "error": { "code": "receive_failed", "message": "..." }
+  }
+}
+```
+
+### POST /api/data/receive/:jobId/cancel
+Best-effort cancellation request for an active receive-data job.
+
+Response:
+```json
+{ "ok": true }
+```
