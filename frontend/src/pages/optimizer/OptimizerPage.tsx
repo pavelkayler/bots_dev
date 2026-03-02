@@ -37,6 +37,7 @@ import {
   type OptimizerSortKeyExtended,
   type OptimizerHistorySortKey,
 } from "../../features/optimizer/api/optimizerApi";
+import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard";
 
 type OptimizerResultRow = OptimizationResult;
 
@@ -1637,6 +1638,7 @@ useEffect(() => {
       />
 
       <Container fluid className="py-2 px-2">
+        <DatasetTargetCard />
         <Card>
           <Card.Header className="d-flex align-items-center justify-content-between">
             <b>Optimizer</b>

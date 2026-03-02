@@ -1,4 +1,5 @@
 import { getJson, postJson } from "../../../shared/api/http";
+import { getApiBase } from "../../../shared/config/env";
 
 export type DatasetRangePreset = "24h" | "48h" | "1w" | "2w" | "4w" | "1mo";
 
@@ -13,11 +14,11 @@ export type DatasetTarget = {
 };
 
 export async function getDatasetTarget(): Promise<{ datasetTarget: DatasetTarget }> {
-  const base = "";
+  const base = getApiBase();
   return await getJson<{ datasetTarget: DatasetTarget }>(`${base}/api/dataset-target`);
 }
 
 export async function setDatasetTarget(payload: Partial<DatasetTarget> | any): Promise<{ datasetTarget: DatasetTarget }> {
-  const base = "";
+  const base = getApiBase();
   return await postJson<{ datasetTarget: DatasetTarget }>(`${base}/api/dataset-target`, payload);
 }
