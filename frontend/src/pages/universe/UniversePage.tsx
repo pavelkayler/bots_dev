@@ -1,12 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Card, Container, Form, Modal, Spinner, Table } from "react-bootstrap";
-import { Link } from "react-router-dom";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
 import { createUniverse, deleteUniverse, listUniverses, readUniverse } from "../../features/universe/api";
 import type { UniverseFile, UniverseMeta } from "../../features/universe/types";
 import { fmtNum, fmtTime } from "../../shared/utils/format";
+import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
+
+const CREATE_JOB_STORAGE_KEY = "universeCreateJob";
+
+type UniverseCreateJobState = {
+  status: "running";
+  minTurnoverUsd: number;
+  minVolatilityPct: number;
+  pendingSinceMs: number;
+};
 
 function joinSymbols(symbols: string[]) {
   return symbols.join("\n");
@@ -22,6 +31,8 @@ export function UniversePage() {
   const [items, setItems] = useState<UniverseMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createJob, setCreateJob] = useState<UniverseCreateJobState | null>(null);
+  const [createProgressNowMs, setCreateProgressNowMs] = useState<number>(Date.now());
   const [error, setError] = useState<string | null>(null);
   const [lastCreated, setLastCreated] = useState<UniverseMeta | null>(null);
   const [stats, setStats] = useState<any | null>(null);
@@ -30,6 +41,15 @@ export function UniversePage() {
   const [modalUniverse, setModalUniverse] = useState<UniverseFile | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+  const createAbortRef = useRef<AbortController | null>(null);
+
+  const persistCreateJob = useCallback((job: UniverseCreateJobState | null) => {
+    if (!job) {
+      window.localStorage.removeItem(CREATE_JOB_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(CREATE_JOB_STORAGE_KEY, JSON.stringify(job));
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -48,9 +68,65 @@ export function UniversePage() {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const raw = window.localStorage.getItem(CREATE_JOB_STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as UniverseCreateJobState;
+      if (parsed?.status !== "running" || !Number.isFinite(parsed.pendingSinceMs)) {
+        window.localStorage.removeItem(CREATE_JOB_STORAGE_KEY);
+        return;
+      }
+      setCreateJob(parsed);
+      setCreating(true);
+      setMinTurnoverUsd(String(parsed.minTurnoverUsd));
+      setMinVolPct(String(parsed.minVolatilityPct));
+    } catch {
+      window.localStorage.removeItem(CREATE_JOB_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!createJob) return;
+    let active = true;
+    const checkDone = () => {
+      void (async () => {
+        try {
+          const res = await listUniverses();
+          if (!active) return;
+          setItems(res.universes ?? []);
+          const matched = (res.universes ?? []).find((u) => u.minTurnoverUsd === createJob.minTurnoverUsd && u.minVolatilityPct === createJob.minVolatilityPct);
+          if (matched) {
+            setLastCreated(matched);
+            setCreateJob(null);
+            setCreating(false);
+            persistCreateJob(null);
+          }
+        } catch {
+        }
+      })();
+    };
+    checkDone();
+    const timer = window.setInterval(checkDone, 1200);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [createJob, persistCreateJob]);
+
+  useEffect(() => {
+    if (!createJob) return;
+    const timer = window.setInterval(() => {
+      setCreateProgressNowMs(Date.now());
+    }, 250);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [createJob]);
+
   const canCreate = useMemo(() => !creating, [creating]);
 
-  async function onCreate() {
+  async function onCreate(logToConsole = false) {
     setCreating(true);
     setError(null);
     setLastCreated(null);
@@ -62,16 +138,53 @@ export function UniversePage() {
         setError("Both numeric fields are required.");
         return;
       }
-      const res = await createUniverse(parsedTurnover, parsedVol);
+      const nextJob: UniverseCreateJobState = {
+        status: "running",
+        minTurnoverUsd: parsedTurnover,
+        minVolatilityPct: parsedVol,
+        pendingSinceMs: Date.now(),
+      };
+      setCreateJob(nextJob);
+      persistCreateJob(nextJob);
+      createAbortRef.current?.abort();
+      createAbortRef.current = new AbortController();
+      const res = await createUniverse(parsedTurnover, parsedVol, createAbortRef.current.signal);
+      if (logToConsole) {
+        console.log("Universe create response", res);
+      }
       setLastCreated(res.universe.meta);
       setStats(res.stats);
       await refresh();
+      setCreateJob(null);
+      persistCreateJob(null);
     } catch (e: any) {
+      if (logToConsole) {
+        console.log("Universe create error", e);
+      }
+      if (e?.name === "AbortError") {
+        return;
+      }
       setError(String(e?.message ?? e));
+      setCreateJob(null);
+      persistCreateJob(null);
     } finally {
       setCreating(false);
+      createAbortRef.current = null;
     }
   }
+
+  useEffect(() => {
+    return () => {
+      createAbortRef.current?.abort();
+    };
+  }, []);
+
+  const createProgress = useMemo(() => {
+    if (!createJob) return 0;
+    const elapsed = Math.max(0, createProgressNowMs - createJob.pendingSinceMs);
+    const pct = Math.min(95, (elapsed / 1000) * 8);
+    return pct;
+  }, [createJob, createProgressNowMs]);
 
   async function onViewSymbols(id: string) {
     setModalError(null);
@@ -126,15 +239,6 @@ export function UniversePage() {
             Builds one-off universe from Bybit tickers and saves it.
           </span>
 
-          <div className="ms-auto d-flex align-items-center gap-2">
-            <Link to="/" className="btn btn-sm btn-outline-secondary">
-              Back to dashboard
-            </Link>
-
-            <Button size="sm" variant="outline-secondary" onClick={() => void refresh()} disabled={loading || creating}>
-              Refresh list
-            </Button>
-          </div>
         </Card.Header>
 
         <Card.Body>
@@ -166,9 +270,21 @@ export function UniversePage() {
                 <Button variant="primary" onClick={() => void onCreate()} disabled={!canCreate || creating}>
                   {creating ? <Spinner animation="border" size="sm" /> : "Create"}
                 </Button>
+                {import.meta.env.DEV ? (
+                  <Button className="ms-2" variant="outline-secondary" onClick={() => void onCreate(true)} disabled={!canCreate || creating}>
+                    Test Create
+                  </Button>
+                ) : null}
               </div>
             </div>
           </Form>
+
+          <div style={{ marginBottom: 10, minHeight: 44 }}>
+            <CenteredProgressBar
+              now={createJob ? createProgress : creating ? 99 : 0}
+              label={createJob || creating ? "Creating..." : "Idle"}
+            />
+          </div>
 
           {lastCreated ? (
             <div className="d-flex align-items-center gap-2 flex-wrap mb-2" style={{ fontSize: 12 }}>
