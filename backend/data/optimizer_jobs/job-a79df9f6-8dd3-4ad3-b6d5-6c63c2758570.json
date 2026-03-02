@@ -1,0 +1,203 @@
+{
+  "jobId": "a79df9f6-8dd3-4ad3-b6d5-6c63c2758570",
+  "status": "cancelled",
+  "startedAtMs": 1772433026945,
+  "updatedAtMs": 1772433040775,
+  "finishedAtMs": 1772433040771,
+  "runPayload": {
+    "tapeIds": [
+      "tape-2026-02-25T13-46-38-162Z",
+      "tape-2026-02-25T13-39-14-502Z",
+      "tape-2026-02-25T12-14-40-332Z",
+      "tape-2026-03-01T21-43-35-429Z",
+      "tape-2026-03-01T21-54-40-635Z",
+      "tape-2026-03-01T21-54-40-635Z-seg2"
+    ],
+    "snapshot": {
+      "datasetMode": "snapshot",
+      "tapeFiles": [
+        {
+          "tapeId": "tape-2026-02-25T13-46-38-162Z",
+          "bytes": 2561334
+        },
+        {
+          "tapeId": "tape-2026-02-25T13-39-14-502Z",
+          "bytes": 4177555
+        },
+        {
+          "tapeId": "tape-2026-02-25T12-14-40-332Z",
+          "bytes": 101923
+        },
+        {
+          "tapeId": "tape-2026-03-01T21-43-35-429Z",
+          "bytes": 2082833
+        },
+        {
+          "tapeId": "tape-2026-03-01T21-54-40-635Z",
+          "bytes": 94371794
+        },
+        {
+          "tapeId": "tape-2026-03-01T21-54-40-635Z-seg2",
+          "bytes": 16941418
+        }
+      ]
+    },
+    "tapeFiles": [
+      {
+        "tapeId": "tape-2026-02-25T13-46-38-162Z",
+        "bytes": 2561334
+      },
+      {
+        "tapeId": "tape-2026-02-25T13-39-14-502Z",
+        "bytes": 4177555
+      },
+      {
+        "tapeId": "tape-2026-02-25T12-14-40-332Z",
+        "bytes": 101923
+      },
+      {
+        "tapeId": "tape-2026-03-01T21-43-35-429Z",
+        "bytes": 2082833
+      },
+      {
+        "tapeId": "tape-2026-03-01T21-54-40-635Z",
+        "bytes": 94371794
+      },
+      {
+        "tapeId": "tape-2026-03-01T21-54-40-635Z-seg2",
+        "bytes": 16941418
+      }
+    ],
+    "candidates": 2000,
+    "seed": 1,
+    "ranges": {
+      "priceTh": {
+        "min": 0.5,
+        "max": 6
+      },
+      "oivTh": {
+        "min": 0.5,
+        "max": 15
+      },
+      "tp": {
+        "min": 2,
+        "max": 12
+      },
+      "sl": {
+        "min": 2,
+        "max": 12
+      },
+      "offset": {
+        "min": 0.001,
+        "max": 1
+      },
+      "timeoutSec": {
+        "min": 5,
+        "max": 60
+      },
+      "rearmMs": {
+        "min": 0,
+        "max": 3000
+      }
+    },
+    "precision": {
+      "priceTh": 2,
+      "oivTh": 2,
+      "tp": 1,
+      "sl": 1,
+      "offset": 3,
+      "timeoutSec": 0,
+      "rearmMs": 0
+    },
+    "directionMode": "both",
+    "optTfMin": 1,
+    "minTrades": 1,
+    "excludeNegative": true,
+    "rememberNegatives": true,
+    "sim": {
+      "marginPerTrade": 1000,
+      "leverage": 10,
+      "feeBps": 0.002,
+      "fundingBpsPer8h": 0,
+      "slippageBps": 0
+    }
+  },
+  "results": [
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 5189,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 1.79,
+        "oivThresholdPct": 14.72,
+        "tpRoiPct": 10.6,
+        "slRoiPct": 5.3,
+        "entryOffsetPct": 0.683,
+        "timeoutSec": 34,
+        "rearmMs": 648
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 5189,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 1.95,
+        "oivThresholdPct": 11.39,
+        "tpRoiPct": 11.3,
+        "slRoiPct": 3.8,
+        "entryOffsetPct": 0.335,
+        "timeoutSec": 59,
+        "rearmMs": 1166
+      }
+    },
+    {
+      "netPnl": 0,
+      "trades": 0,
+      "winRatePct": 0,
+      "expectancy": 0,
+      "profitFactor": 0,
+      "maxDrawdownUsdt": 0,
+      "signalsOk": 0,
+      "decisionsNoRefs": 5189,
+      "ordersPlaced": 0,
+      "ordersFilled": 0,
+      "ordersExpired": 0,
+      "closesTp": 0,
+      "closesSl": 0,
+      "closesForce": 0,
+      "params": {
+        "priceThresholdPct": 5.3,
+        "oivThresholdPct": 5.29,
+        "tpRoiPct": 2.2,
+        "slRoiPct": 11.5,
+        "entryOffsetPct": 0.232,
+        "timeoutSec": 51,
+        "rearmMs": 78
+      }
+    }
+  ],
+  "message": "Optimization cancelled."
+}

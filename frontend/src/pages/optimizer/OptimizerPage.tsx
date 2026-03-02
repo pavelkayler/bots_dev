@@ -73,7 +73,6 @@ const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const SELECTED_TAPES_STORAGE_KEY = "bots_dev.optimizer.selectedTapeIds";
 const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
 const TOP_RESULTS_LOOP_STORAGE_KEY = "bots_dev.optimizer.topResults.loop";
-const TABLE_SOURCE_STORAGE_KEY = "bots_dev.optimizer.topResults.source";
 
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
@@ -514,11 +513,9 @@ useEffect(() => {
   const loopJobIdRef = useRef<string | null>(null);
   const lastNonNullLoopJobIdRef = useRef<string | null>(null);
   const lastPctByJobIdRef = useRef<Record<string, number>>({});
+  const pauseFreezeAtMsRef = useRef<number | null>(null);
   const startedAtByJobIdRef = useRef<Record<string, number>>({});
-  const lastTableSourceRef = useRef<"loop" | "single">((() => {
-  const raw = localStorage.getItem(TABLE_SOURCE_STORAGE_KEY);
-  return raw === "loop" ? "loop" : "single";
-})());
+  const lastTableSourceRef = useRef<"loop" | "single">("single");
   const historyImportInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -633,7 +630,6 @@ useEffect(() => {
         // Restore only an in-flight single-run job. Completed jobs should not drive UI controls/progress on page load.
         if (statusRes.status === "running" || statusRes.status === "paused") {
           lastTableSourceRef.current = "single";
-          localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "single");
           setSingleJobId(current.jobId);
           const progress = getStableProgressForJob(current.jobId, statusRes as { donePct?: number; done?: number; startedAtMs?: number | null });
           setDone(progress.pct);
@@ -758,8 +754,8 @@ useEffect(() => {
   }, [jobStatus]);
 
   const loopExists = Boolean(loopStatus?.loop);
-  const loopRunning = Boolean(loopStatus?.loop?.isRunning);
-  const loopPaused = Boolean(loopStatus?.loop?.isRunning && loopStatus?.loop?.isPaused);
+  const loopPaused = Boolean(loopStatus?.loop?.isPaused);
+  const loopRunning = Boolean(loopStatus?.loop?.isRunning) && !loopPaused;
   const loopActive = loopRunning || loopPaused;
   const loopStopped = !loopRunning;
   const jobActive = jobStatus === "running" || jobStatus === "paused";
@@ -823,9 +819,14 @@ useEffect(() => {
         const next = await getOptimizerLoopStatus();
         if (next.loop?.isRunning) {
           lastTableSourceRef.current = "loop";
-        localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "loop");
         }
         setLoopStatus(next);
+        const isPausedNow = Boolean(next.loop?.isPaused);
+        if (isPausedNow) {
+          if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
+        } else {
+          pauseFreezeAtMsRef.current = null;
+        }
         setLoopJobId(next.loop?.lastJobId ?? null);
       } catch {
         return;
@@ -876,7 +877,6 @@ useEffect(() => {
     const effectiveRange = resolveEffectiveTimeRange();
     setError(null);
     lastTableSourceRef.current = "loop";
-        localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "loop");
     setLoopBusy(true);
     try {
       const marginPerTrade = Number(simMarginPerTrade);
@@ -929,6 +929,12 @@ useEffect(() => {
       setLoopAggMap(new Map());
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
+        const isPausedNow = Boolean(next.loop?.isPaused);
+        if (isPausedNow) {
+          if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
+        } else {
+          pauseFreezeAtMsRef.current = null;
+        }
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -943,6 +949,12 @@ useEffect(() => {
       await stopOptimizerLoop();
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
+        const isPausedNow = Boolean(next.loop?.isPaused);
+        if (isPausedNow) {
+          if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
+        } else {
+          pauseFreezeAtMsRef.current = null;
+        }
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -957,6 +969,12 @@ useEffect(() => {
       await pauseOptimizerLoop();
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
+        const isPausedNow = Boolean(next.loop?.isPaused);
+        if (isPausedNow) {
+          if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
+        } else {
+          pauseFreezeAtMsRef.current = null;
+        }
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -971,6 +989,12 @@ useEffect(() => {
       await resumeOptimizerLoop();
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
+        const isPausedNow = Boolean(next.loop?.isPaused);
+        if (isPausedNow) {
+          if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
+        } else {
+          pauseFreezeAtMsRef.current = null;
+        }
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -1106,7 +1130,6 @@ useEffect(() => {
     const effectiveRange = resolveEffectiveTimeRange();
     setError(null);
     lastTableSourceRef.current = "single";
-          localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "single");
     setDone(0);
     setTotal(0);
     try {
@@ -1154,8 +1177,6 @@ useEffect(() => {
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
       });
-      lastTableSourceRef.current = "single";
-      localStorage.setItem(TABLE_SOURCE_STORAGE_KEY, "single");
       setSingleJobId(runRes.jobId);
       const startedAtMs = Date.now();
       startedAtByJobIdRef.current[runRes.jobId] = startedAtMs;
@@ -1166,7 +1187,7 @@ useEffect(() => {
       setJobStatus("running");
       setOptimizerPaused(false);
       setJobPrecisionById((prev) => ({ ...prev, [runRes.jobId]: precision }));
-      if (!excludeNegative && !rememberNegatives) setResults([]);
+      setResults([]);
       setPage(1);
       setTotalRows(0);
     } catch (e: any) {
@@ -1591,7 +1612,9 @@ useEffect(() => {
     ? null
     : loopRunning
       ? nowMs
-      : (loopStatus?.loop?.finishedAtMs ?? loopStatus?.loop?.updatedAtMs ?? loopStartMs);
+      : loopPaused
+        ? (pauseFreezeAtMsRef.current ?? (loopStatus?.loop?.updatedAtMs ?? loopStartMs))
+        : (loopStatus?.loop?.finishedAtMs ?? loopStatus?.loop?.updatedAtMs ?? loopStartMs);
   const loopElapsedSec = loopStartMs == null || loopEndMs == null ? null : Math.max(0, (loopEndMs - loopStartMs) / 1000);
 
   return (
@@ -1889,7 +1912,7 @@ useEffect(() => {
               {selectedTapeIds.length ? ` · ${selectedTapeIds.join(", ")}` : ""}
             </div>
             <div style={{ fontSize: 12, marginBottom: 8 }}>
-              Loop: <b>{loopRunning ? (loopPaused ? "paused" : "running") : "stopped"}</b>
+              Loop: <b>{loopActive ? (loopPaused ? "paused" : "running") : "stopped"}</b>
               {loopExists && loopStatus?.loop ? ` · Run ${loopStatus.runsCompleted ?? loopStatus.loop.runIndex}/${loopStatus.runsTotal == null ? "∞" : loopStatus.runsTotal}` : ""}
             </div>
             <div style={{ fontSize: 12, marginBottom: 8 }}>Loop elapsed: <b>{formatDuration(loopElapsedSec)}</b></div>

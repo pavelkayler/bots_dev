@@ -56,3 +56,17 @@ These are used for enriching Trade Stats (turnover/volatility) and Universe Buil
 ActiveOnly shows a row if:
 - paper status is OPEN or ENTRY_PENDING, OR
 - signal is LONG or SHORT
+
+## Table pagination standard (planned)
+
+All tables should follow a consistent pagination UX:
+- Rows per page selector
+- Page indicator: "Page X of Y"
+- Total records count
+- Navigation: first (<<), prev (<), next (>), last (>>)
+
+This applies to:
+- Universe list
+- Optimizer completed/stopped runs
+- Any future cache job/history tables
+

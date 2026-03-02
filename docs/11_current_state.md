@@ -134,3 +134,21 @@ High-level:
 1) Keep tightening stability guards: low-disk behavior, backpressure behavior, and long-run soak checks.
 2) Add minimal CI: backend build always green; frontend build when TS debt is addressed.
 3) Add lightweight automated tests for config normalization + worker message contract.
+
+## Planned changes
+
+### Tape recording deprecation (planned)
+The current tape recording subsystem (auto start/stop on RUNNING, rotation, UI tape list) is planned to be removed.
+Optimizer will stop consuming tape files and will instead consume a cached historical dataset built from Bybit REST history endpoints.
+
+### Remote historical dataset cache (planned)
+New concept: **Dataset Target** = { Universe, Range }.
+- Universe: selected pool of symbols (existing Universe builder logic remains, but selection becomes explicit for data fetch).
+- Range: preset (24h/48h/1w/2w/4w/1mo) or manual start/end datetime.
+Workflow:
+1) User selects Universe + Range and presses **Set/Apply**.
+2) User presses **Receive Data** to fetch missing historical points into the cache.
+3) Optimizer loop runs on cached points. No repeated Bybit history queries per loop iteration.
+
+Data fetch must be rate-limit aware (target: ~500 requests / 5 seconds) and provide progress/ETA.
+

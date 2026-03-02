@@ -1,3 +1,45 @@
+## Milestone: Remote historical data cache (no tape recording)
+
+Status: **Planned** (next work batch)
+
+### Goals
+- Remove the entire tape recording subsystem (backend + frontend + UI).
+- Replace it with an explicit **historical data cache** built from Bybit REST history endpoints for a user-selected **Universe** and **Range**.
+- Make Optimizer operate on cached historical points instead of local tape files.
+- Standardize all tables/pagination UX across the app.
+
+### Planned tasks
+1) **Remove tape mechanics**
+   - Delete tape recorder backend logic, related REST endpoints, and UI sections (tapes directory, tape list, recording status).
+   - Remove optimizer/tape coupling.
+
+2) **New UI for Universe + Range + data receive**
+   - Universe selector.
+   - Range presets: 24h, 48h, 1w, 2w, 4w, 1mo.
+   - Manual start/end datetime.
+   - Buttons:
+     - **Set/Apply**: fix the chosen Universe + Range as the active dataset target.
+     - **Receive Data**: fetch missing historical points from Bybit into cache.
+   - Data fetch progress bar aware of Bybit API limits (~500 requests / 5s).
+
+3) **Unified tables and pagination**
+   - All tables: rows-per-page, page count, total items, and first/last page buttons.
+
+4) **Universe page changes**
+   - Remove unused buttons: "Back to Dashboard", "Refresh List".
+   - Fix Create request (remove 400).
+   - Add Create progress bar.
+   - Preserve Create state across routing.
+
+5) **Optimizer UI simplification**
+   - Remove single-run controls: "Run Optimization", "Pause", "Resume", "Stop" and the backend processes supporting them.
+   - Remove manual from/to inputs and "Run in Range" checkbox (range is driven by active dataset target).
+
+### Notes / key design decisions
+- Historical points source: Bybit REST endpoints (kline/OI/funding as required by strategy).
+- Cache model: store per-symbol time-series on disk (SQLite or JSONL) and reuse for loop optimization without repeated API calls.
+- Optionally allow “partial cache fill”: if cache already contains part of requested range, fetch only missing segments.
+
 # 20 Future plan (next chat backlog)
 
 Last update: 2026-02-25

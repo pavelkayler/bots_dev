@@ -275,3 +275,32 @@ Health:
 - Main thread updates job state from worker messages.
 - Jobs/loops are persisted to disk with paused-safe recovery on backend restart.
 - Tape recording is automatic on entering RUNNING and rotates at 90MB segments.
+
+## Planned API changes: historical dataset cache (tapes removal)
+
+### Deprecated (planned removal)
+- Tape recording endpoints and UI-related tape endpoints (current /api/tapes and /api/optimizer/tapes family) will be removed when tape mechanics are removed.
+
+### New endpoints (planned)
+Dataset target:
+- `POST /api/dataset/target`
+  - body: { universeId: string, rangePreset?: "24h"|"48h"|"1w"|"2w"|"4w"|"1mo", fromTs?: number, toTs?: number }
+  - response: { ok: true, target: {...}, effectiveFromTs, effectiveToTs }
+- `GET /api/dataset/target`
+  - response: current active dataset target (if any)
+
+Data receive (cache fill):
+- `POST /api/dataset/receive`
+  - body: { targetId?: string } (or implicit current target)
+  - response: { jobId }
+- `GET /api/dataset/receive/:jobId`
+  - response: progress { pct, phase, fetched, total, etaSec, throttled, message? }
+
+Cache stats:
+- `GET /api/dataset/cache/stats`
+  - response: per-symbol coverage summary for current target
+
+Notes:
+- All endpoints should remain localhost-safe where needed.
+- Progress updates should be throttled (10–20 updates/sec max).
+

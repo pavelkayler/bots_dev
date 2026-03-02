@@ -14,3 +14,6 @@ rate limiting 10006, глобальная очередь + backoff, reconcile ca
 
 docs/20_future_plan.md:
 next: stop 404 gating; one-position-per-symbol; возможно упростить live execution stats если тяжело/неточно.
+
+## Updates
+- 2026-03-02: Added planned milestone for tape removal + historical dataset cache, new UI (Universe/Range/Receive Data), pagination unification, Universe page fixes, optimizer UI simplification.

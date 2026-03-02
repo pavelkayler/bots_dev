@@ -122,3 +122,29 @@ Each result row includes:
   - warnings (e.g., low disk)
 - `GET /api/soak/last` returns last soak snapshot cached in memory.
 
+## Remote dataset cache (planned replacement for tapes)
+
+The optimizer is planned to stop depending on tape files.
+Instead, it will operate on a cached historical dataset fetched from Bybit REST history endpoints.
+
+### Dataset Target
+- **Universe**: selected symbol set.
+- **Range**: preset (24h/48h/1w/2w/4w/1mo) or manual start/end.
+
+### Workflow
+1) Select Universe + Range.
+2) Click **Set/Apply** to fix the target.
+3) Click **Receive Data** to fill cache (fetch only missing parts).
+4) Run optimizer in loop mode on cached points.
+
+### UI simplification (planned)
+- Remove single-run job controls (Run/Pause/Resume/Stop) and their backend job processes.
+- Optimizer becomes loop-oriented (start/pause/resume/stop loop only), using the active dataset target.
+
+### Rate limiting
+Data receive must respect Bybit IP limits. Progress UI should show:
+- requested symbols
+- requested range
+- fetched/total requests (or points)
+- sleep/throttle periods due to limits
+
