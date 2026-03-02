@@ -750,14 +750,44 @@ useEffect(() => {
         const isRunningNow = Boolean(next.loop?.isRunning);
         if (isRunningNow) lastTableSourceRef.current = "loop";
 
-        const donePercent = Math.floor(Number(next.lastJobStatus?.donePercent ?? 0));
-        const didCompleteRun = prevLoopRunningRef.current && donePercent === 100;
-        const completedJobId = next.loop?.lastJobId ?? lastNonNullLoopJobIdRef.current;
+        const currentLoopJobId = next.loop?.lastJobId ?? null;
+        const completedJobId = currentLoopJobId ?? lastNonNullLoopJobIdRef.current;
+        let donePercent = Math.floor(Number(next.lastJobStatus?.donePercent ?? 0));
+        let runStatus = next.lastJobStatus?.status;
+
+        if (currentLoopJobId) {
+          try {
+            const statusRes = await getJobStatus(currentLoopJobId);
+            if (!mounted) return;
+            const progress = getStableProgressForJob(currentLoopJobId, statusRes as { donePct?: number; done?: number; startedAtMs?: number | null });
+            donePercent = Math.floor(progress.pct);
+            runStatus = statusRes.status;
+            setJobStartedAtMs((prev) => (prev === progress.startedAtMs ? prev : progress.startedAtMs));
+            setJobUpdatedAtMs((prev) => {
+              const updatedAt = statusRes.updatedAtMs ?? null;
+              return prev === updatedAt ? prev : updatedAt;
+            });
+            setJobFinishedAtMs((prev) => {
+              const finishedAt = statusRes.finishedAtMs ?? null;
+              return prev === finishedAt ? prev : finishedAt;
+            });
+            setJobStatus((prev) => (prev === statusRes.status ? prev : statusRes.status));
+          } catch {
+            // Keep using /loop/status fallback if per-job status is briefly unavailable.
+          }
+        }
+
+        const didCompleteRun = prevLoopRunningRef.current && (donePercent === 100 || runStatus === "done");
 
         setLoopStatus(next);
         setNowMs(Date.now());
         setTotal(100);
-        setDone((prev) => (donePercent === 100 ? 100 : isRunningNow ? donePercent : prev));
+        setDone((prev) => {
+          if (donePercent === 100) return 100;
+          if (!isRunningNow && !next.loop?.isPaused) return prev;
+          if (currentLoopJobId == null && donePercent <= 0) return prev;
+          return donePercent;
+        });
 
         const isPausedNow = Boolean(next.loop?.isPaused);
         if (isPausedNow) {
@@ -772,17 +802,13 @@ useEffect(() => {
         }
 
         prevLoopRunningRef.current = isRunningNow;
-        if (!isRunningNow && timer != null) {
-          window.clearInterval(timer);
-          timer = null;
-        }
       } catch {
         return;
       }
     };
 
     void refresh();
-    if (loopStatus?.loop?.isRunning) {
+    if (loopStatus?.loop) {
       timer = window.setInterval(() => {
         void refresh();
       }, LOOP_STATUS_POLL_MS);
@@ -792,7 +818,7 @@ useEffect(() => {
       mounted = false;
       if (timer != null) window.clearInterval(timer);
     };
-  }, [appendCompletedRunByJobId, loopStatus?.loop?.isRunning]);
+  }, [appendCompletedRunByJobId, getStableProgressForJob, loopStatus?.loop]);
 
 
 
@@ -1118,7 +1144,10 @@ useEffect(() => {
     if (jobHistoryOffset > maxOffset) setJobHistoryOffset(maxOffset);
   }, [jobHistoryLimit, jobHistoryOffset, jobHistoryTotalPages]);
   const isRunningStatus = jobStatus === "running";
-  const loopStartedAtMs = Number((loopStatus?.lastJobStatus as any)?.startedAtMs ?? loopStatus?.loop?.createdAtMs ?? 0) || null;
+  const loopStartedAtMs = Number(loopStatus?.loop?.createdAtMs ?? 0) || null;
+  const loopRunsCompleted = Math.max(0, Number(loopStatus?.runsCompleted ?? 0) || 0);
+  const loopRunsTotalRaw = loopStatus?.runsTotal;
+  const loopRunsTotal = loopRunsTotalRaw == null ? null : Math.max(0, Number(loopRunsTotalRaw) || 0);
   const startedAtForActiveJobId = loopActive
     ? loopStartedAtMs
     : (activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs);
@@ -1128,9 +1157,20 @@ useEffect(() => {
       ? nowMs
       : (jobFinishedAtMs ?? jobUpdatedAtMs ?? startedAtForActiveJobId);
   const elapsedSec = endMs == null || !startedAtForActiveJobId ? null : Math.max(0, (endMs - startedAtForActiveJobId) / 1000);
-  const pctDone = Math.floor(clamp(done, 0, 100));
+  const pctDoneRaw = clamp(done, 0, 100);
+  const pctDone = loopStatus?.loop
+    ? (() => {
+      if (loopRunsTotal != null && loopRunsTotal > 0) {
+        const currentRunWeight = clamp(pctDoneRaw, 0, 100) / 100;
+        const overallPct = ((loopRunsCompleted + currentRunWeight) / loopRunsTotal) * 100;
+        const isCompleted = !loopStatus.loop.isRunning && !loopStatus.loop.isPaused && loopRunsCompleted >= loopRunsTotal;
+        return Math.floor(clamp(isCompleted ? 100 : overallPct, 0, 100));
+      }
+      return Math.floor(pctDoneRaw);
+    })()
+    : Math.floor(pctDoneRaw);
   const etaSec = elapsedSec != null && pctDone > 0 && pctDone < 100
-    ? elapsedSec * (100 / pctDone - 1)
+    ? (loopStatus?.loop && loopRunsTotal == null ? null : elapsedSec * (100 / pctDone - 1))
     : null;
   const lastJobSnapshotExists = Boolean(
     jobStatus !== "idle" ||
