@@ -31,6 +31,7 @@ import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard
 import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataReceiveApi";
 
 type OptimizerResultRow = OptimizationResult;
+type LoopOptimizerResultRow = OptimizerResultRow & { __runJobId: string };
 
 type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs";
 type RangeState = Record<RangeKey, { min: string; max: string }>;
@@ -239,7 +240,7 @@ export function OptimizerPage() {
   const [total, setTotal] = useState(0);
 
   const [results, setResults] = useState<OptimizationResult[]>(() => safeJsonParse<OptimizationResult[]>(localStorage.getItem(TOP_RESULTS_SINGLE_STORAGE_KEY)) ?? []);
-  const [loopAggRows, setLoopAggRows] = useState<OptimizerResultRow[]>(() => safeJsonParse<OptimizerResultRow[]>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY)) ?? []);
+  const [loopAggRows, setLoopAggRows] = useState<LoopOptimizerResultRow[]>(() => safeJsonParse<LoopOptimizerResultRow[]>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY)) ?? []);
 
 useEffect(() => {
   saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, results);
@@ -715,27 +716,42 @@ useEffect(() => {
     return payload;
   }
 
-  const appendCompletedRunResults = useCallback((rows: OptimizationResult[]) => {
+  const upsertLoopRunResults = useCallback((jobId: string, rows: OptimizationResult[]) => {
+    if (!jobId) return;
     const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
     const filteredRows = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
-    if (!filteredRows.length) return;
     setLoopAggRows((prev) => {
-      const next = prev.concat(filteredRows);
+      const nextRows = filteredRows.map((row) => ({ ...row, __runJobId: jobId }));
+      const retainedRows = prev.filter((row) => row.__runJobId !== jobId);
+      const next = retainedRows.concat(nextRows);
       setTotalRows(next.length);
       return next;
     });
   }, [minTrades]);
 
+  const fetchAllResultsForJob = useCallback(async (jobId: string) => {
+    const first = await getJobResults(jobId, { page: 1, sortKey, sortDir });
+    const allRows = Array.isArray(first.results) ? [...first.results] : [];
+    const totalPages = Math.max(1, Math.ceil((first.totalRows ?? allRows.length) / Math.max(1, first.pageSize || pageSize)));
+    for (let pageIndex = 2; pageIndex <= totalPages; pageIndex += 1) {
+      const next = await getJobResults(jobId, { page: pageIndex, sortKey, sortDir });
+      if (Array.isArray(next.results) && next.results.length > 0) {
+        allRows.push(...next.results);
+      }
+    }
+    return allRows;
+  }, [sortDir, sortKey]);
+
   const appendCompletedRunByJobId = useCallback(async (jobId: string) => {
     if (!jobId || completedLoopRunIdsRef.current[jobId]) return;
     completedLoopRunIdsRef.current[jobId] = true;
     try {
-      const res = await getJobResults(jobId, { page: 1, sortKey, sortDir });
-      appendCompletedRunResults(Array.isArray(res.results) ? res.results : []);
+      const rows = await fetchAllResultsForJob(jobId);
+      upsertLoopRunResults(jobId, rows);
     } catch {
       delete completedLoopRunIdsRef.current[jobId];
     }
-  }, [appendCompletedRunResults, sortDir, sortKey]);
+  }, [fetchAllResultsForJob, upsertLoopRunResults]);
 
 
   useEffect(() => {
@@ -958,20 +974,25 @@ useEffect(() => {
   useEffect(() => {
     if (!loopActive || !loopJobId) return;
     let alive = true;
-    const timer = window.setInterval(async () => {
+    const syncActiveRunResults = async () => {
       try {
-        await fetchResults(1, sortKey, sortDir, loopJobId, { keepPreviousIfEmpty: true });
+        const rows = await fetchAllResultsForJob(loopJobId);
         if (!alive) return;
+        upsertLoopRunResults(loopJobId, rows);
       } catch {
         return;
       }
+    };
+    void syncActiveRunResults();
+    const timer = window.setInterval(() => {
+      void syncActiveRunResults();
     }, ACTIVE_RESULTS_POLL_MS);
 
     return () => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [loopActive, loopJobId, sortDir, sortKey]);
+  }, [fetchAllResultsForJob, loopActive, loopJobId, upsertLoopRunResults]);
   async function onSort(nextSortKey: OptimizerSortKeyExtended) {
     if (!activeJobId) return;
     const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
@@ -1144,12 +1165,12 @@ useEffect(() => {
     if (jobHistoryOffset > maxOffset) setJobHistoryOffset(maxOffset);
   }, [jobHistoryLimit, jobHistoryOffset, jobHistoryTotalPages]);
   const isRunningStatus = jobStatus === "running";
-  const loopStartedAtMs = Number(loopStatus?.loop?.createdAtMs ?? 0) || null;
-  const loopRunsCompleted = Math.max(0, Number(loopStatus?.runsCompleted ?? 0) || 0);
-  const loopRunsTotalRaw = loopStatus?.runsTotal;
-  const loopRunsTotal = loopRunsTotalRaw == null ? null : Math.max(0, Number(loopRunsTotalRaw) || 0);
+  const currentLoopJobId = loopStatus?.loop?.lastJobId ?? null;
+  const currentLoopRunStartedAtMs = currentLoopJobId
+    ? (startedAtByJobIdRef.current[currentLoopJobId] ?? jobStartedAtMs)
+    : null;
   const startedAtForActiveJobId = loopActive
-    ? loopStartedAtMs
+    ? currentLoopRunStartedAtMs
     : (activeJobId ? (jobStartedAtMs ?? startedAtByJobIdRef.current[activeJobId] ?? null) : jobStartedAtMs);
   const endMs = !startedAtForActiveJobId
     ? null
@@ -1157,20 +1178,9 @@ useEffect(() => {
       ? nowMs
       : (jobFinishedAtMs ?? jobUpdatedAtMs ?? startedAtForActiveJobId);
   const elapsedSec = endMs == null || !startedAtForActiveJobId ? null : Math.max(0, (endMs - startedAtForActiveJobId) / 1000);
-  const pctDoneRaw = clamp(done, 0, 100);
-  const pctDone = loopStatus?.loop
-    ? (() => {
-      if (loopRunsTotal != null && loopRunsTotal > 0) {
-        const currentRunWeight = clamp(pctDoneRaw, 0, 100) / 100;
-        const overallPct = ((loopRunsCompleted + currentRunWeight) / loopRunsTotal) * 100;
-        const isCompleted = !loopStatus.loop.isRunning && !loopStatus.loop.isPaused && loopRunsCompleted >= loopRunsTotal;
-        return Math.floor(clamp(isCompleted ? 100 : overallPct, 0, 100));
-      }
-      return Math.floor(pctDoneRaw);
-    })()
-    : Math.floor(pctDoneRaw);
+  const pctDone = Math.floor(clamp(done, 0, 100));
   const etaSec = elapsedSec != null && pctDone > 0 && pctDone < 100
-    ? (loopStatus?.loop && loopRunsTotal == null ? null : elapsedSec * (100 / pctDone - 1))
+    ? elapsedSec * (100 / pctDone - 1)
     : null;
   const lastJobSnapshotExists = Boolean(
     jobStatus !== "idle" ||

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Col, Form, Row, Spinner } from "react-bootstrap";
-import { setDatasetTarget, getDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../api/datasetTargetApi";
+import { getDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../api/datasetTargetApi";
 import { listUniverses } from "../../universe/api";
 import type { UniverseMeta } from "../../universe/types";
 import { DATASET_CACHE_STORAGE_KEY, cancelReceiveDataJob, getReceiveDataJob, startReceiveData, type ReceiveDataJob } from "../../dataReceive/api/dataReceiveApi";
@@ -118,7 +118,6 @@ export default function DatasetTargetCard() {
   const [universes, setUniverses] = useState<UniverseMeta[]>([]);
   const [draft, setDraft] = useState<DraftState>(() => defaultDraft());
   const [loadingInit, setLoadingInit] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [receiveJobId, setReceiveJobId] = useState<string | null>(null);
   const [receiveJob, setReceiveJob] = useState<ReceiveDataJob | null>(null);
   const [error, setError] = useState<string>("");
@@ -180,8 +179,13 @@ export default function DatasetTargetCard() {
       setReceiveJobId(storedJobId);
       return;
     }
+    const datasetCache = window.localStorage.getItem(DATASET_CACHE_STORAGE_KEY);
+    if (!datasetCache) {
+      setReceiveJob(null);
+      return;
+    }
     const lastJob = parseStoredReceiveJob(window.localStorage.getItem(RECEIVE_LAST_JOB_STORAGE_KEY));
-    if (lastJob) {
+    if (lastJob && lastJob.status === "done") {
       setReceiveJob(lastJob);
     }
   }, []);
@@ -223,26 +227,6 @@ export default function DatasetTargetCard() {
 
   const receiveRunning = receiveJob?.status === "queued" || receiveJob?.status === "running";
 
-
-  async function onApplyDatasetTarget() {
-    const payload = buildSavePayload(draft);
-    if (!payload) {
-      setError("Invalid dataset range.");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      const res = await setDatasetTarget(payload);
-      const next = draftFromTarget(res.datasetTarget);
-      setDraft(next);
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch (e: any) {
-      setError(String(e?.message ?? e));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function onReceiveData() {
     if (receiveRunning) return;
@@ -357,11 +341,7 @@ export default function DatasetTargetCard() {
 
           <Col xl={3} lg={3} md={12} sm={12} xs={12}>
             <div className="d-flex gap-2">
-              <Button variant="outline-primary" onClick={() => void onApplyDatasetTarget()} disabled={receiveRunning || saving || loadingInit}>
-                {saving ? <Spinner size="sm" animation="border" className="me-2" /> : null}
-                Apply
-              </Button>
-              <Button variant="primary" onClick={() => void onReceiveData()} disabled={receiveRunning || saving || loadingInit}>
+              <Button variant="primary" onClick={() => void onReceiveData()} disabled={receiveRunning || loadingInit}>
                 {receiveRunning ? <Spinner size="sm" animation="border" className="me-2" /> : null}
                 Receive Data
               </Button>
