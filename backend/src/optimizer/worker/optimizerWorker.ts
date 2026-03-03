@@ -23,8 +23,10 @@ let lastProgressSentAtMs = 0;
 let pendingProgressFlushTimer: NodeJS.Timeout | null = null;
 let pendingProgress: PendingProgress | null = null;
 
-const ROWS_APPEND_THROTTLE_MS = 200;
-const ROWS_APPEND_BATCH_SIZE = 50;
+// Emit incremental result rows as soon as they are produced.
+// This is required so the UI can append rows one-by-one without bursty re-renders.
+const ROWS_APPEND_THROTTLE_MS = 0;
+const ROWS_APPEND_BATCH_SIZE = 1;
 let pendingRowsAppend: any[] = [];
 let pendingRowsAppendTimer: NodeJS.Timeout | null = null;
 let lastRowsAppendSentAtMs = 0;
@@ -40,11 +42,14 @@ function flushPendingRowsAppend() {
   if (!pendingRowsAppend.length) return;
   const rows = pendingRowsAppend;
   pendingRowsAppend = [];
-  parentPort?.postMessage({
-    type: "rows_append",
-    jobId: currentJobId,
-    rows,
-  });
+  // Send one-by-one to avoid the UI receiving large batches.
+  for (const row of rows) {
+    parentPort?.postMessage({
+      type: "rows_append",
+      jobId: currentJobId,
+      rows: [row],
+    });
+  }
   lastRowsAppendSentAtMs = Date.now();
 }
 

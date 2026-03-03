@@ -1813,9 +1813,12 @@ useEffect(() => {
                 </tr>
               </thead>
               <tbody>
-                {loopDisplayRows.map((r, i) => {
+                {loopDisplayRows.map((r) => {
+                  const rowKeyBase = makeResultSignature(r);
+                  const rowJobId = (r as any)?.__runJobId ? String((r as any).__runJobId) : "";
+                  const rowKey = rowJobId ? `${rowJobId}:${rowKeyBase}` : rowKeyBase;
                   return (
-                    <tr key={`${makeResultSignature(r)}-${r.netPnl}-${r.trades}-${i}`}>
+                    <tr key={rowKey}>
                                             <td style={{ whiteSpace: "nowrap" }}>{r.netPnl.toFixed(4)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.trades}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{r.winRatePct.toFixed(2)}%</td>
