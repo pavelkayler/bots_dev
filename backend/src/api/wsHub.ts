@@ -50,12 +50,31 @@ type BotStats = ReturnType<typeof runtime.getBotStats> & {
 
 type ServerWsMessage =
   | { type: "hello"; serverTime: number }
-  | { type: "snapshot"; payload: { sessionState: string; sessionId: string | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number } & StreamsState }
+  | { type: "snapshot"; payload: { sessionState: string; sessionId: string | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number; optimizer?: OptimizerSnapshot } & StreamsState }
   | { type: "tick"; payload: { serverTime: number; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number } }
   | { type: "streams_state"; payload: StreamsState }
   | { type: "events_tail"; payload: { limit: number; count: number; events: LogEvent[] } }
   | { type: "events_append"; payload: { event: LogEvent } }
+  | { type: "optimizer_rows_append"; payload: { jobId: string; rows: any[] } }
   | { type: "error"; message: string };
+
+type OptimizerSnapshot = {
+  jobId: string | null;
+  rows: any[];
+};
+
+let optimizerSnapshotProvider: (() => OptimizerSnapshot) | null = null;
+const optimizerWsClients = new Set<WebSocket>();
+
+export function setOptimizerSnapshotProvider(provider: (() => OptimizerSnapshot) | null) {
+  optimizerSnapshotProvider = provider;
+}
+
+export function broadcastOptimizerRowsAppend(jobId: string, rows: any[]) {
+  if (!jobId || !Array.isArray(rows) || rows.length === 0) return;
+  const msg: ServerWsMessage = { type: "optimizer_rows_append", payload: { jobId, rows } };
+  for (const client of optimizerWsClients) safeSend(client, msg);
+}
 
 type ClientWsMessage =
   | { type: "events_tail_request"; payload: { limit: number } }
@@ -72,6 +91,20 @@ function getUniverseInfo() {
   const id = String((cfg as any)?.universe?.selectedId ?? "");
   const symbols = Array.isArray((cfg as any)?.universe?.symbols) ? (cfg as any).universe.symbols : [];
   return { universeSelectedId: id, universeSymbolsCount: symbols.length };
+}
+
+function getOptimizerSnapshot(): OptimizerSnapshot {
+  try {
+    const snapshot = optimizerSnapshotProvider?.();
+    if (!snapshot) return { jobId: null, rows: [] };
+    const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
+    return {
+      jobId: snapshot.jobId ? String(snapshot.jobId) : null,
+      rows,
+    };
+  } catch {
+    return { jobId: null, rows: [] };
+  }
 }
 
 function safeSend(ws: WebSocket, msg: ServerWsMessage) {
@@ -420,7 +453,7 @@ export function createWsHub(app: FastifyInstance) {
       const st = runtime.getStatus();
       safeSend(ws, {
         type: "snapshot",
-        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo() },
+        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
       });
       return;
     }
@@ -435,7 +468,7 @@ export function createWsHub(app: FastifyInstance) {
 
     const msg: ServerWsMessage = {
       type: "snapshot",
-      payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo() },
+      payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
     };
 
     for (const c of clients) safeSend(c, msg);
@@ -669,7 +702,7 @@ export function createWsHub(app: FastifyInstance) {
       safeSend(ws, { type: "hello", serverTime: now });
       safeSend(ws, {
         type: "snapshot",
-        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo() },
+        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
       });
       safeSend(ws, { type: "streams_state", payload: { streamsEnabled, bybitConnected } });
 
@@ -707,11 +740,15 @@ export function createWsHub(app: FastifyInstance) {
       ws.on("close", () => {
         clients.delete(ws);
         clientEventsLimit.delete(ws);
+        optimizerWsClients.delete(ws);
       });
       ws.on("error", () => {
         clients.delete(ws);
         clientEventsLimit.delete(ws);
+        optimizerWsClients.delete(ws);
       });
+
+      optimizerWsClients.add(ws);
     });
 
     syncRuntimeStreamLifecycle();

@@ -72,6 +72,8 @@ const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
 const ACTIVE_RESULTS_POLL_MS = 800;
 const LOOP_STATUS_POLL_MS = 1000;
 const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
+const LIVE_ROWS_SORT_THROTTLE_MS = 200;
+const DEBUG_ROWS_LOG_MIN_INTERVAL_MS = 500;
 
 
 const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
@@ -209,7 +211,7 @@ function saveJson(key: string, value: unknown) {
 }
 
 export function OptimizerPage() {
-  const { conn, lastServerTime, wsUrl, streams } = useWsFeedLite();
+  const { conn, lastMsg, lastServerTime, wsUrl, streams } = useWsFeedLite();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
   const [error, setError] = useState<string | null>(null);
@@ -340,6 +342,64 @@ useEffect(() => {
   const completedLoopRunIdsRef = useRef<Record<string, boolean>>({});
   const prevLoopRunningRef = useRef(false);
   const lastDebugProgressLogAtRef = useRef(0);
+  const liveSingleRowsMapRef = useRef<Map<string, OptimizationResult>>(new Map());
+  const liveRowsFlushTimerRef = useRef<number | null>(null);
+  const liveRowsPendingByJobIdRef = useRef<Record<string, OptimizationResult[]>>({});
+  const lastDebugRowsLogAtRef = useRef(0);
+  const activeJobIdRef = useRef<string | null>(null);
+
+
+  const maybeLogRowsDebug = useCallback((jobId: string, batchSize: number, totalDisplayed: number) => {
+    if (!import.meta.env.DEV) return;
+    if (localStorage.getItem("debugOptimizerRows") !== "1") return;
+    const now = Date.now();
+    if (now - lastDebugRowsLogAtRef.current < DEBUG_ROWS_LOG_MIN_INTERVAL_MS) return;
+    lastDebugRowsLogAtRef.current = now;
+    console.log("[optimizer-rows]", { jobId, batchSize, totalDisplayed });
+  }, []);
+
+  const flushLiveRowsForActiveJob = useCallback(() => {
+    if (liveRowsFlushTimerRef.current != null) {
+      window.clearTimeout(liveRowsFlushTimerRef.current);
+      liveRowsFlushTimerRef.current = null;
+    }
+    const activeId = activeJobIdRef.current;
+    if (!activeId) return;
+    const pending = liveRowsPendingByJobIdRef.current[activeId] ?? [];
+    if (!pending.length) return;
+    liveRowsPendingByJobIdRef.current[activeId] = [];
+
+    setResults((prev) => {
+      const map = liveSingleRowsMapRef.current;
+      if (map.size === 0 && prev.length > 0) {
+        for (const row of prev) map.set(makeResultSignature(row), row);
+      }
+      for (const row of pending) {
+        map.set(makeResultSignature(row), row);
+      }
+      const merged = Array.from(map.values())
+        .sort((a, b) => {
+          const aVal = Number(sortKey === "priceTh" ? a.params.priceThresholdPct : sortKey === "oivTh" ? a.params.oivThresholdPct : sortKey === "tp" ? a.params.tpRoiPct : sortKey === "sl" ? a.params.slRoiPct : sortKey === "offset" ? a.params.entryOffsetPct : sortKey === "timeoutSec" ? a.params.timeoutSec : sortKey === "rearmMs" ? a.params.rearmMs : (a as any)[sortKey]);
+          const bVal = Number(sortKey === "priceTh" ? b.params.priceThresholdPct : sortKey === "oivTh" ? b.params.oivThresholdPct : sortKey === "tp" ? b.params.tpRoiPct : sortKey === "sl" ? b.params.slRoiPct : sortKey === "offset" ? b.params.entryOffsetPct : sortKey === "timeoutSec" ? b.params.timeoutSec : sortKey === "rearmMs" ? b.params.rearmMs : (b as any)[sortKey]);
+          const av = Number.isFinite(aVal) ? aVal : 0;
+          const bv = Number.isFinite(bVal) ? bVal : 0;
+          return sortDir === "asc" ? av - bv : bv - av;
+        })
+        .map((row, idx) => ({ ...row, rank: idx + 1 }));
+      setTotalRows(merged.length);
+      maybeLogRowsDebug(activeId, pending.length, merged.length);
+      return merged;
+    });
+  }, [maybeLogRowsDebug, sortDir, sortKey]);
+
+  const queueLiveRowsAppend = useCallback((jobId: string, rows: OptimizationResult[]) => {
+    if (!jobId || !rows.length) return;
+    const current = liveRowsPendingByJobIdRef.current[jobId] ?? [];
+    liveRowsPendingByJobIdRef.current[jobId] = current.concat(rows);
+    if (jobId !== activeJobIdRef.current) return;
+    if (liveRowsFlushTimerRef.current != null) return;
+    liveRowsFlushTimerRef.current = window.setTimeout(flushLiveRowsForActiveJob, LIVE_ROWS_SORT_THROTTLE_MS);
+  }, [flushLiveRowsForActiveJob]);
 
   const maybeLogProgress = useCallback((progress: OptimizerLoopStatus["progress"]) => {
     if (!import.meta.env.DEV) return;
@@ -584,6 +644,10 @@ useEffect(() => {
   const jobActive = jobStatus === "running" || jobStatus === "paused";
   const activeLoopJobId = loopJobId ?? lastNonNullLoopJobIdRef.current;
   const activeJobId = loopActive ? activeLoopJobId : singleJobId;
+
+  useEffect(() => {
+    activeJobIdRef.current = activeJobId;
+  }, [activeJobId]);
 
   useEffect(() => {
     const prev = prevLoopJobIdRef.current;
@@ -1068,6 +1132,12 @@ useEffect(() => {
   }
 
   useEffect(() => {
+    liveSingleRowsMapRef.current = new Map();
+    liveRowsPendingByJobIdRef.current = {};
+    if (liveRowsFlushTimerRef.current != null) {
+      window.clearTimeout(liveRowsFlushTimerRef.current);
+      liveRowsFlushTimerRef.current = null;
+    }
     if (!activeJobId) return;
     let alive = true;
     void (async () => {
@@ -1154,6 +1224,51 @@ useEffect(() => {
       window.clearInterval(timer);
     };
   }, [clearSingleJobState, getStableProgressForJob, isNoCurrentJobError, jobActive, loopActive, page, singleJobId, sortDir, sortKey]);
+
+  useEffect(() => {
+    if (!lastMsg) return;
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(lastMsg);
+    } catch {
+      return;
+    }
+    if (parsed?.type === "snapshot") {
+      const snapshotJobId = typeof parsed?.payload?.optimizer?.jobId === "string" ? parsed.payload.optimizer.jobId : null;
+      const snapshotRows = Array.isArray(parsed?.payload?.optimizer?.rows) ? parsed.payload.optimizer.rows as OptimizationResult[] : [];
+      if (!snapshotJobId || snapshotJobId !== activeJobId || loopActive || snapshotRows.length === 0) return;
+      liveSingleRowsMapRef.current = new Map(snapshotRows.map((row) => [makeResultSignature(row), row]));
+      setResults((prev) => {
+        const merged = Array.from(liveSingleRowsMapRef.current.values()).map((row, idx) => ({ ...row, rank: idx + 1 }));
+        return areTopResultsSimilar(prev, merged) ? prev : merged;
+      });
+      setTotalRows(snapshotRows.length);
+      maybeLogRowsDebug(snapshotJobId, snapshotRows.length, snapshotRows.length);
+      return;
+    }
+    if (parsed?.type !== "optimizer_rows_append") return;
+    const jobId = String(parsed?.payload?.jobId ?? "");
+    const rows = Array.isArray(parsed?.payload?.rows) ? parsed.payload.rows as OptimizationResult[] : [];
+    if (!jobId || rows.length === 0) return;
+
+    if (loopActive && jobId === loopJobId) {
+      setLoopAggRows((prev) => {
+        const currentJobRows = prev.filter((row) => row.__runJobId === jobId);
+        const retainedRows = prev.filter((row) => row.__runJobId !== jobId);
+        const map = new Map<string, LoopOptimizerResultRow>();
+        for (const row of currentJobRows) map.set(makeResultSignature(row), row);
+        for (const row of rows) map.set(makeResultSignature(row), { ...row, __runJobId: jobId });
+        const next = retainedRows.concat(Array.from(map.values()));
+        setTotalRows(next.length);
+        maybeLogRowsDebug(jobId, rows.length, next.length);
+        return next;
+      });
+      return;
+    }
+
+    if (loopActive || jobId !== activeJobId) return;
+    queueLiveRowsAppend(jobId, rows);
+  }, [activeJobId, flushLiveRowsForActiveJob, lastMsg, loopActive, loopJobId, maybeLogRowsDebug, queueLiveRowsAppend]);
 
   useEffect(() => {
     if (!loopActive || !loopJobId) return;

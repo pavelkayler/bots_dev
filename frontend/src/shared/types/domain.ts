@@ -146,6 +146,11 @@ export type SymbolRow = {
   paperRealizedPnl?: number;
 };
 
+export type OptimizerWsSnapshot = {
+  jobId: string | null;
+  rows: any[];
+};
+
 export type LogEvent = {
   ts?: number;
   type?: string;
@@ -156,11 +161,12 @@ export type LogEvent = {
 
 export type WsMessage =
   | { type: "hello"; serverTime: number }
-  | { type: "snapshot"; payload: { sessionState: SessionState; sessionId: string | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number } & StreamsState }
+  | { type: "snapshot"; payload: { sessionState: SessionState; sessionId: string | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number; optimizer?: OptimizerWsSnapshot } & StreamsState }
   | { type: "tick"; payload: { serverTime: number; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number } }
   | { type: "streams_state"; payload: StreamsState }
   | { type: "events_tail"; payload: { limit: number; count: number; events: LogEvent[] } }
   | { type: "events_append"; payload: { event: LogEvent } }
+  | { type: "optimizer_rows_append"; payload: { jobId: string; rows: any[] } }
   | { type: "error"; message: string };
 
 export type EventsTailResponse = { limit: number; count: number; events: LogEvent[] };

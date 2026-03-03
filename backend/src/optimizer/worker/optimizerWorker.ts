@@ -23,6 +23,50 @@ let lastProgressSentAtMs = 0;
 let pendingProgressFlushTimer: NodeJS.Timeout | null = null;
 let pendingProgress: PendingProgress | null = null;
 
+const ROWS_APPEND_THROTTLE_MS = 200;
+const ROWS_APPEND_BATCH_SIZE = 50;
+let pendingRowsAppend: any[] = [];
+let pendingRowsAppendTimer: NodeJS.Timeout | null = null;
+let lastRowsAppendSentAtMs = 0;
+
+function clearPendingRowsAppendTimer() {
+  if (!pendingRowsAppendTimer) return;
+  clearTimeout(pendingRowsAppendTimer);
+  pendingRowsAppendTimer = null;
+}
+
+function flushPendingRowsAppend() {
+  clearPendingRowsAppendTimer();
+  if (!pendingRowsAppend.length) return;
+  const rows = pendingRowsAppend;
+  pendingRowsAppend = [];
+  parentPort?.postMessage({
+    type: "rows_append",
+    jobId: currentJobId,
+    rows,
+  });
+  lastRowsAppendSentAtMs = Date.now();
+}
+
+function queueRowsAppend(rows: any[]) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  pendingRowsAppend.push(...rows);
+  if (pendingRowsAppend.length >= ROWS_APPEND_BATCH_SIZE) {
+    flushPendingRowsAppend();
+    return;
+  }
+  const now = Date.now();
+  if (lastRowsAppendSentAtMs === 0 || now - lastRowsAppendSentAtMs >= ROWS_APPEND_THROTTLE_MS) {
+    flushPendingRowsAppend();
+    return;
+  }
+  if (pendingRowsAppendTimer) return;
+  const waitMs = Math.max(0, ROWS_APPEND_THROTTLE_MS - (now - lastRowsAppendSentAtMs));
+  pendingRowsAppendTimer = setTimeout(() => {
+    flushPendingRowsAppend();
+  }, waitMs);
+}
+
 let lastBlacklistEmitAtMs = 0;
 let lastBlacklistCount = -1;
 let lastBlacklistSkipped = -1;
@@ -115,6 +159,9 @@ parentPort.on("message", async (msg: any) => {
   lastProgressSentAtMs = 0;
   pendingProgress = null;
   clearPendingProgressTimer();
+  pendingRowsAppend = [];
+  clearPendingRowsAppendTimer();
+  lastRowsAppendSentAtMs = 0;
 
   try {
     queueProgress(0, 100, [], 0);
@@ -130,6 +177,9 @@ parentPort.on("message", async (msg: any) => {
         const done = Number(_done) || 0;
         const donePct = toDonePercent(done, total);
         queueProgress(done, total, Array.isArray(previewResults) ? previewResults : [], donePct);
+      },
+      onRowsAppend: (rows: any[]) => {
+        queueRowsAppend(Array.isArray(rows) ? rows : []);
       },
       onCheckpoint: ({ done, total, donePercent, partialResults }) => {
         parentPort?.postMessage({
@@ -163,6 +213,7 @@ parentPort.on("message", async (msg: any) => {
     });
 
     flushPendingProgress();
+    flushPendingRowsAppend();
     if (!output.cancelled) {
       postProgress({
         done: 100,
@@ -181,6 +232,7 @@ parentPort.on("message", async (msg: any) => {
     });
   } catch (e: any) {
     clearPendingProgressTimer();
+    clearPendingRowsAppendTimer();
     parentPort?.postMessage({ type: "error", jobId: currentJobId, errorMessage: String(e?.message ?? e) });
   }
 });
