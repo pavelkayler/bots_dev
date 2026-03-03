@@ -362,6 +362,7 @@ export type RunOptimizationArgs = {
     startMs: number;
     endMs: number;
   };
+  cacheDatasets?: Array<{ symbols: string[]; startMs: number; endMs: number }>;
 };
 
 export type RunOptimizationHooks = {
@@ -409,16 +410,57 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
   const tapes: Array<{ tapeId: string; meta: TapeMeta | null; events: TapeEvent[]; firstTsMs: number | null; lastTsMs: number | null }> = [];
   const globalTickIntervals: number[] = [];
-  if (args.cacheDataset) {
-    const symbols = Array.isArray(args.cacheDataset.symbols) ? args.cacheDataset.symbols : [];
-    const startMs = Number(args.cacheDataset.startMs);
-    const endMs = Number(args.cacheDataset.endMs);
-    for (const symbol of symbols) {
+  if (args.cacheDataset || (Array.isArray(args.cacheDatasets) && args.cacheDatasets.length)) {
+    const datasets = (Array.isArray(args.cacheDatasets) && args.cacheDatasets.length)
+      ? args.cacheDatasets
+      : [args.cacheDataset!];
+
+    // Build per-symbol time windows (can be multiple ranges combined)
+    const symbolWindows = new Map<string, Array<{ startMs: number; endMs: number }>>();
+    for (const ds of datasets) {
+      const symbols = Array.isArray(ds?.symbols) ? ds.symbols : [];
+      const startMs = Number(ds?.startMs);
+      const endMs = Number(ds?.endMs);
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+      for (const s of symbols) {
+        const sym = String(s ?? "").trim();
+        if (!sym) continue;
+        const list = symbolWindows.get(sym) ?? [];
+        list.push({ startMs, endMs });
+        symbolWindows.set(sym, list);
+      }
+    }
+
+    // Normalize windows per symbol (sort + merge overlaps)
+    for (const [sym, list] of symbolWindows) {
+      const sorted = [...list].filter((w) => Number.isFinite(w.startMs) && Number.isFinite(w.endMs) && w.endMs >= w.startMs)
+        .sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs));
+      const merged: Array<{ startMs: number; endMs: number }> = [];
+      for (const w of sorted) {
+        const last = merged[merged.length - 1];
+        if (!last) merged.push({ startMs: w.startMs, endMs: w.endMs });
+        else if (w.startMs <= last.endMs) last.endMs = Math.max(last.endMs, w.endMs);
+        else merged.push({ startMs: w.startMs, endMs: w.endMs });
+      }
+      symbolWindows.set(sym, merged);
+    }
+
+    for (const [symbol, windows] of symbolWindows) {
       const fp = path.join(CACHE_DIR, `${symbol}.jsonl`);
       const raw = await fs.promises.readFile(fp, "utf8");
       const events: TapeEvent[] = [];
       let firstTsMs: number | null = null;
       let lastTsMs: number | null = null;
+
+      const inAnyWindow = (candleStartMs: number): boolean => {
+        // windows are sorted/merged
+        for (const w of windows) {
+          if (candleStartMs < w.startMs) return false;
+          if (candleStartMs >= w.startMs && candleStartMs <= w.endMs) return true;
+        }
+        return false;
+      };
+
       for (const line of raw.split(/\r?\n/)) {
         const text = line.trim();
         if (!text) continue;
@@ -432,7 +474,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           volume?: string;
         };
         const candleStart = Number(row.startMs);
-        if (!Number.isFinite(candleStart) || candleStart < startMs || candleStart > endMs) continue;
+        if (!Number.isFinite(candleStart) || !inAnyWindow(candleStart)) continue;
+
         const open = Number(row.open);
         const close = Number(row.close);
         if (!Number.isFinite(close) || close <= 0) continue;
@@ -456,6 +499,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         if (firstTsMs == null || ts < firstTsMs) firstTsMs = ts;
         if (lastTsMs == null || ts > lastTsMs) lastTsMs = ts;
       }
+
       tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: 1 }, events, firstTsMs, lastTsMs });
     }
     hooks?.onLoadProgress?.(100, 100);

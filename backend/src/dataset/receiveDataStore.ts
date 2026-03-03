@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { readDatasetTarget, writeDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../dataset/datasetTargetStore.js";
 import { readUniverse } from "../universe/universeStore.js";
+import { upsertLatestDatasetHistory } from "./datasetHistoryStore.js";
 
 type ReceiveStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
@@ -215,6 +216,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
 
     let completedSteps = 0;
     const symbolErrors: string[] = [];
+  const failedSymbols = new Set<string>();
 
     for (const symbol of symbols) {
       if (job.cancelRequested) break;
@@ -243,6 +245,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
           }
         } catch (e: any) {
           symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
+          failedSymbols.add(symbol);
           break;
         }
 
@@ -270,6 +273,23 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     job.status = "done";
     job.finishedAtMs = Date.now();
     setProgress(job, { completedSteps: job.progress.totalSteps, pct: 100 }, true);
+    // best-effort: persist dataset history metadata (for optimizer selection)
+    try {
+      const okSymbols = symbols.filter((s) => !failedSymbols.has(s));
+      const universeName = universe.meta?.name ?? target.universeId;
+      upsertLatestDatasetHistory({
+        id: jobId,
+        universeId: target.universeId,
+        universeName,
+        startMs: resolvedRange.startMs,
+        endMs: resolvedRange.endMs,
+        receivedAtMs: job.finishedAtMs ?? Date.now(),
+        receivedSymbols: okSymbols,
+      });
+    } catch {
+      // ignore
+    }
+
   } catch (e: any) {
     job.status = "error";
     job.error = toReceiveError("receive_failed", String(e?.message ?? e));

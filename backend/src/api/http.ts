@@ -30,6 +30,7 @@ import { getDataDirPath, isLowDiskBestEffort, MIN_FREE_BYTES, readFreeBytesBestE
 import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 import { readDatasetTarget, writeDatasetTarget, normalizeDatasetTarget } from "../dataset/datasetTargetStore.js";
 import { cancelReceiveDataJob, getReceiveDataJob, startReceiveDataJob } from "../dataset/receiveDataStore.js";
+import { deleteDatasetHistory, incrementDatasetHistoryLoops, listDatasetHistories, readDatasetHistory } from "../dataset/datasetHistoryStore.js";
 
 type OptimizerJob = {
   status: "running" | "paused" | "done" | "error" | "cancelled";
@@ -1120,7 +1121,37 @@ export function registerHttpRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get("/api/config", async () => {
+  
+  // Dataset history (Receive Data snapshots metadata)
+  app.get("/api/data/history", async () => {
+    return { histories: listDatasetHistories() };
+  });
+
+  app.get("/api/data/history/:id/export", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    try {
+      const history = readDatasetHistory(id);
+      return { history };
+    } catch {
+      reply.code(404);
+      return { error: "history_not_found" };
+    }
+  });
+
+  app.delete("/api/data/history/:id", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    try {
+      // Ensure it exists first (stable 404)
+      readDatasetHistory(id);
+      deleteDatasetHistory(id);
+      return { ok: true };
+    } catch {
+      reply.code(404);
+      return { error: "history_not_found" };
+    }
+  });
+
+app.get("/api/config", async () => {
     return { config: configStore.get() };
   });
 
@@ -1304,25 +1335,47 @@ export function registerHttpRoutes(app: FastifyInstance) {
 
   app.post("/api/optimizer/run", async (req, reply) => {
     const body = safeBody((req as any).body) as any;
-    const target = readDatasetTarget();
-    if (!target.universeId) {
+
+    const datasetHistoryIds: string[] = Array.isArray(body?.datasetHistoryIds)
+      ? (body.datasetHistoryIds as any[]).map((v) => String(v ?? "").trim()).filter(Boolean)
+      : [];
+
+    if (!datasetHistoryIds.length) {
       reply.code(400);
-      return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+      return { error: "dataset_history_missing", message: "Select at least one history row (Receive Data) before starting loop." };
     }
-    const universe = readUniverse(target.universeId);
-    const symbols = universe.symbols.filter((v) => typeof v === "string" && v.trim());
-    const resolvedRange = resolveDatasetRangeMs(target.range, Date.now());
-    if (!resolvedRange || !symbols.length) {
+
+    const histories = [];
+    for (const id of datasetHistoryIds) {
+      try {
+        histories.push(readDatasetHistory(id));
+      } catch {
+        reply.code(400);
+        return { error: "dataset_history_not_found", message: `History not found: ${id}` };
+      }
+    }
+    histories.sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs) || (a.receivedAtMs - b.receivedAtMs));
+
+    const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs }));
+    const allSymbols = new Set<string>();
+    for (const ds of cacheDatasets) for (const s of ds.symbols) allSymbols.add(s);
+
+    if (!allSymbols.size) {
       reply.code(400);
-      return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+      return { error: "dataset_history_empty", message: "Selected history has no downloaded symbols." };
     }
-    for (const symbol of symbols) {
+
+    for (const symbol of allSymbols) {
       if (!fs.existsSync(path.resolve(process.cwd(), "data", "cache", "bybit_klines", `${symbol}.jsonl`))) {
         reply.code(400);
         return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
       }
     }
-    const candidates = Number(body?.candidates);
+
+    // count this loop start for each selected history
+    incrementDatasetHistoryLoops(datasetHistoryIds, 1);
+
+const candidates = Number(body?.candidates);
     const seed = Number(body?.seed ?? 1);
     const directionMode = body?.directionMode == null ? "both" : String(body.directionMode);
     const optTfMinRaw = body?.optTfMin;
@@ -1537,25 +1590,47 @@ export function registerHttpRoutes(app: FastifyInstance) {
     }
 
     const body = safeBody((req as any).body) as any;
-    const target = readDatasetTarget();
-    if (!target.universeId) {
+
+    const datasetHistoryIds: string[] = Array.isArray(body?.datasetHistoryIds)
+      ? (body.datasetHistoryIds as any[]).map((v) => String(v ?? "").trim()).filter(Boolean)
+      : [];
+
+    if (!datasetHistoryIds.length) {
       reply.code(400);
-      return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+      return { error: "dataset_history_missing", message: "Select at least one history row (Receive Data) before starting loop." };
     }
-    const universe = readUniverse(target.universeId);
-    const symbols = universe.symbols.filter((v) => typeof v === "string" && v.trim());
-    const resolvedRange = resolveDatasetRangeMs(target.range, Date.now());
-    if (!resolvedRange || !symbols.length) {
+
+    const histories = [];
+    for (const id of datasetHistoryIds) {
+      try {
+        histories.push(readDatasetHistory(id));
+      } catch {
+        reply.code(400);
+        return { error: "dataset_history_not_found", message: `History not found: ${id}` };
+      }
+    }
+    histories.sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs) || (a.receivedAtMs - b.receivedAtMs));
+
+    const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs }));
+    const allSymbols = new Set<string>();
+    for (const ds of cacheDatasets) for (const s of ds.symbols) allSymbols.add(s);
+
+    if (!allSymbols.size) {
       reply.code(400);
-      return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+      return { error: "dataset_history_empty", message: "Selected history has no downloaded symbols." };
     }
-    for (const symbol of symbols) {
+
+    for (const symbol of allSymbols) {
       if (!fs.existsSync(path.resolve(process.cwd(), "data", "cache", "bybit_klines", `${symbol}.jsonl`))) {
         reply.code(400);
         return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
       }
     }
-    let sim: OptimizerSimulationParams;
+
+    // count this loop start for each selected history
+    incrementDatasetHistoryLoops(datasetHistoryIds, 1);
+
+let sim: OptimizerSimulationParams;
     try {
       sim = parseSimParams(body?.sim);
     } catch (e: any) {
@@ -1565,7 +1640,8 @@ export function registerHttpRoutes(app: FastifyInstance) {
     const payload: OptimizerLoopRunPayload = {
       ...body,
       tapeIds: [],
-      cacheDataset: { symbols, startMs: resolvedRange.startMs, endMs: resolvedRange.endMs },
+      datasetHistoryIds,
+      cacheDatasets,
       candidates: Number(body?.candidates),
       seed: Number(body?.seed ?? 1),
       directionMode: body?.directionMode == null ? "both" : String(body.directionMode) as "both" | "long" | "short",

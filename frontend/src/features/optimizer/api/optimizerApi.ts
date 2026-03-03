@@ -182,6 +182,7 @@ export async function runOptimizationJob(payload: {
   rememberNegatives?: boolean;
   sim?: OptimizerSimulationParams;
   datasetCache?: string;
+  datasetHistoryIds?: string[];
 }): Promise<{ jobId: string }> {
   const base = getApiBase();
   return await postJson<{ jobId: string }>(`${base}/api/optimizer/run`, payload);
@@ -287,6 +288,7 @@ export async function startOptimizerLoop(payload: {
   infinite?: boolean;
   sim?: OptimizerSimulationParams;
   datasetCache?: string;
+  datasetHistoryIds?: string[];
 }): Promise<{ loopId: string }> {
   const base = getApiBase();
   return await postJson<{ loopId: string }>(`${base}/api/optimizer/loop/start`, payload);

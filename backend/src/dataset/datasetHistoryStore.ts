@@ -1,0 +1,196 @@
+import fs from "node:fs";
+import path from "node:path";
+
+export type DatasetHistoryRecord = {
+  id: string; // Receive Data jobId
+  paramsKey: string; // universeId|startMs|endMs (used for overwrite-last)
+  universeId: string;
+  universeName: string;
+
+  startMs: number;
+  endMs: number;
+
+  receivedAtMs: number;
+
+  receivedSymbols: string[];
+  receivedSymbolsCount: number;
+
+  // Count of optimizer LOOP starts that included this history id
+  loopsCount: number;
+};
+
+const HISTORY_ROOT = path.resolve(process.cwd(), "data", "history");
+const INDEX_PATH = path.join(HISTORY_ROOT, "index.json");
+
+function ensureRoot() {
+  fs.mkdirSync(HISTORY_ROOT, { recursive: true });
+}
+
+function safeId(id: string): string {
+  const v = String(id ?? "").trim();
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(v)) throw new Error("invalid_history_id");
+  return v;
+}
+
+function recordDir(id: string): string {
+  ensureRoot();
+  return path.join(HISTORY_ROOT, safeId(id));
+}
+
+function metaPath(id: string): string {
+  return path.join(recordDir(id), "meta.json");
+}
+
+function readIndex(): DatasetHistoryRecord[] {
+  ensureRoot();
+  if (!fs.existsSync(INDEX_PATH)) return [];
+  try {
+    const raw = fs.readFileSync(INDEX_PATH, "utf8");
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    const out: DatasetHistoryRecord[] = [];
+    for (const item of arr) {
+      if (!item || typeof item !== "object") continue;
+      const it: any = item;
+      const id = String(it.id ?? "").trim();
+      const universeId = String(it.universeId ?? "").trim();
+      const universeName = String(it.universeName ?? "").trim();
+      const startMs = Number(it.startMs);
+      const endMs = Number(it.endMs);
+      const receivedAtMs = Number(it.receivedAtMs);
+      const paramsKey = String(it.paramsKey ?? "").trim() || `${universeId}|${startMs}|${endMs}`;
+      const receivedSymbols = Array.isArray(it.receivedSymbols)
+        ? it.receivedSymbols.filter((s: any) => typeof s === "string" && s.trim())
+        : [];
+      const receivedSymbolsCount = Math.max(0, Math.floor(Number(it.receivedSymbolsCount) || receivedSymbols.length));
+      const loopsCount = Math.max(0, Math.floor(Number(it.loopsCount) || 0));
+      if (!id || !universeId || !universeName) continue;
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(receivedAtMs)) continue;
+      out.push({
+        id,
+        paramsKey,
+        universeId,
+        universeName,
+        startMs,
+        endMs,
+        receivedAtMs,
+        receivedSymbols,
+        receivedSymbolsCount,
+        loopsCount,
+      });
+    }
+    out.sort((a, b) => b.receivedAtMs - a.receivedAtMs);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function writeIndex(items: DatasetHistoryRecord[]) {
+  ensureRoot();
+  const sorted = [...items].sort((a, b) => b.receivedAtMs - a.receivedAtMs);
+  fs.writeFileSync(INDEX_PATH, `${JSON.stringify(sorted, null, 2)}\n`, "utf8");
+}
+
+function rmDirBestEffort(dir: string) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+}
+
+export function listDatasetHistories(): DatasetHistoryRecord[] {
+  return readIndex();
+}
+
+export function readDatasetHistory(id: string): DatasetHistoryRecord {
+  const safe = safeId(id);
+  const fp = metaPath(safe);
+  if (!fs.existsSync(fp)) throw new Error("history_not_found");
+  const raw = fs.readFileSync(fp, "utf8");
+  const parsed = JSON.parse(raw) as DatasetHistoryRecord;
+  if (!parsed?.id || !parsed?.universeId) throw new Error("invalid_history_file");
+  return parsed;
+}
+
+export function upsertLatestDatasetHistory(input: {
+  id: string;
+  universeId: string;
+  universeName: string;
+  startMs: number;
+  endMs: number;
+  receivedAtMs: number;
+  receivedSymbols: string[];
+}): DatasetHistoryRecord {
+  const id = safeId(input.id);
+  const universeId = String(input.universeId ?? "").trim();
+  const universeName = String(input.universeName ?? "").trim();
+  const startMs = Number(input.startMs);
+  const endMs = Number(input.endMs);
+  const receivedAtMs = Number(input.receivedAtMs);
+  const receivedSymbols = Array.isArray(input.receivedSymbols)
+    ? input.receivedSymbols.filter((s) => typeof s === "string" && s.trim())
+    : [];
+  if (!universeId || !universeName) throw new Error("invalid_history_input");
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(receivedAtMs)) throw new Error("invalid_history_input");
+
+  const paramsKey = `${universeId}|${startMs}|${endMs}`;
+
+  const items = readIndex();
+  let carryLoops = 0;
+
+  if (items.length > 0 && items[0]?.paramsKey === paramsKey) {
+    const prev = items.shift()!;
+    carryLoops = Math.max(0, Math.floor(prev.loopsCount || 0));
+    rmDirBestEffort(recordDir(prev.id));
+  }
+
+  const record: DatasetHistoryRecord = {
+    id,
+    paramsKey,
+    universeId,
+    universeName,
+    startMs,
+    endMs,
+    receivedAtMs,
+    receivedSymbols,
+    receivedSymbolsCount: receivedSymbols.length,
+    loopsCount: carryLoops,
+  };
+
+  fs.mkdirSync(recordDir(id), { recursive: true });
+  fs.writeFileSync(metaPath(id), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  items.unshift(record);
+  writeIndex(items);
+  return record;
+}
+
+export function deleteDatasetHistory(id: string) {
+  const safe = safeId(id);
+  const items = readIndex().filter((r) => r.id !== safe);
+  writeIndex(items);
+  rmDirBestEffort(recordDir(safe));
+}
+
+export function incrementDatasetHistoryLoops(ids: string[], delta: number) {
+  const d = Math.max(0, Math.floor(Number(delta) || 0));
+  if (d <= 0) return;
+
+  const set = new Set((Array.isArray(ids) ? ids : []).map((v) => String(v ?? "").trim()).filter(Boolean));
+  if (!set.size) return;
+
+  const items = readIndex();
+  let changed = false;
+  for (const rec of items) {
+    if (!set.has(rec.id)) continue;
+    rec.loopsCount = Math.max(0, Math.floor(rec.loopsCount || 0) + d);
+    changed = true;
+    try {
+      fs.writeFileSync(metaPath(rec.id), `${JSON.stringify(rec, null, 2)}\n`, "utf8");
+    } catch {
+      // ignore
+    }
+  }
+  if (changed) writeIndex(items);
+}

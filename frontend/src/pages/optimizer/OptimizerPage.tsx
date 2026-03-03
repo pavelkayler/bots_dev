@@ -28,6 +28,7 @@ import {
 } from "../../features/optimizer/api/optimizerApi";
 import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
 import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard";
+import { deleteDatasetHistory, exportDatasetHistory, listDatasetHistories, type DatasetHistoryRecord } from "../../features/datasetHistory/api/datasetHistoryApi";
 import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataReceiveApi";
 
 type OptimizerResultRow = OptimizationResult;
@@ -217,6 +218,13 @@ export function OptimizerPage() {
   const [optimizerStatusWarning, setOptimizerStatusWarning] = useState<string | null>(null);
   const [datasetCache, setDatasetCache] = useState<string | null>(() => localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
 
+  const [datasetHistories, setDatasetHistories] = useState<DatasetHistoryRecord[]>([]);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState<string[]>([]);
+  const [historySortKey, setHistorySortKey] = useState<keyof DatasetHistoryRecord | "rangeMs" | "universeLabel">("receivedAtMs");
+  const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
+  const [historyPage, setHistoryPage] = useState(1);
+
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
   const [minTrades, setMinTrades] = useState("1");
@@ -260,6 +268,37 @@ useEffect(() => {
       window.clearInterval(timer);
     };
   }, []);
+
+
+useEffect(() => {
+  let cancelled = false;
+
+  async function refresh() {
+    try {
+      setHistoryBusy(true);
+      const res = await listDatasetHistories();
+      if (cancelled) return;
+      const items = Array.isArray(res.histories) ? res.histories : [];
+      setDatasetHistories(items);
+
+      // drop selections that disappeared
+      setSelectedHistoryIds((prev) => prev.filter((id) => items.some((h) => h.id === id)));
+      // keep page in range
+      setHistoryPage((p) => Math.max(1, p));
+    } catch {
+      // ignore
+    } finally {
+      if (!cancelled) setHistoryBusy(false);
+    }
+  }
+
+  void refresh();
+  const timer = window.setInterval(() => void refresh(), 4000);
+  return () => {
+    cancelled = true;
+    window.clearInterval(timer);
+  };
+}, []);
 
 
 useEffect(() => {
@@ -577,8 +616,8 @@ useEffect(() => {
 
   async function onStartLoop() {
     if (rangeError) return;
-    if (!datasetCache) {
-      setError(DATASET_CACHE_ERROR);
+    if (!selectedHistoryIds.length) {
+      setError("Select at least one history row before starting loop.");
       return;
     }
     setError(null);
@@ -607,6 +646,7 @@ useEffect(() => {
       };
       await startOptimizerLoop({
         tapeIds: [],
+        datasetHistoryIds: selectedHistoryIds,
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
@@ -721,6 +761,82 @@ useEffect(() => {
     }
     return null;
   }, [ranges]);
+
+  const historyRowsSorted = useMemo(() => {
+    const rows = Array.isArray(datasetHistories) ? datasetHistories : [];
+    const mapped = rows.map((h) => ({
+      ...h,
+      rangeMs: Math.max(0, Number(h.endMs) - Number(h.startMs)),
+      universeLabel: `${h.universeName} (${h.receivedSymbolsCount})`,
+    })) as Array<DatasetHistoryRecord & { rangeMs: number; universeLabel: string }>;
+
+    const dir = historySortDir === "asc" ? 1 : -1;
+    const key = historySortKey;
+
+    const readValue = (row: any): number | string => {
+      if (key === "rangeMs") return row.rangeMs;
+      if (key === "universeLabel") return row.universeLabel;
+      return row[key];
+    };
+
+    return [...mapped].sort((a, b) => {
+      const av = readValue(a);
+      const bv = readValue(b);
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }, [datasetHistories, historySortDir, historySortKey]);
+
+  const historyPageSize = 10;
+  const historyPages = Math.max(1, Math.ceil(historyRowsSorted.length / historyPageSize));
+  const historyPageClamped = Math.max(1, Math.min(historyPage, historyPages));
+  const historyRowsPaged = historyRowsSorted.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize);
+
+  useEffect(() => {
+    if (historyPage !== historyPageClamped) setHistoryPage(historyPageClamped);
+  }, [historyPage, historyPageClamped]);
+
+  const toggleHistory = useCallback((id: string) => {
+    setSelectedHistoryIds((prev) => prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]);
+  }, []);
+
+  const toggleHistorySort = useCallback((key: keyof DatasetHistoryRecord | "rangeMs" | "universeLabel") => {
+    setHistoryPage(1);
+    setHistorySortKey((prevKey) => {
+      if (prevKey === key) {
+        setHistorySortDir((prevDir) => (prevDir === "asc" ? "desc" : "asc"));
+        return prevKey;
+      }
+      setHistorySortDir("asc");
+      return key;
+    });
+  }, []);
+
+  const onDeleteHistory = useCallback(async (id: string) => {
+    if (!window.confirm(`Delete history ${id}?`)) return;
+    setHistoryBusy(true);
+    try {
+      await deleteDatasetHistory(id);
+      const res = await listDatasetHistories();
+      setDatasetHistories(res.histories ?? []);
+      setSelectedHistoryIds((prev) => prev.filter((v) => v !== id));
+    } finally {
+      setHistoryBusy(false);
+    }
+  }, []);
+
+  const onExportDatasetHistory = useCallback(async (id: string) => {
+    const res = await exportDatasetHistory(id);
+    const blob = new Blob([JSON.stringify(res.history, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `history_${id}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, []);
 
   function buildRangesPayload() {
     const payload: Partial<Record<RangeKey, { min: number; max: number }>> = {};
@@ -1292,9 +1408,72 @@ useEffect(() => {
 
             <h6>Receive Data</h6>
             <DatasetTargetCard />
-            {!datasetCache ? <Alert variant="warning" className="py-2">Run Receive Data first</Alert> : null}
+            {datasetHistories.length === 0 ? <Alert variant="warning" className="py-2">No dataset history yet. Run Receive Data to create history rows.</Alert> : null}
 
-            <fieldset disabled={!datasetCache}>
+            <Card className="mb-3">
+              <Card.Header className="py-2">Dataset history</Card.Header>
+              <Card.Body className="py-2">
+                <div className="d-flex align-items-center gap-2 mb-2" style={{ fontSize: 12 }}>
+                  <div>Selected: <b>{selectedHistoryIds.length}</b></div>
+                  {historyBusy ? <div className="text-muted">loading…</div> : null}
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <Table size="sm" bordered hover className="mb-2" style={{ minWidth: 980 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 36 }}></th>
+                        <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("startMs")}>from</th>
+                        <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("endMs")}>to</th>
+                        <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("rangeMs")}>range</th>
+                        <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("universeLabel")}>universe</th>
+                        <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("receivedAtMs")}>received</th>
+                        <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("loopsCount")}>loop runs</th>
+                        <th style={{ width: 200 }}>actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historyRowsPaged.length === 0 ? (
+                        <tr><td colSpan={8} className="text-muted">No history</td></tr>
+                      ) : historyRowsPaged.map((h: any) => {
+                        const checked = selectedHistoryIds.includes(h.id);
+                        const rangeSec = Math.floor((h.rangeMs ?? 0) / 1000);
+                        return (
+                          <tr key={h.id}>
+                            <td className="text-center">
+                              <Form.Check type="checkbox" checked={checked} onChange={() => toggleHistory(h.id)} />
+                            </td>
+                            <td>{formatHistoryEndedAt(Number(h.startMs))}</td>
+                            <td>{formatHistoryEndedAt(Number(h.endMs))}</td>
+                            <td>{formatDuration(rangeSec)}</td>
+                            <td>{h.universeLabel}</td>
+                            <td>{formatHistoryEndedAt(Number(h.receivedAtMs))}</td>
+                            <td>{Number(h.loopsCount) || 0}</td>
+                            <td>
+                              <div className="d-flex gap-2">
+                                <Button size="sm" variant="outline-secondary" onClick={() => void onExportDatasetHistory(h.id)}>Export</Button>
+                                <Button size="sm" variant="outline-danger" onClick={() => void onDeleteHistory(h.id)}>Delete</Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </Table>
+                </div>
+
+                <div className="d-flex justify-content-end">
+                  <Pagination className="mb-0">
+                    <Pagination.First onClick={() => setHistoryPage(1)} disabled={historyPageClamped <= 1} />
+                    <Pagination.Prev onClick={() => setHistoryPage(Math.max(1, historyPageClamped - 1))} disabled={historyPageClamped <= 1} />
+                    <Pagination.Item active>{historyPageClamped}</Pagination.Item>
+                    <Pagination.Next onClick={() => setHistoryPage(Math.min(historyPages, historyPageClamped + 1))} disabled={historyPageClamped >= historyPages} />
+                    <Pagination.Last onClick={() => setHistoryPage(historyPages)} disabled={historyPageClamped >= historyPages} />
+                  </Pagination>
+                </div>
+              </Card.Body>
+            </Card>
+
+            <fieldset disabled={false}>
             <h6>Optimization</h6>
             <Row className="g-2 align-items-end mb-2">
               <Col md={2} sm={4} xs={6}>
@@ -1397,7 +1576,7 @@ useEffect(() => {
             </Row>
             <Row className="g-2 align-items-center mb-2">
               <Col xs="auto">
-                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={!datasetCache || loopBusy || loopRunning || loopPaused || Boolean(rangeError)}>Start loop</Button>
+                <Button variant="outline-primary" onClick={() => void onStartLoop()} disabled={!selectedHistoryIds.length || loopBusy || loopRunning || loopPaused || Boolean(rangeError)}>Start loop</Button>
               </Col>
               <Col xs="auto">
                 <ButtonGroup>
