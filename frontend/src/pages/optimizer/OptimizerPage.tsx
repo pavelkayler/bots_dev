@@ -79,6 +79,27 @@ const LIVE_ROWS_SORT_THROTTLE_MS = 200;
 const DEBUG_ROWS_LOG_MIN_INTERVAL_MS = 500;
 const LOOP_EMPTY_RESULTS_WARNING_DELAY_MS = 5000;
 
+const DATASET_INTERVAL_ORDER: Record<string, number> = {
+  "1": 1,
+  "3": 2,
+  "5": 3,
+  "15": 4,
+  "30": 5,
+  "60": 6,
+  "120": 7,
+  "240": 8,
+  "360": 9,
+  "720": 10,
+  D: 11,
+  W: 12,
+  M: 13,
+};
+
+function chooseMaxDatasetInterval(intervals: string[]): string {
+  if (!intervals.length) return "1";
+  const uniq = [...new Set(intervals.map((it) => String(it || "1")))];
+  return uniq.sort((a, b) => (DATASET_INTERVAL_ORDER[b] ?? 0) - (DATASET_INTERVAL_ORDER[a] ?? 0))[0] ?? "1";
+}
 
 const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
 const HISTORY_CELL_STYLE = { padding: "4px 6px", whiteSpace: "nowrap", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12 } as const;
@@ -911,6 +932,16 @@ useEffect(() => {
         timeoutSec: Math.max(countDecimals(ranges.timeoutSec.min), countDecimals(ranges.timeoutSec.max)),
         rearmMs: Math.max(countDecimals(ranges.rearmMs.min), countDecimals(ranges.rearmMs.max)),
       };
+      if (import.meta.env.DEV && localStorage.getItem("debugDatasetTf") === "1") {
+        const selectedRows = datasetHistories.filter((h) => selectedHistoryIds.includes(h.id));
+        const selectedIntervals = [...new Set(selectedRows.map((h) => String(h.interval || "1")))];
+        console.log("[optimizer-dataset-tf:selected]", {
+          selectedHistoryIdsCount: selectedHistoryIds.length,
+          intervals: selectedIntervals,
+          chosenMaxInterval: chooseMaxDatasetInterval(selectedIntervals),
+        });
+      }
+
       const loopPayload = {
         tapeIds: [],
         datasetHistoryIds: selectedHistoryIds,

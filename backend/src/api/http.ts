@@ -915,14 +915,30 @@ function resolveDatasetCachePath(symbol: string, interval: string): string {
   return scoped;
 }
 
-function ensureSingleIntervalOrReply(reply: any, histories: Array<{ interval?: string }>): string | null {
-  const uniq = [...new Set(histories.map((h) => String(h.interval ?? "1")))];
-  if (!uniq.length) return "1";
-  if (uniq.length > 1) {
-    reply.code(400);
-    return null;
-  }
-  return uniq[0]!;
+const DATASET_INTERVAL_ORDER: Record<string, number> = {
+  "1": 1,
+  "3": 2,
+  "5": 3,
+  "15": 4,
+  "30": 5,
+  "60": 6,
+  "120": 7,
+  "240": 8,
+  "360": 9,
+  "720": 10,
+  D: 11,
+  W: 12,
+  M: 13,
+};
+
+function getDatasetIntervalRank(interval: string): number {
+  return DATASET_INTERVAL_ORDER[String(interval ?? "1")] ?? 0;
+}
+
+function chooseMaxInterval(histories: Array<{ interval?: string }>): string {
+  const intervals = [...new Set(histories.map((h) => String(h.interval ?? "1")))];
+  if (!intervals.length) return "1";
+  return intervals.sort((a, b) => getDatasetIntervalRank(b) - getDatasetIntervalRank(a))[0] ?? "1";
 }
 
 function computeDatasetHoursFromHistories(histories: Array<{ startMs: number; endMs: number }>): number {
@@ -1444,12 +1460,9 @@ app.get("/api/config", async () => {
     }
     histories.sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs) || (a.receivedAtMs - b.receivedAtMs));
 
-    const interval = ensureSingleIntervalOrReply(reply, histories);
-    if (!interval) {
-      return { error: "dataset_history_interval_mismatch", message: "Selected history rows must have the same timeframe." };
-    }
-
-    const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs, interval }));
+    const interval = chooseMaxInterval(histories);
+    const chosenIntervalHistories = histories.filter((h) => String(h.interval ?? "1") === interval);
+    const cacheDatasets = chosenIntervalHistories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs, interval }));
     if (cacheDatasets.some((ds) => !Array.isArray(ds.symbols) || ds.symbols.length === 0)) {
       reply.code(400);
       return { error: "dataset_history_symbols_missing", message: "Selected history contains no symbols." };
@@ -1730,12 +1743,9 @@ app.get("/api/config", async () => {
     }
     histories.sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs) || (a.receivedAtMs - b.receivedAtMs));
 
-    const interval = ensureSingleIntervalOrReply(reply, histories);
-    if (!interval) {
-      return { error: "dataset_history_interval_mismatch", message: "Selected history rows must have the same timeframe." };
-    }
-
-    const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs, interval }));
+    const interval = chooseMaxInterval(histories);
+    const chosenIntervalHistories = histories.filter((h) => String(h.interval ?? "1") === interval);
+    const cacheDatasets = chosenIntervalHistories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs, interval }));
     const allSymbols = new Set<string>();
     for (const ds of cacheDatasets) for (const s of ds.symbols) allSymbols.add(s);
 

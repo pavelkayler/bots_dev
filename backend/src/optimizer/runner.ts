@@ -100,6 +100,7 @@ type CloseSnapshot = { ts: number; realizedPnl: number };
 const MAX_TICK_INTERVAL_SAMPLES = 20_000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
 const DEBUG_DATASET_TF = process.env.DEBUG_DATASET_TF === "1";
+const DEBUG_OPT_TRADES = process.env.DEBUG_OPT_TRADES === "1";
 
 const INTERVAL_TO_MINUTES: Record<string, number> = {
   "1": 1,
@@ -449,6 +450,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
   const tapes: Array<{ tapeId: string; meta: TapeMeta | null; events: TapeEvent[]; firstTsMs: number | null; lastTsMs: number | null }> = [];
   const globalTickIntervals: number[] = [];
+  let sampleSymbolForDebug = "";
+  let sampleSymbolCandleCount = 0;
+  let debugPlacedOrders = 0;
+  let debugFilledOrders = 0;
+  let debugClosedTrades = 0;
   if (args.cacheDataset || (Array.isArray(args.cacheDatasets) && args.cacheDatasets.length)) {
     const datasets = (Array.isArray(args.cacheDatasets) && args.cacheDatasets.length)
       ? args.cacheDatasets
@@ -488,11 +494,13 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
 
     for (const [symbol, windows] of symbolWindows) {
+      if (!sampleSymbolForDebug) sampleSymbolForDebug = symbol;
       const fp = resolveReadCachePath(symbol, datasetInterval);
       const raw = await fs.promises.readFile(fp, "utf8");
       const events: TapeEvent[] = [];
       let firstTsMs: number | null = null;
       let lastTsMs: number | null = null;
+      let candleCount = 0;
 
       const inAnyWindow = (candleStartMs: number): boolean => {
         // windows are sorted/merged
@@ -519,6 +527,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         if (!Number.isFinite(candleStart) || !inAnyWindow(candleStart)) continue;
 
         const open = Number(row.open);
+        const high = Number(row.high);
+        const low = Number(row.low);
         const close = Number(row.close);
         if (!Number.isFinite(close) || close <= 0) continue;
         const turnoverNum = Number(row.turnover);
@@ -530,22 +540,34 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             : 0;
         const candleDelta = (Number.isFinite(open) ? open : close) - close;
         const fundingRate = candleDelta === 0 ? 0 : (candleDelta < 0 ? 1e-6 : -1e-6);
-        const ts = candleStart + intervalMin * 60_000;
-        events.push({
-          type: "ticker",
-          ts,
-          symbol,
-          payload: { markPrice: close, openInterest: openInterestValue, openInterestValue, fundingRate },
-        });
-        events.push({ type: "kline_confirm", ts, symbol, payload: { close } });
-        if (firstTsMs == null || ts < firstTsMs) firstTsMs = ts;
-        if (lastTsMs == null || ts > lastTsMs) lastTsMs = ts;
+        const tsClose = candleStart + intervalMin * 60_000;
+        const tickerPayload = { openInterest: openInterestValue, openInterestValue, fundingRate };
+        const openPrice = Number.isFinite(open) && open > 0 ? open : close;
+        const highPrice = Number.isFinite(high) && high > 0 ? high : close;
+        const lowPrice = Number.isFinite(low) && low > 0 ? low : close;
+        const hasRange = highPrice > lowPrice;
+
+        if (!hasRange) {
+          events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
+        } else {
+          events.push({ type: "ticker", ts: candleStart, symbol, payload: { markPrice: openPrice, ...tickerPayload } });
+          events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
+          events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
+          events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
+        }
+
+        events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
+        if (firstTsMs == null || candleStart < firstTsMs) firstTsMs = candleStart;
+        if (lastTsMs == null || tsClose > lastTsMs) lastTsMs = tsClose;
+        candleCount += 1;
       }
+
+      if (symbol === sampleSymbolForDebug) sampleSymbolCandleCount = candleCount;
 
       if (DEBUG_DATASET_TF && tapes.length === 0) {
         const firstTs = events.length ? events[0]?.ts ?? null : null;
         const lastTs = events.length ? events[events.length - 1]?.ts ?? null : null;
-        console.log("[optimizer-dataset-tf]", { symbol, interval: datasetInterval, tfMin: intervalMin, firstTs, lastTs, candleCount: Math.floor(events.length / 2) });
+        console.log("[optimizer-dataset-tf]", { symbol, interval: datasetInterval, tfMin: intervalMin, firstTs, lastTs, candleCount });
       }
       tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: intervalMin }, events, firstTsMs, lastTsMs });
     }
@@ -860,6 +882,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       netPnlTotal += stats.netRealized;
       tradesTotal += stats.closedTrades;
       winsTotal += stats.wins;
+      debugClosedTrades += stats.closedTrades;
     }
 
     if (cancelled) break;
@@ -886,6 +909,9 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     const winRatePct = tradesTotal > 0 ? (winsTotal / tradesTotal) * 100 : 0;
     const expectancy = tradesTotal > 0 ? netPnlTotal / tradesTotal : 0;
     const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? 1_000_000_000 : 0) : grossProfit / Math.abs(grossLoss);
+
+    debugPlacedOrders += ordersPlaced;
+    debugFilledOrders += ordersFilled;
 
     const candidateResult: OptimizerResult = {
       netPnl: netPnlTotal,
@@ -934,6 +960,17 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
   if (blacklistState && addedSinceFlush > 0) {
     flushNegativeBlacklist(blacklistState);
+  }
+
+  if (DEBUG_OPT_TRADES) {
+    console.log("[optimizer-run-summary]", {
+      interval: String((args.cacheDatasets?.[0]?.interval ?? args.cacheDataset?.interval ?? args.optTfMin ?? "1")),
+      sampleSymbol: sampleSymbolForDebug || null,
+      candleCount: sampleSymbolCandleCount,
+      placedOrders: debugPlacedOrders,
+      filledOrders: debugFilledOrders,
+      closedTrades: debugClosedTrades,
+    });
   }
 
   return {
