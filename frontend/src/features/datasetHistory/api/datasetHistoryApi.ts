@@ -31,7 +31,3 @@ export async function deleteDatasetHistory(id: string): Promise<{ ok: true } | {
   return (await res.json()) as { ok: true };
 }
 
-export async function exportDatasetHistory(id: string): Promise<{ history: any }> {
-  const base = getApiBase();
-  return await getJson<{ history: any }>(`${base}/api/data/history/${encodeURIComponent(id)}/export`);
-}

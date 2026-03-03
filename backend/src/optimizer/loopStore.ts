@@ -26,6 +26,10 @@ export type OptimizerLoopState = {
   updatedAtMs: number;
   finishedAtMs: number | null;
   lastJobId: string | null;
+  lastError?: {
+    statusCode: number;
+    bodySnippet: string;
+  } | null;
   runPayload: OptimizerLoopRunPayload;
   progress?: OptimizerLoopProgressState;
 };
@@ -63,6 +67,12 @@ export function readLoopState(): OptimizerLoopState | null {
       updatedAtMs: Number(parsed.updatedAtMs) || Date.now(),
       finishedAtMs: typeof parsed.finishedAtMs === "number" ? parsed.finishedAtMs : null,
       lastJobId: typeof parsed.lastJobId === "string" ? parsed.lastJobId : null,
+      lastError: parsed.lastError && typeof parsed.lastError === "object"
+        ? {
+          statusCode: Math.max(0, Math.floor(Number((parsed.lastError as any).statusCode) || 0)),
+          bodySnippet: String((parsed.lastError as any).bodySnippet ?? "").slice(0, 300),
+        }
+        : null,
       runPayload: parsed.runPayload as OptimizerLoopRunPayload,
       ...(parsed.progress && typeof parsed.progress === "object" ? {
         progress: {
