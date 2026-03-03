@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { normalizeBybitKlineInterval, type BybitKlineInterval } from "./datasetTargetStore.js";
 
 export type DatasetHistoryRecord = {
   id: string; // Receive Data jobId
@@ -9,6 +10,7 @@ export type DatasetHistoryRecord = {
 
   startMs: number;
   endMs: number;
+  interval: BybitKlineInterval;
 
   receivedAtMs: number;
 
@@ -58,7 +60,8 @@ function readIndex(): DatasetHistoryRecord[] {
       const startMs = Number(it.startMs);
       const endMs = Number(it.endMs);
       const receivedAtMs = Number(it.receivedAtMs);
-      const paramsKey = String(it.paramsKey ?? "").trim() || `${universeId}|${startMs}|${endMs}`;
+      const interval = normalizeBybitKlineInterval(it.interval);
+      const paramsKey = String(it.paramsKey ?? "").trim() || `${universeId}|${startMs}|${endMs}|${interval}`;
       const receivedSymbols = Array.isArray(it.receivedSymbols)
         ? it.receivedSymbols.filter((s: any) => typeof s === "string" && s.trim())
         : [];
@@ -73,6 +76,7 @@ function readIndex(): DatasetHistoryRecord[] {
         universeName,
         startMs,
         endMs,
+        interval,
         receivedAtMs,
         receivedSymbols,
         receivedSymbolsCount,
@@ -111,7 +115,11 @@ export function readDatasetHistory(id: string): DatasetHistoryRecord {
   const raw = fs.readFileSync(fp, "utf8");
   const parsed = JSON.parse(raw) as DatasetHistoryRecord;
   if (!parsed?.id || !parsed?.universeId) throw new Error("invalid_history_file");
-  return parsed;
+  return {
+    ...parsed,
+    interval: normalizeBybitKlineInterval((parsed as any).interval),
+    paramsKey: String(parsed.paramsKey ?? "").trim() || `${parsed.universeId}|${parsed.startMs}|${parsed.endMs}|${normalizeBybitKlineInterval((parsed as any).interval)}`,
+  };
 }
 
 export function upsertLatestDatasetHistory(input: {
@@ -120,6 +128,7 @@ export function upsertLatestDatasetHistory(input: {
   universeName: string;
   startMs: number;
   endMs: number;
+  interval: BybitKlineInterval;
   receivedAtMs: number;
   receivedSymbols: string[];
 }): DatasetHistoryRecord {
@@ -128,6 +137,7 @@ export function upsertLatestDatasetHistory(input: {
   const universeName = String(input.universeName ?? "").trim();
   const startMs = Number(input.startMs);
   const endMs = Number(input.endMs);
+  const interval = normalizeBybitKlineInterval(input.interval);
   const receivedAtMs = Number(input.receivedAtMs);
   const receivedSymbols = Array.isArray(input.receivedSymbols)
     ? input.receivedSymbols.filter((s) => typeof s === "string" && s.trim())
@@ -135,7 +145,7 @@ export function upsertLatestDatasetHistory(input: {
   if (!universeId || !universeName) throw new Error("invalid_history_input");
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(receivedAtMs)) throw new Error("invalid_history_input");
 
-  const paramsKey = `${universeId}|${startMs}|${endMs}`;
+  const paramsKey = `${universeId}|${startMs}|${endMs}|${interval}`;
 
   const items = readIndex();
   let carryLoops = 0;
@@ -153,6 +163,7 @@ export function upsertLatestDatasetHistory(input: {
     universeName,
     startMs,
     endMs,
+    interval,
     receivedAtMs,
     receivedSymbols,
     receivedSymbolsCount: receivedSymbols.length,

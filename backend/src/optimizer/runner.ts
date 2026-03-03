@@ -99,6 +99,43 @@ type CloseSnapshot = { ts: number; realizedPnl: number };
 
 const MAX_TICK_INTERVAL_SAMPLES = 20_000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
+const DEBUG_DATASET_TF = process.env.DEBUG_DATASET_TF === "1";
+
+const INTERVAL_TO_MINUTES: Record<string, number> = {
+  "1": 1,
+  "3": 3,
+  "5": 5,
+  "15": 15,
+  "30": 30,
+  "60": 60,
+  "120": 120,
+  "240": 240,
+  "360": 360,
+  "720": 720,
+  D: 1440,
+  W: 10080,
+  M: 43200,
+};
+
+function intervalToMinutes(interval: string): number {
+  const n = INTERVAL_TO_MINUTES[String(interval ?? "")];
+  const minutes = typeof n === "number" ? n : Number.NaN;
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : 1;
+}
+
+function cachePathForSymbolInterval(symbol: string, interval: string): string {
+  return path.join(CACHE_DIR, interval, `${symbol}.jsonl`);
+}
+
+function resolveReadCachePath(symbol: string, interval: string): string {
+  const scoped = cachePathForSymbolInterval(symbol, interval);
+  if (fs.existsSync(scoped)) return scoped;
+  if (interval === "1") {
+    const legacy = path.join(CACHE_DIR, `${symbol}.jsonl`);
+    if (fs.existsSync(legacy)) return legacy;
+  }
+  return scoped;
+}
 
 function pctChange(now: number, ref: number): number | null {
   if (!Number.isFinite(now) || !Number.isFinite(ref) || ref === 0) return null;
@@ -361,8 +398,9 @@ export type RunOptimizationArgs = {
     symbols: string[];
     startMs: number;
     endMs: number;
+    interval?: string;
   };
-  cacheDatasets?: Array<{ symbols: string[]; startMs: number; endMs: number }>;
+  cacheDatasets?: Array<{ symbols: string[]; startMs: number; endMs: number; interval?: string }>;
 };
 
 export type RunOptimizationHooks = {
@@ -416,6 +454,9 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       ? args.cacheDatasets
       : [args.cacheDataset!];
 
+    const datasetInterval = String((datasets[0] as any)?.interval ?? args.optTfMin ?? "1");
+    const intervalMin = intervalToMinutes(datasetInterval);
+
     // Build per-symbol time windows (can be multiple ranges combined)
     const symbolWindows = new Map<string, Array<{ startMs: number; endMs: number }>>();
     for (const ds of datasets) {
@@ -447,7 +488,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
 
     for (const [symbol, windows] of symbolWindows) {
-      const fp = path.join(CACHE_DIR, `${symbol}.jsonl`);
+      const fp = resolveReadCachePath(symbol, datasetInterval);
       const raw = await fs.promises.readFile(fp, "utf8");
       const events: TapeEvent[] = [];
       let firstTsMs: number | null = null;
@@ -489,7 +530,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             : 0;
         const candleDelta = (Number.isFinite(open) ? open : close) - close;
         const fundingRate = candleDelta === 0 ? 0 : (candleDelta < 0 ? 1e-6 : -1e-6);
-        const ts = candleStart + 60_000;
+        const ts = candleStart + intervalMin * 60_000;
         events.push({
           type: "ticker",
           ts,
@@ -501,11 +542,16 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         if (lastTsMs == null || ts > lastTsMs) lastTsMs = ts;
       }
 
-      tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: 1 }, events, firstTsMs, lastTsMs });
+      if (DEBUG_DATASET_TF && tapes.length === 0) {
+        const firstTs = events.length ? events[0]?.ts ?? null : null;
+        const lastTs = events.length ? events[events.length - 1]?.ts ?? null : null;
+        console.log("[optimizer-dataset-tf]", { symbol, interval: datasetInterval, tfMin: intervalMin, firstTs, lastTs, candleCount: Math.floor(events.length / 2) });
+      }
+      tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: intervalMin }, events, firstTsMs, lastTsMs });
     }
     hooks?.onLoadProgress?.(100, 100);
   }
-  if (!args.cacheDataset) {
+  if (!(args.cacheDataset || (Array.isArray(args.cacheDatasets) && args.cacheDatasets.length))) {
   const tapePathEntries = tapeFiles.map((file) => ({ tapeId: file.tapeId, tapePath: getTapePath(file.tapeId), byteLimit: file.bytes > -1 ? file.bytes : undefined }));
   const tapeSizes = await Promise.all(tapePathEntries.map(async ({ tapePath, byteLimit }) => {
     const statSize = (await fs.promises.stat(tapePath)).size;

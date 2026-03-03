@@ -7,6 +7,7 @@ export type DatasetHistoryRecord = {
   universeName: string;
   startMs: number;
   endMs: number;
+  interval: string;
   receivedAtMs: number;
   receivedSymbolsCount: number;
   loopsCount: number;
