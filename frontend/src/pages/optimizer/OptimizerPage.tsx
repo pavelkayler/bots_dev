@@ -1,4 +1,4 @@
-import { Fragment, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Pagination, Row, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
@@ -33,6 +33,7 @@ import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataRe
 
 type OptimizerResultRow = OptimizationResult;
 type LoopOptimizerResultRow = OptimizerResultRow & { __runJobId: string };
+type OptimizerSingleResultsState = { rowsById: Map<string, OptimizationResult>; order: string[]; version: number };
 
 type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs";
 type RangeState = Record<RangeKey, { min: string; max: string }>;
@@ -182,13 +183,6 @@ function makeResultSignature(row: OptimizerResultRow): string {
   ].join("|");
 }
 
-function areTopResultsSimilar(prev: OptimizationResult[], next: OptimizationResult[]): boolean {
-  if (prev.length !== next.length) return false;
-  if (prev.length === 0) return true;
-  const prevTop = prev[0];
-  const nextTop = next[0];
-  return prevTop.rank === nextTop.rank && prevTop.netPnl === nextTop.netPnl;
-}
 
 function loadStoredPositiveInt(key: string, fallback: string, min: number): string {
   try {
@@ -209,6 +203,53 @@ function safeJsonParse<T>(raw: string | null): T | null {
 function saveJson(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
+
+type OptimizerResultRowProps = {
+  row: OptimizationResult;
+  activePrecision: OptimizerPrecision;
+  rowIndex: number;
+  onCopyToSettings: (row: OptimizationResult) => void;
+};
+
+const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecision, rowIndex, onCopyToSettings }: OptimizerResultRowProps) {
+  if (import.meta.env.DEV && rowIndex < 3 && localStorage.getItem("debugOptimizerRowRenders") === "1") {
+    console.log("[optimizer-row-render]", { rowIndex, id: makeResultSignature(row), netPnl: row.netPnl, trades: row.trades });
+  }
+  return (
+    <tr>
+      <td style={{ whiteSpace: "nowrap" }}>{row.netPnl.toFixed(4)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.trades}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.winRatePct.toFixed(2)}%</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.expectancy.toFixed(4)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.profitFactor.toFixed(3)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.maxDrawdownUsdt.toFixed(4)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.ordersPlaced}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.ordersFilled}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.ordersExpired}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.params.tpRoiPct.toFixed(activePrecision.tp)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.params.slRoiPct.toFixed(activePrecision.sl)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.params.entryOffsetPct.toFixed(activePrecision.offset)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{row.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>
+        <Button size="sm" variant="outline-secondary" onClick={() => onCopyToSettings(row)}>Copy to settings</Button>
+      </td>
+    </tr>
+  );
+}, (prev, next) => (
+  prev.row === next.row
+  && prev.rowIndex === next.rowIndex
+  && prev.onCopyToSettings === next.onCopyToSettings
+  && prev.activePrecision.priceTh === next.activePrecision.priceTh
+  && prev.activePrecision.oivTh === next.activePrecision.oivTh
+  && prev.activePrecision.tp === next.activePrecision.tp
+  && prev.activePrecision.sl === next.activePrecision.sl
+  && prev.activePrecision.offset === next.activePrecision.offset
+  && prev.activePrecision.timeoutSec === next.activePrecision.timeoutSec
+  && prev.activePrecision.rearmMs === next.activePrecision.rearmMs
+));
 
 export function OptimizerPage() {
   const { conn, lastMsg, lastServerTime, wsUrl, streams } = useWsFeedLite();
@@ -250,12 +291,28 @@ export function OptimizerPage() {
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
 
-  const [results, setResults] = useState<OptimizationResult[]>(() => safeJsonParse<OptimizationResult[]>(localStorage.getItem(TOP_RESULTS_SINGLE_STORAGE_KEY)) ?? []);
+  const [singleResultsState, setSingleResultsState] = useState<OptimizerSingleResultsState>(() => {
+    const storedRows = safeJsonParse<OptimizationResult[]>(localStorage.getItem(TOP_RESULTS_SINGLE_STORAGE_KEY)) ?? [];
+    const rowsById = new Map<string, OptimizationResult>();
+    const order: string[] = [];
+    for (const row of storedRows) {
+      const rowId = makeResultSignature(row);
+      if (!rowsById.has(rowId)) order.push(rowId);
+      rowsById.set(rowId, row);
+    }
+    return { rowsById, order, version: 1 };
+  });
   const [loopAggRows, setLoopAggRows] = useState<LoopOptimizerResultRow[]>(() => safeJsonParse<LoopOptimizerResultRow[]>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY)) ?? []);
 
-useEffect(() => {
-  saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, results);
-}, [results]);
+  const singleRowsForRender = useMemo(() => (
+    singleResultsState.order
+      .map((rowId) => singleResultsState.rowsById.get(rowId))
+      .filter((row): row is OptimizationResult => row != null)
+  ), [singleResultsState.order, singleResultsState.version]);
+
+  useEffect(() => {
+    saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, singleRowsForRender);
+  }, [singleRowsForRender]);
 
   useEffect(() => {
     const syncDatasetCache = () => setDatasetCache(localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
@@ -375,28 +432,25 @@ useEffect(() => {
     if (!pending.length) return;
     liveRowsPendingByJobIdRef.current[activeId] = [];
 
-    setResults((prev) => {
-      const map = liveSingleRowsMapRef.current;
-      if (map.size === 0 && prev.length > 0) {
-        for (const row of prev) map.set(makeResultSignature(row), row);
-      }
+    setSingleResultsState((prev) => {
+      let changed = false;
+      const nextRowsById = new Map(prev.rowsById);
+      const nextOrder = prev.order.slice();
       for (const row of pending) {
-        map.set(makeResultSignature(row), row);
+        const rowId = makeResultSignature(row);
+        const prevRow = nextRowsById.get(rowId);
+        if (prevRow === row) continue;
+        if (!nextRowsById.has(rowId)) nextOrder.push(rowId);
+        nextRowsById.set(rowId, row);
+        changed = true;
       }
-      const merged = Array.from(map.values())
-        .sort((a, b) => {
-          const aVal = Number(sortKey === "priceTh" ? a.params.priceThresholdPct : sortKey === "oivTh" ? a.params.oivThresholdPct : sortKey === "tp" ? a.params.tpRoiPct : sortKey === "sl" ? a.params.slRoiPct : sortKey === "offset" ? a.params.entryOffsetPct : sortKey === "timeoutSec" ? a.params.timeoutSec : sortKey === "rearmMs" ? a.params.rearmMs : (a as any)[sortKey]);
-          const bVal = Number(sortKey === "priceTh" ? b.params.priceThresholdPct : sortKey === "oivTh" ? b.params.oivThresholdPct : sortKey === "tp" ? b.params.tpRoiPct : sortKey === "sl" ? b.params.slRoiPct : sortKey === "offset" ? b.params.entryOffsetPct : sortKey === "timeoutSec" ? b.params.timeoutSec : sortKey === "rearmMs" ? b.params.rearmMs : (b as any)[sortKey]);
-          const av = Number.isFinite(aVal) ? aVal : 0;
-          const bv = Number.isFinite(bVal) ? bVal : 0;
-          return sortDir === "asc" ? av - bv : bv - av;
-        })
-        .map((row, idx) => ({ ...row, rank: idx + 1 }));
-      setTotalRows(merged.length);
-      maybeLogRowsDebug(activeId, pending.length, merged.length);
-      return merged;
+      if (!changed) return prev;
+      const nextVersion = prev.version + 1;
+      setTotalRows(nextOrder.length);
+      maybeLogRowsDebug(activeId, pending.length, nextOrder.length);
+      return { rowsById: nextRowsById, order: nextOrder, version: nextVersion };
     });
-  }, [maybeLogRowsDebug, sortDir, sortKey]);
+  }, [maybeLogRowsDebug]);
 
   const queueLiveRowsAppend = useCallback((jobId: string, rows: OptimizationResult[]) => {
     if (!jobId || !rows.length) return;
@@ -445,7 +499,7 @@ useEffect(() => {
     setJobStatus("idle");
     setDone(0);
     setTotal(0);
-    setResults([]);
+    setSingleResultsState({ rowsById: new Map(), order: [], version: 0 });
     setPage(1);
     setTotalRows(0);
   }, []);
@@ -1132,7 +1186,20 @@ useEffect(() => {
     }
     const keepPreviousIfEmpty = options?.keepPreviousIfEmpty ?? false;
     if (keepPreviousIfEmpty && nextResults.length === 0) return;
-    setResults((prev) => (areTopResultsSimilar(prev, nextResults) ? prev : nextResults));
+    const rowsById = new Map<string, OptimizationResult>();
+    const order: string[] = [];
+    for (const row of nextResults) {
+      const rowId = makeResultSignature(row);
+      if (!rowsById.has(rowId)) order.push(rowId);
+      rowsById.set(rowId, row);
+    }
+    liveSingleRowsMapRef.current = new Map(rowsById);
+    setSingleResultsState((prev) => {
+      if (prev.order.length === order.length && prev.order.every((rowId, idx) => rowId === order[idx] && prev.rowsById.get(rowId) === rowsById.get(rowId))) {
+        return prev;
+      }
+      return { rowsById, order, version: prev.version + 1 };
+    });
     setPage((prev) => (prev === res.page ? prev : res.page));
     setTotalRows((prev) => (prev === res.totalRows ? prev : res.totalRows));
   }
@@ -1243,13 +1310,16 @@ useEffect(() => {
       const snapshotJobId = typeof parsed?.payload?.optimizer?.jobId === "string" ? parsed.payload.optimizer.jobId : null;
       const snapshotRows = Array.isArray(parsed?.payload?.optimizer?.rows) ? parsed.payload.optimizer.rows as OptimizationResult[] : [];
       if (!snapshotJobId || snapshotJobId !== activeJobId || loopActive || snapshotRows.length === 0) return;
-      liveSingleRowsMapRef.current = new Map(snapshotRows.map((row) => [makeResultSignature(row), row]));
-      setResults((prev) => {
-        const merged = Array.from(liveSingleRowsMapRef.current.values()).map((row, idx) => ({ ...row, rank: idx + 1 }));
-        return areTopResultsSimilar(prev, merged) ? prev : merged;
-      });
-      setTotalRows(snapshotRows.length);
-      maybeLogRowsDebug(snapshotJobId, snapshotRows.length, snapshotRows.length);
+      const rowsById = new Map<string, OptimizationResult>();
+      const order: string[] = [];
+      for (const row of snapshotRows) {
+        const rowId = makeResultSignature(row);
+        if (!rowsById.has(rowId)) order.push(rowId);
+        rowsById.set(rowId, row);
+      }
+      setSingleResultsState({ rowsById, order, version: Date.now() });
+      setTotalRows(order.length);
+      maybeLogRowsDebug(snapshotJobId, snapshotRows.length, order.length);
       return;
     }
     if (parsed?.type !== "optimizer_rows_append") return;
@@ -1318,7 +1388,7 @@ useEffect(() => {
   const activePrecision = (activeJobId ? jobPrecisionById[activeJobId] : undefined) ?? DEFAULT_PRECISION;
 
 
-  function copyToSettings(row: OptimizationResult) {
+  const copyToSettings = useCallback((row: OptimizationResult) => {
     const patch = {
       source: "optimizer",
       ts: Date.now(),
@@ -1340,7 +1410,7 @@ useEffect(() => {
       },
     };
     localStorage.setItem("bots_dev.pendingConfigPatch", JSON.stringify(patch));
-  }
+  }, [activeJobId, activePrecision]);
 
 
 
@@ -1436,7 +1506,7 @@ useEffect(() => {
   }
 
   const isLoopDisplay = lastTableSourceRef.current === "loop";
-  const displayedRows = isLoopDisplay ? (excludeNegative ? loopAggRows.filter((row) => row.netPnl >= 0) : loopAggRows) : results;
+  const displayedRows = isLoopDisplay ? (excludeNegative ? loopAggRows.filter((row) => row.netPnl >= 0) : loopAggRows) : singleRowsForRender;
   const loopDisplayRows = useMemo(() => {
     if (!isLoopDisplay) return displayedRows;
     const start = (page - 1) * pageSize;
@@ -1821,32 +1891,18 @@ useEffect(() => {
                 </tr>
               </thead>
               <tbody>
-                {loopDisplayRows.map((r) => {
+                {loopDisplayRows.map((r, rowIndex) => {
                   const rowKeyBase = makeResultSignature(r);
                   const rowJobId = (r as any)?.__runJobId ? String((r as any).__runJobId) : "";
                   const rowKey = rowJobId ? `${rowJobId}:${rowKeyBase}` : rowKeyBase;
                   return (
-                    <tr key={rowKey}>
-                                            <td style={{ whiteSpace: "nowrap" }}>{r.netPnl.toFixed(4)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.trades}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.winRatePct.toFixed(2)}%</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.expectancy.toFixed(4)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.profitFactor.toFixed(3)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.maxDrawdownUsdt.toFixed(4)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.ordersPlaced}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.ordersFilled}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.ordersExpired}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>
-                        <Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button>
-                      </td>
-                    </tr>
+                    <OptimizerResultRow
+                      key={rowKey}
+                      row={r}
+                      activePrecision={activePrecision}
+                      rowIndex={rowIndex}
+                      onCopyToSettings={copyToSettings}
+                    />
                   );
                 })}
                 {!loopDisplayRows.length ? (
