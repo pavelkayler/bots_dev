@@ -77,6 +77,7 @@ const LOOP_STATUS_POLL_MS = 1000;
 const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
 const LIVE_ROWS_SORT_THROTTLE_MS = 200;
 const DEBUG_ROWS_LOG_MIN_INTERVAL_MS = 500;
+const LOOP_EMPTY_RESULTS_WARNING_DELAY_MS = 5000;
 
 
 const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
@@ -493,6 +494,7 @@ useEffect(() => {
   const lastTableSourceRef = useRef<"loop" | "single">("single");
   const historyImportInputRef = useRef<HTMLInputElement | null>(null);
   const completedLoopRunIdsRef = useRef<Record<string, boolean>>({});
+  const hydratedLoopRunIdsRef = useRef<Record<string, boolean>>({});
   const prevLoopRunningRef = useRef(false);
   const lastDebugProgressLogAtRef = useRef(0);
   const liveSingleRowsMapRef = useRef<Map<string, OptimizationResult>>(new Map());
@@ -502,6 +504,7 @@ useEffect(() => {
   const activeJobIdRef = useRef<string | null>(null);
   const debugTrackedRowIdRef = useRef<string | null>(null);
   const [loopDebugTrackedRowIds, setLoopDebugTrackedRowIds] = useState<string[]>([]);
+  const [showLoopNoRowsWarning, setShowLoopNoRowsWarning] = useState(false);
   const prevLoopAggVersionRef = useRef(0);
   const prevLoopAggTotalRef = useRef(0);
 
@@ -1521,36 +1524,59 @@ useEffect(() => {
     const rows = Array.isArray(parsed?.payload?.rows) ? parsed.payload.rows as OptimizationResult[] : [];
     if (!jobId || rows.length === 0) return;
 
-    if (loopActive && jobId === loopJobId) {
+    if (lastTableSourceRef.current === "loop") {
+      if (import.meta.env.DEV && localStorage.getItem("debugOptimizerRows") === "1") {
+        const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
+        const filteredRows = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
+        const runStores = Object.values(loopAggState.byRunId);
+        const totalBefore = runStores.reduce((acc, store) => acc + store.order.length, 0);
+        const currentRunStore = loopAggState.byRunId[jobId];
+        const existingRowIds = new Set(currentRunStore?.order ?? []);
+        let appendedCount = 0;
+        for (const row of filteredRows) {
+          const rowId = makeResultSignature(row);
+          if (existingRowIds.has(rowId)) continue;
+          existingRowIds.add(rowId);
+          appendedCount += 1;
+        }
+        console.log("[optimizer-rows-append-loop]", { jobId, batchSize: rows.length, totalBefore, totalAfter: totalBefore + appendedCount });
+      }
       upsertLoopRunRowsAppend(jobId, rows, "ws");
       return;
     }
 
     if (loopActive || jobId !== activeJobId) return;
     queueLiveRowsAppend(jobId, rows);
-  }, [activeJobId, flushLiveRowsForActiveJob, lastMsg, logAppendOnlyDebug, loopActive, loopJobId, queueLiveRowsAppend, upsertLoopRunRowsAppend]);
+  }, [activeJobId, flushLiveRowsForActiveJob, lastMsg, logAppendOnlyDebug, loopActive, loopAggState.byRunId, minTrades, queueLiveRowsAppend, upsertLoopRunRowsAppend]);
 
   useEffect(() => {
-    if (!loopActive || !loopJobId) return;
+    if (lastTableSourceRef.current !== "loop") return;
+    const currentRunId = loopStatus?.loop?.lastJobId ?? null;
+    if (!currentRunId) return;
+    if (hydratedLoopRunIdsRef.current[currentRunId]) return;
+    const existingCount = loopAggState.byRunId[currentRunId]?.order.length ?? 0;
+    if (existingCount > 0) {
+      hydratedLoopRunIdsRef.current[currentRunId] = true;
+      return;
+    }
+    hydratedLoopRunIdsRef.current[currentRunId] = true;
     let alive = true;
-    const syncActiveRunResults = async () => {
+    const hydrateRunResults = async () => {
       try {
-        const existingCount = loopAggState.byRunId[loopJobId]?.order.length ?? 0;
-        if (existingCount > 0) return;
-        const rows = await fetchAllResultsForJob(loopJobId);
+        const rows = await fetchAllResultsForJob(currentRunId);
         if (!alive) return;
-        logAppendOnlyDebug("hydrate", { jobId: loopJobId, source: "poll", rows: rows.length });
-        upsertLoopRunRowsAppend(loopJobId, rows, "poll");
+        logAppendOnlyDebug("hydrate", { jobId: currentRunId, source: "poll", rows: rows.length });
+        upsertLoopRunRowsAppend(currentRunId, rows, "poll");
       } catch {
-        return;
+        delete hydratedLoopRunIdsRef.current[currentRunId];
       }
     };
-    void syncActiveRunResults();
+    void hydrateRunResults();
 
     return () => {
       alive = false;
     };
-  }, [fetchAllResultsForJob, logAppendOnlyDebug, loopActive, loopAggState.byRunId, loopJobId, upsertLoopRunRowsAppend]);
+  }, [fetchAllResultsForJob, logAppendOnlyDebug, loopAggState.byRunId, loopStatus?.loop?.lastJobId, upsertLoopRunRowsAppend]);
   async function onSort(nextSortKey: OptimizerSortKeyExtended) {
     if (!activeJobId) return;
     const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
@@ -1759,6 +1785,18 @@ useEffect(() => {
         ? (pauseFreezeAtMsRef.current ?? (loopStatus?.loop?.updatedAtMs ?? loopStartMs))
         : (loopStatus?.loop?.finishedAtMs ?? loopStatus?.loop?.updatedAtMs ?? loopStartMs);
   const loopElapsedSec = loopStartMs == null || loopEndMs == null ? null : Math.max(0, (loopEndMs - loopStartMs) / 1000);
+
+  const loopOrJobRunning = isLoopDisplay && (jobStatus === "running" || jobStatus === "paused" || Boolean(loopStatus?.loop?.isRunning) || Boolean(loopStatus?.loop?.isPaused));
+  useEffect(() => {
+    if (!loopOrJobRunning || loopAggRowsForRender.length > 0) {
+      setShowLoopNoRowsWarning(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setShowLoopNoRowsWarning(true);
+    }, LOOP_EMPTY_RESULTS_WARNING_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [loopAggRowsForRender.length, loopOrJobRunning]);
 
   return (
     <>
@@ -2051,6 +2089,7 @@ useEffect(() => {
             </div>
             {historyTransferMessage ? <div style={{ fontSize: 12, marginBottom: 8 }}>{historyTransferMessage}</div> : null}
 
+            {showLoopNoRowsWarning ? <div style={{ fontSize: 12, marginBottom: 8, color: "#a86d00" }}>No result rows received yet. If this persists, enable debugOptimizerRows.</div> : null}
             <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
               <thead>
                 <tr>
