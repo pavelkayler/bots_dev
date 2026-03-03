@@ -212,6 +212,17 @@ type OptimizerResultRowProps = {
 };
 
 const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecision, rowIndex, onCopyToSettings }: OptimizerResultRowProps) {
+  const rowDebugIdRef = useRef(makeResultSignature(row));
+  const rowDebugIndexRef = useRef(rowIndex);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || rowDebugIndexRef.current >= 3 || localStorage.getItem("debugOptimizerRowRenders") !== "1") return;
+    console.log("[optimizer-row-mount]", { rowIndex: rowDebugIndexRef.current, id: rowDebugIdRef.current });
+    return () => {
+      console.log("[optimizer-row-unmount]", { rowIndex: rowDebugIndexRef.current, id: rowDebugIdRef.current });
+    };
+  }, []);
+
   if (import.meta.env.DEV && rowIndex < 3 && localStorage.getItem("debugOptimizerRowRenders") === "1") {
     console.log("[optimizer-row-render]", { rowIndex, id: makeResultSignature(row), netPnl: row.netPnl, trades: row.trades });
   }
@@ -250,6 +261,46 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
   && prev.activePrecision.timeoutSec === next.activePrecision.timeoutSec
   && prev.activePrecision.rearmMs === next.activePrecision.rearmMs
 ));
+
+type OptimizerResultsBodyProps = {
+  rows: OptimizationResult[];
+  activePrecision: OptimizerPrecision;
+  onCopyToSettings: (row: OptimizationResult) => void;
+};
+
+const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePrecision, onCopyToSettings }: OptimizerResultsBodyProps) {
+  useEffect(() => {
+    if (!import.meta.env.DEV || localStorage.getItem("debugOptimizerRowRenders") !== "1") return;
+    console.log("[optimizer-results-body-mount]");
+    return () => {
+      console.log("[optimizer-results-body-unmount]");
+    };
+  }, []);
+
+  return (
+    <tbody>
+      {rows.map((r, rowIndex) => {
+        const rowKeyBase = makeResultSignature(r);
+        const rowJobId = (r as any)?.__runJobId ? String((r as any).__runJobId) : "";
+        const rowKey = rowJobId ? `${rowJobId}:${rowKeyBase}` : rowKeyBase;
+        return (
+          <OptimizerResultRow
+            key={rowKey}
+            row={r}
+            activePrecision={activePrecision}
+            rowIndex={rowIndex}
+            onCopyToSettings={onCopyToSettings}
+          />
+        );
+      })}
+      {!rows.length ? (
+        <tr>
+          <td colSpan={17} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
+        </tr>
+      ) : null}
+    </tbody>
+  );
+});
 
 export function OptimizerPage() {
   const { conn, lastMsg, lastServerTime, wsUrl, streams } = useWsFeedLite();
@@ -1264,7 +1315,9 @@ useEffect(() => {
           const next = res.status === "paused";
           return prev === next ? prev : next;
         });
-        await fetchResults(page, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
+        if (res.status !== "running" && res.status !== "paused") {
+          await fetchResults(page, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
+        }
         if (loopActive || singleJobId !== reqJobId) return;
         if (!alive) return;
         if (res.status === "error") {
@@ -1890,27 +1943,7 @@ useEffect(() => {
                   <th style={{ whiteSpace: "nowrap" }}>action</th>
                 </tr>
               </thead>
-              <tbody>
-                {loopDisplayRows.map((r, rowIndex) => {
-                  const rowKeyBase = makeResultSignature(r);
-                  const rowJobId = (r as any)?.__runJobId ? String((r as any).__runJobId) : "";
-                  const rowKey = rowJobId ? `${rowJobId}:${rowKeyBase}` : rowKeyBase;
-                  return (
-                    <OptimizerResultRow
-                      key={rowKey}
-                      row={r}
-                      activePrecision={activePrecision}
-                      rowIndex={rowIndex}
-                      onCopyToSettings={copyToSettings}
-                    />
-                  );
-                })}
-                {!loopDisplayRows.length ? (
-                  <tr>
-                    <td colSpan={17} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
-                  </tr>
-                ) : null}
-              </tbody>
+              <OptimizerResultsBody rows={loopDisplayRows} activePrecision={activePrecision} onCopyToSettings={copyToSettings} />
             </Table>
             {displayedRows.length ? (
               <Pagination>
