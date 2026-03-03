@@ -18,9 +18,8 @@ Status: **Planned** (next work batch)
    - Range presets: 24h, 48h, 1w, 2w, 4w, 1mo.
    - Manual start/end datetime.
    - Buttons:
-     - **Set/Apply**: fix the chosen Universe + Range as the active dataset target.
-     - **Receive Data**: fetch missing historical points from Bybit into cache.
-   - Data fetch progress bar aware of Bybit API limits (~500 requests / 5s).
+     - **Receive Data**: apply the chosen Universe + Range as the dataset target and fetch missing historical points from Bybit into cache.
+   - Data fetch progress bar aware of Bybit API limits (strict 500 requests / 5s).
 
 3) **Unified tables and pagination**
    - All tables: rows-per-page, page count, total items, and first/last page buttons.
@@ -33,10 +32,11 @@ Status: **Planned** (next work batch)
 
 5) **Optimizer UI simplification**
    - Remove single-run controls: "Run Optimization", "Pause", "Resume", "Stop" and the backend processes supporting them.
-   - Remove manual from/to inputs and "Run in Range" checkbox (range is driven by active dataset target).
+   - Keep manual from/to inputs and "Run in Range" checkbox removed (range is driven by the active dataset target via Receive Data).
 
 ### Notes / key design decisions
 - Historical points source: Bybit REST endpoints (kline/OI/funding as required by strategy).
+- `klineTfMin` is independent from Universe naming and does not change Universe file name/id semantics.
 - Cache model: store per-symbol time-series on disk (SQLite or JSONL) and reuse for loop optimization without repeated API calls.
 - Optionally allow “partial cache fill”: if cache already contains part of requested range, fetch only missing segments.
 

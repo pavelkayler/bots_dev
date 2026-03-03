@@ -25,13 +25,11 @@ echo.
 echo ===== MENU =====
 echo 1 - start
 echo 2 - stop
-echo 3 - status
 echo 0 - exit
 set /p "choice=Select: "
 
 if "%choice%"=="1" goto :do_start
 if "%choice%"=="2" goto :do_stop
-if "%choice%"=="3" goto :do_status
 if "%choice%"=="0" goto :done
 
 echo Invalid choice: "%choice%"
@@ -45,12 +43,6 @@ goto :menu
 
 :do_stop
 call "m.bat" stop
-echo.
-pause
-goto :menu
-
-:do_status
-call "m.bat" status
 echo.
 pause
 goto :menu

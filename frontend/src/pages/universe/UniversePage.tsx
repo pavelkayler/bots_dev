@@ -130,7 +130,7 @@ export function UniversePage() {
 
   const canCreate = useMemo(() => !creating, [creating]);
 
-  async function onCreate(logToConsole = false) {
+  async function onCreate() {
     setCreating(true);
     setError(null);
     setLastCreated(null);
@@ -153,9 +153,6 @@ export function UniversePage() {
       createAbortRef.current?.abort();
       createAbortRef.current = new AbortController();
       const res = await createUniverse(parsedTurnover, parsedVol, createAbortRef.current.signal);
-      if (logToConsole) {
-        console.log("Universe create response", res);
-      }
       setLastCreated(res.universe.meta);
       setStats(res.stats);
       await refresh();
@@ -164,9 +161,6 @@ export function UniversePage() {
     } catch (e: any) {
       if (e?.name === "AbortError") {
         return;
-      }
-      if (logToConsole) {
-        console.log("Universe create error", e);
       }
       setError(String(e?.message ?? e));
       setCreateJob(null);
@@ -274,11 +268,6 @@ export function UniversePage() {
                 <Button variant="primary" onClick={() => void onCreate()} disabled={!canCreate || creating}>
                   {creating ? <Spinner animation="border" size="sm" /> : "Create"}
                 </Button>
-                {import.meta.env.DEV ? (
-                  <Button className="ms-2" variant="outline-secondary" onClick={() => void onCreate(true)} disabled={!canCreate || creating}>
-                    Test Create
-                  </Button>
-                ) : null}
               </div>
             </div>
           </Form>

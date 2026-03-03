@@ -37,9 +37,10 @@ type BybitApiResponse = {
 };
 
 const BYBIT_BASE_URL = process.env.BYBIT_REST_URL ?? "https://api.bybit.com";
-const INTERVAL_MINUTES = 1;
 const REQUEST_LIMIT = 1000;
-const WINDOW_MS = INTERVAL_MINUTES * 60_000 * REQUEST_LIMIT;
+const WINDOW_MS = 5000;
+const RATE_LIMIT_MAX_REQUESTS = 500;
+const KLINE_BATCH_SPAN_MS = 60_000 * REQUEST_LIMIT;
 const PROGRESS_THROTTLE_MS = 80;
 const MAX_RANGE_MS = 180 * 24 * 60 * 60 * 1000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
@@ -49,7 +50,8 @@ const jobs = new Map<string, ReceiveJobInternal>();
 class RateLimiter {
   private readonly maxRequests: number;
   private readonly windowMs: number;
-  private queue: number[] = [];
+  private windowStartMs = 0;
+  private requestCount = 0;
 
   constructor(maxRequests: number, windowMs: number) {
     this.maxRequests = maxRequests;
@@ -59,19 +61,21 @@ class RateLimiter {
   async acquire() {
     while (true) {
       const now = Date.now();
-      this.queue = this.queue.filter((ts) => now - ts < this.windowMs);
-      if (this.queue.length < this.maxRequests) {
-        this.queue.push(now);
+      if (this.windowStartMs === 0 || now - this.windowStartMs >= this.windowMs) {
+        this.windowStartMs = now;
+        this.requestCount = 0;
+      }
+      if (this.requestCount < this.maxRequests) {
+        this.requestCount += 1;
         return;
       }
-      const oldest = this.queue[0] ?? now;
-      const waitMs = Math.max(10, this.windowMs - (now - oldest));
+      const waitMs = Math.max(1, this.windowMs - (now - this.windowStartMs));
       await sleep(waitMs);
     }
   }
 }
 
-const limiter = new RateLimiter(350, 5000);
+const limiter = new RateLimiter(RATE_LIMIT_MAX_REQUESTS, WINDOW_MS);
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -205,7 +209,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
 
     const universe = readUniverse(target.universeId);
     const symbols = Array.isArray(universe.symbols) ? universe.symbols.filter((s) => typeof s === "string" && s.trim()) : [];
-    const batchesPerSymbol = Math.max(1, Math.ceil((resolvedRange.endMs - resolvedRange.startMs) / WINDOW_MS));
+    const batchesPerSymbol = Math.max(1, Math.ceil((resolvedRange.endMs - resolvedRange.startMs) / KLINE_BATCH_SPAN_MS));
     job.progress.totalSteps = Math.max(1, symbols.length * batchesPerSymbol);
     setProgress(job, { totalSteps: job.progress.totalSteps, message: "Starting receive." }, true);
 
@@ -218,9 +222,9 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
       const merged = loadSymbolCache(symbol);
       setProgress(job, { currentSymbol: symbol, message: `Receiving ${symbol}` }, true);
 
-      for (let cursor = resolvedRange.startMs; cursor < resolvedRange.endMs; cursor += WINDOW_MS) {
+      for (let cursor = resolvedRange.startMs; cursor < resolvedRange.endMs; cursor += KLINE_BATCH_SPAN_MS) {
         if (job.cancelRequested) break;
-        const batchEnd = Math.min(resolvedRange.endMs, cursor + WINDOW_MS - 1);
+        const batchEnd = Math.min(resolvedRange.endMs, cursor + KLINE_BATCH_SPAN_MS - 1);
         try {
           const batch = await fetchKlinesBatch(symbol, cursor, batchEnd);
           for (const row of batch) {

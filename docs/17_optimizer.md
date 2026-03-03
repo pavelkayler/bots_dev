@@ -103,9 +103,10 @@ Instead, it will operate on a cached historical dataset fetched from Bybit REST 
 
 ### Workflow
 1) Select Universe + Range.
-2) Click **Set/Apply** to fix the target.
-3) Click **Receive Data** to fill cache (fetch only missing parts).
+2) Click **Receive Data** to apply the selected target and fill cache (fetch only missing parts).
 4) Run optimizer in loop mode on cached points.
+
+`klineTfMin` does **not** affect Universe naming and is unrelated to Universe file name/id semantics.
 
 ### UI simplification (planned)
 - Remove single-run job controls (Run/Pause/Resume/Stop) and their backend job processes.
@@ -118,3 +119,4 @@ Data receive must respect Bybit IP limits. Progress UI should show:
 - fetched/total requests (or points)
 - sleep/throttle periods due to limits
 
+Current limiter target: strict 500 requests per 5 seconds.

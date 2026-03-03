@@ -46,6 +46,15 @@ export type OptimizerLoopStatus = {
   runsCompleted?: number;
   runsTotal?: number | null;
   lastJobStatus?: { status: "running" | "paused" | "done" | "error" | "cancelled"; donePercent: number; message?: string } | null;
+  progress?: {
+    jobId: string;
+    status: "running" | "done" | "canceled" | "error";
+    runIndex: number;
+    runTotal: number;
+    runPct: number;
+    overallPct: number;
+    updatedAt: number;
+  } | null;
 };
 export type OptimizerSortKey = "netPnl" | "trades" | "winRatePct";
 export type OptimizerSortDir = "asc" | "desc";
