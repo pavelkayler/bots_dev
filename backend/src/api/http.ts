@@ -1416,17 +1416,36 @@ export function registerHttpRoutes(app: FastifyInstance) {
     try {
       optimizerWorkerManager.start(jobId, resolvedRunPayload, {
         onProgress: (msg) => {
-          const pct2 = Math.max(0, Math.min(100, Math.round((Number(msg.donePercent) || 0) * 100) / 100));
-          job.lastPct = pct2;
-          job.done = pct2;
-          job.total = 100;
-          job.processedCandidates = Number(msg.done) || 0;
-          job.totalCandidates = Number(msg.total) || totalCandidates;
-          job.updatedAtMs = Date.now();
-          const preview = Array.isArray(msg.previewResults) ? msg.previewResults : [];
-          job.results = preview.filter((r: any) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 200);
-          if (typeof msg.messageAppend === "string" && msg.messageAppend) {
-            job.message = [job.message, msg.messageAppend].filter(Boolean).join(" | ");
+          const now = Date.now();
+          const donePercentRaw = Number((msg as any)?.donePercent);
+          const hasDonePercent = Number.isFinite(donePercentRaw);
+
+          // NOTE: the worker can emit progress-like messages that only contain `messageAppend`
+          // (e.g. blacklist summary updates). Those must NOT reset `done`/`lastPct` to 0.
+          if (hasDonePercent) {
+            const pct2 = Math.max(0, Math.min(100, Math.round(donePercentRaw * 100) / 100));
+            job.lastPct = Math.max(job.lastPct || 0, pct2);
+            job.done = job.lastPct;
+            job.total = 100;
+
+            const doneCountRaw = Number((msg as any)?.done);
+            const totalCountRaw = Number((msg as any)?.total);
+            if (Number.isFinite(doneCountRaw)) job.processedCandidates = doneCountRaw;
+            if (Number.isFinite(totalCountRaw) && totalCountRaw > 0) job.totalCandidates = totalCountRaw;
+
+            const preview = Array.isArray((msg as any)?.previewResults) ? (msg as any).previewResults : [];
+            job.results = preview.filter((r: any) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 200);
+
+            if (optimizerLoopState?.lastJobId === jobId && optimizerLoopState.progress?.jobId === jobId) {
+              const state = optimizerLoopState;
+              const runTotal = state.isInfinite ? Math.max(state.runIndex + 1, 1) : Math.max(1, state.runsCount);
+              updateLoopProgressState(buildLoopProgressState(jobId, "running", state.runIndex + 1, runTotal, pct2));
+            }
+          }
+
+          job.updatedAtMs = now;
+          if (typeof (msg as any)?.messageAppend === "string" && (msg as any).messageAppend) {
+            job.message = [job.message, String((msg as any).messageAppend)].filter(Boolean).join(" | ");
           }
           if (job.pauseRequested && job.status === "running") {
             job.pauseRequested = false;
@@ -1441,11 +1460,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
             optimizerWorkerManager.resume(jobId);
           }
           if (job.cancelRequested) optimizerWorkerManager.cancel(jobId);
-          if (optimizerLoopState?.lastJobId === jobId && optimizerLoopState.progress?.jobId === jobId) {
-            const state = optimizerLoopState;
-            const runTotal = state.isInfinite ? Math.max(state.runIndex + 1, 1) : Math.max(1, state.runsCount);
-            updateLoopProgressState(buildLoopProgressState(jobId, "running", state.runIndex + 1, runTotal, pct2));
-          }
           writeCheckpoint(jobId, job);
           writeJobSnapshot(jobId, job);
         },

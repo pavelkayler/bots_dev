@@ -16,3 +16,7 @@ backend/data/optimizer_blacklists/
 backend/data/optimizer_checkpoints/
 backend/data/optimizer_loops/
 backend/data/sessions/
+backend/data/cache/
+backend/data/dataset_target.json
+backend/data/dataset_target.json
+backend/data/optimizer_job_history.json

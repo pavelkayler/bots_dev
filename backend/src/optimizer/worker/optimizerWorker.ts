@@ -23,6 +23,10 @@ let lastProgressSentAtMs = 0;
 let pendingProgressFlushTimer: NodeJS.Timeout | null = null;
 let pendingProgress: PendingProgress | null = null;
 
+let lastBlacklistEmitAtMs = 0;
+let lastBlacklistCount = -1;
+let lastBlacklistSkipped = -1;
+
 function toDonePercent(done: number, total: number) {
   if (total <= 0) return 0;
   const pct = (done / total) * 100;
@@ -124,7 +128,7 @@ parentPort.on("message", async (msg: any) => {
       },
       onProgress: (_done, total, previewResults) => {
         const done = Number(_done) || 0;
-        const donePct = total > 0 ? Math.floor((done / total) * 100) : 0;
+        const donePct = toDonePercent(done, total);
         queueProgress(done, total, Array.isArray(previewResults) ? previewResults : [], donePct);
       },
       onCheckpoint: ({ done, total, donePercent, partialResults }) => {
@@ -141,7 +145,20 @@ parentPort.on("message", async (msg: any) => {
         });
       },
       onBlacklistUpdate: (summary) => {
-        parentPort?.postMessage({ type: "progress", jobId: currentJobId, updatedAtMs: Date.now(), messageAppend: `blacklist=${summary.count} skipped=${summary.skipped}` });
+        const now = Date.now();
+        const count = Number(summary?.count) || 0;
+        const skipped = Number(summary?.skipped) || 0;
+        const changed = count !== lastBlacklistCount || skipped !== lastBlacklistSkipped;
+        if (!changed && now - lastBlacklistEmitAtMs < 2000) return;
+        lastBlacklistCount = count;
+        lastBlacklistSkipped = skipped;
+        lastBlacklistEmitAtMs = now;
+        parentPort?.postMessage({
+          type: "progress",
+          jobId: currentJobId,
+          updatedAtMs: now,
+          messageAppend: `blacklist=${count} skipped=${skipped}`,
+        });
       },
     });
 

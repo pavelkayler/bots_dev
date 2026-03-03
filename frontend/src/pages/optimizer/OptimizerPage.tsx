@@ -787,15 +787,18 @@ useEffect(() => {
 
         const currentLoopJobId = next.loop?.lastJobId ?? null;
         const completedJobId = currentLoopJobId ?? lastNonNullLoopJobIdRef.current;
-        let donePercent = Math.floor(Number(next.progress?.runPct ?? next.lastJobStatus?.donePercent ?? 0));
-        let runStatus = next.progress?.status === "canceled" ? "cancelled" : next.lastJobStatus?.status;
+        const progressSnapshot = next.progress ?? null;
+
+        let donePercent = Math.floor(Number(progressSnapshot?.runPct ?? next.lastJobStatus?.donePercent ?? 0));
+        let runStatus = progressSnapshot?.status === "canceled" ? "cancelled" : next.lastJobStatus?.status;
 
         if (currentLoopJobId) {
           try {
             const statusRes = await getJobStatus(currentLoopJobId);
             if (!mounted) return;
             const progress = getStableProgressForJob(currentLoopJobId, statusRes as { donePct?: number; done?: number; startedAtMs?: number | null });
-            donePercent = Math.floor(Number(next.progress?.runPct ?? progress.pct));
+            const snapshotRunPct = typeof progressSnapshot?.runPct === "number" ? progressSnapshot.runPct : null;
+            donePercent = Math.floor(Number.isFinite(snapshotRunPct) ? Math.max(snapshotRunPct as number, progress.pct) : progress.pct);
             runStatus = statusRes.status;
             setJobStartedAtMs((prev) => (prev === progress.startedAtMs ? prev : progress.startedAtMs));
             setJobUpdatedAtMs((prev) => {
@@ -810,16 +813,50 @@ useEffect(() => {
           } catch {
             // Keep using /loop/status fallback if per-job status is briefly unavailable.
           }
+        } else {
+          // Loop can be stopped while `jobStatus` is still "running" (because we stop polling per-job status once `lastJobId` becomes null).
+          // Ensure UI transitions to a terminal job status based on the persisted loop progress snapshot.
+          const isRunningNow2 = Boolean(next.loop?.isRunning);
+          const isPausedNow2 = Boolean(next.loop?.isPaused);
+          if (!isRunningNow2 && !isPausedNow2 && progressSnapshot) {
+            const mappedStatus = progressSnapshot.status === "done"
+              ? "done"
+              : progressSnapshot.status === "canceled"
+                ? "cancelled"
+                : progressSnapshot.status === "error"
+                  ? "error"
+                  : "idle";
+            setJobStatus((prev) => (prev === mappedStatus ? prev : mappedStatus));
+            setJobFinishedAtMs((prev) => {
+              if (prev != null) return prev;
+              const fromLoop = next.loop?.finishedAtMs ?? null;
+              const fromProgress = typeof progressSnapshot.updatedAt === "number" ? progressSnapshot.updatedAt : null;
+              return fromLoop ?? fromProgress;
+            });
+            setJobUpdatedAtMs((prev) => {
+              const updatedAt = next.loop?.updatedAtMs ?? null;
+              return prev === updatedAt ? prev : updatedAt;
+            });
+            const lastId = lastNonNullLoopJobIdRef.current;
+            if (lastId) {
+              const startedAt = startedAtByJobIdRef.current[lastId] ?? null;
+              if (startedAt != null) setJobStartedAtMs((prev) => (prev == null ? startedAt : prev));
+            }
+          }
         }
 
-        const didCompleteRun = prevLoopRunningRef.current && (donePercent === 100 || runStatus === "done");
+        const didCompleteRun = prevLoopRunningRef.current && (
+          donePercent === 100 ||
+          runStatus === "done" ||
+          progressSnapshot?.status === "done"
+        );
 
         setLoopStatus(next);
-        maybeLogProgress(next.progress);
+        maybeLogProgress(progressSnapshot);
         setNowMs(Date.now());
         setTotal(100);
         setDone((prev) => {
-          if (next.progress) return Math.floor(clamp(next.progress.runPct, 0, 100));
+          if (progressSnapshot) return Math.floor(clamp(progressSnapshot.runPct, 0, 100));
           if (donePercent === 100) return 100;
           if (!isRunningNow && !next.loop?.isPaused) return prev;
           return donePercent;

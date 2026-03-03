@@ -1,0 +1,8 @@
+{
+  "universeId": "10m_5pct",
+  "range": {
+    "kind": "preset",
+    "preset": "6h"
+  },
+  "updatedAtMs": 1772543903636
+}
