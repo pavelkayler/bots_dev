@@ -34,6 +34,8 @@ import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataRe
 type OptimizerResultRow = OptimizationResult;
 type LoopOptimizerResultRow = OptimizerResultRow & { __runJobId: string };
 type OptimizerSingleResultsState = { rowsById: Map<string, OptimizationResult>; order: string[]; version: number };
+type LoopRunStore = { rowsById: Map<string, LoopOptimizerResultRow>; order: string[]; version: number };
+type LoopAggState = { runOrder: string[]; byRunId: Record<string, LoopRunStore>; version: number };
 
 type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs";
 type RangeState = Record<RangeKey, { min: string; max: string }>;
@@ -207,26 +209,26 @@ function saveJson(key: string, value: unknown) {
 type OptimizerResultRowProps = {
   row: OptimizationResult;
   activePrecision: OptimizerPrecision;
-  rowIndex: number;
-  debugTrackedRowId: string | null;
+  rowIndex?: number;
+  debugTrackMount: boolean;
   onCopyToSettings: (row: OptimizationResult) => void;
 };
 
-const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecision, rowIndex, debugTrackedRowId, onCopyToSettings }: OptimizerResultRowProps) {
+const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecision, rowIndex, debugTrackMount, onCopyToSettings }: OptimizerResultRowProps) {
   const rowDebugIdRef = useRef(makeResultSignature(row));
-  const rowDebugIndexRef = useRef(rowIndex);
+  const rowDebugIndexRef = useRef(typeof rowIndex === "number" ? rowIndex : -1);
 
   useEffect(() => {
     if (!import.meta.env.DEV || localStorage.getItem("debugRunAppendOnly") !== "1") return;
-    const shouldLog = rowDebugIndexRef.current < 2 || rowDebugIdRef.current === debugTrackedRowId;
+    const shouldLog = debugTrackMount;
     if (!shouldLog) return;
     console.log("[optimizer-row-mount]", { rowIndex: rowDebugIndexRef.current, id: rowDebugIdRef.current });
     return () => {
       console.log("[optimizer-row-unmount]", { rowIndex: rowDebugIndexRef.current, id: rowDebugIdRef.current });
     };
-  }, [debugTrackedRowId]);
+  }, [debugTrackMount]);
 
-  if (import.meta.env.DEV && rowIndex < 3 && localStorage.getItem("debugOptimizerRowRenders") === "1") {
+  if (import.meta.env.DEV && typeof rowIndex === "number" && rowIndex < 3 && localStorage.getItem("debugOptimizerRowRenders") === "1") {
     console.log("[optimizer-row-render]", { rowIndex, id: makeResultSignature(row), netPnl: row.netPnl, trades: row.trades });
   }
   return (
@@ -256,6 +258,7 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
   prev.row === next.row
   && prev.rowIndex === next.rowIndex
   && prev.onCopyToSettings === next.onCopyToSettings
+  && prev.debugTrackMount === next.debugTrackMount
   && prev.activePrecision.priceTh === next.activePrecision.priceTh
   && prev.activePrecision.oivTh === next.activePrecision.oivTh
   && prev.activePrecision.tp === next.activePrecision.tp
@@ -268,11 +271,12 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
 type OptimizerResultsBodyProps = {
   rows: OptimizationResult[];
   activePrecision: OptimizerPrecision;
-  debugTrackedRowId: string | null;
+  isLoopDisplay: boolean;
+  debugTrackedRowIds: string[];
   onCopyToSettings: (row: OptimizationResult) => void;
 };
 
-const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePrecision, debugTrackedRowId, onCopyToSettings }: OptimizerResultsBodyProps) {
+const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePrecision, isLoopDisplay, debugTrackedRowIds, onCopyToSettings }: OptimizerResultsBodyProps) {
   useEffect(() => {
     if (!import.meta.env.DEV || localStorage.getItem("debugOptimizerRowRenders") !== "1") return;
     console.log("[optimizer-results-body-mount]");
@@ -281,19 +285,22 @@ const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePr
     };
   }, []);
 
+  const debugTrackedSet = useMemo(() => new Set(debugTrackedRowIds), [debugTrackedRowIds]);
+
   return (
     <tbody>
       {rows.map((r, rowIndex) => {
         const rowKeyBase = makeResultSignature(r);
         const rowJobId = (r as any)?.__runJobId ? String((r as any).__runJobId) : "";
         const rowKey = rowJobId ? `${rowJobId}:${rowKeyBase}` : rowKeyBase;
+        const debugTrackMount = isLoopDisplay && (rowIndex < 2 || debugTrackedSet.has(rowKeyBase));
         return (
           <OptimizerResultRow
             key={rowKey}
             row={r}
             activePrecision={activePrecision}
-            rowIndex={rowIndex}
-            debugTrackedRowId={debugTrackedRowId}
+            rowIndex={isLoopDisplay ? undefined : rowIndex}
+            debugTrackMount={debugTrackMount}
             onCopyToSettings={onCopyToSettings}
           />
         );
@@ -358,7 +365,24 @@ export function OptimizerPage() {
     }
     return { rowsById, order, version: 1 };
   });
-  const [loopAggRows, setLoopAggRows] = useState<LoopOptimizerResultRow[]>(() => safeJsonParse<LoopOptimizerResultRow[]>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY)) ?? []);
+  const [loopAggState, setLoopAggState] = useState<LoopAggState>(() => {
+    const storedRows = safeJsonParse<LoopOptimizerResultRow[]>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY)) ?? [];
+    const runOrder: string[] = [];
+    const byRunId: Record<string, LoopRunStore> = {};
+    for (const row of storedRows) {
+      const runId = String(row.__runJobId ?? "");
+      if (!runId) continue;
+      if (!byRunId[runId]) {
+        byRunId[runId] = { rowsById: new Map(), order: [], version: 1 };
+        runOrder.push(runId);
+      }
+      const rowId = makeResultSignature(row);
+      const store = byRunId[runId];
+      if (!store.rowsById.has(rowId)) store.order.push(rowId);
+      store.rowsById.set(rowId, row);
+    }
+    return { runOrder, byRunId, version: 1 };
+  });
 
   const singleRowsForRender = useMemo(() => (
     singleResultsState.order
@@ -422,9 +446,19 @@ useEffect(() => {
 }, []);
 
 
+  const loopAggRowsForRender = useMemo(() => (
+    loopAggState.runOrder.flatMap((runId) => {
+      const store = loopAggState.byRunId[runId];
+      if (!store) return [];
+      return store.order
+        .map((id) => store.rowsById.get(id))
+        .filter((row): row is LoopOptimizerResultRow => row != null);
+    })
+  ), [loopAggState.version]);
+
 useEffect(() => {
-  saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, loopAggRows);
-}, [loopAggRows]);
+  saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, loopAggRowsForRender);
+}, [loopAggRowsForRender]);
 
   const [page, setPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
@@ -467,6 +501,9 @@ useEffect(() => {
   const lastDebugRowsLogAtRef = useRef(0);
   const activeJobIdRef = useRef<string | null>(null);
   const debugTrackedRowIdRef = useRef<string | null>(null);
+  const [loopDebugTrackedRowIds, setLoopDebugTrackedRowIds] = useState<string[]>([]);
+  const prevLoopAggVersionRef = useRef(0);
+  const prevLoopAggTotalRef = useRef(0);
 
   const isAppendOnlyDebug = useCallback(() => import.meta.env.DEV && localStorage.getItem("debugRunAppendOnly") === "1", []);
   const logAppendOnlyDebug = useCallback((message: string, payload?: Record<string, unknown>) => {
@@ -777,6 +814,18 @@ useEffect(() => {
   const activeJobId = loopActive ? activeLoopJobId : singleJobId;
 
   useEffect(() => {
+    if (!isAppendOnlyDebug()) return;
+    const prevVersion = prevLoopAggVersionRef.current;
+    const prevTotal = prevLoopAggTotalRef.current;
+    const nextTotal = loopAggRowsForRender.length;
+    if (loopActive && nextTotal < prevTotal) {
+      console.log("[optimizer-loop-store-replaced]", { prevVersion, nextVersion: loopAggState.version, prevTotal, nextTotal, loopJobId });
+    }
+    prevLoopAggVersionRef.current = loopAggState.version;
+    prevLoopAggTotalRef.current = nextTotal;
+  }, [isAppendOnlyDebug, loopActive, loopAggRowsForRender.length, loopAggState.version, loopJobId]);
+
+  useEffect(() => {
     activeJobIdRef.current = activeJobId;
   }, [activeJobId]);
 
@@ -802,12 +851,12 @@ useEffect(() => {
 
   useEffect(() => {
     const prevLoopActive = prevLoopActiveRef.current;
-    if (prevLoopActive && !loopActive && loopAggRows.length > 0) {
+    if (prevLoopActive && !loopActive && loopAggRowsForRender.length > 0) {
       setSingleJobId(null);
       void refreshJobHistory();
     }
     prevLoopActiveRef.current = loopActive;
-  }, [loopActive, loopAggRows.length]);
+  }, [loopActive, loopAggRowsForRender.length]);
 
 
   const debugLoopStart = useCallback((stage: "before_request" | "error", data: { payloadKeys?: string[]; errorMessage?: string }) => {
@@ -884,7 +933,9 @@ useEffect(() => {
       };
       debugLoopStart("before_request", { payloadKeys: Object.keys(loopPayload) });
       await startOptimizerLoop(loopPayload);
-      setLoopAggRows([]);
+      logAppendOnlyDebug("reset", { reason: "start-loop" });
+      setLoopAggState({ runOrder: [], byRunId: {}, version: 0 });
+      setLoopDebugTrackedRowIds([]);
       completedLoopRunIdsRef.current = {};
       localStorage.removeItem(LOOP_RESULTS_DRAFT_STORAGE_KEY);
       setDone(0);
@@ -1057,18 +1108,46 @@ useEffect(() => {
     return payload;
   }
 
-  const upsertLoopRunResults = useCallback((jobId: string, rows: OptimizationResult[]) => {
-    if (!jobId) return;
+  const upsertLoopRunRowsAppend = useCallback((jobId: string, rows: OptimizationResult[], source: "ws" | "poll" | "completed") => {
+    if (!jobId || rows.length === 0) return;
     const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
     const filteredRows = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
-    setLoopAggRows((prev) => {
-      const nextRows = filteredRows.map((row) => ({ ...row, __runJobId: jobId }));
-      const retainedRows = prev.filter((row) => row.__runJobId !== jobId);
-      const next = retainedRows.concat(nextRows);
-      setTotalRows(next.length);
+    if (filteredRows.length === 0) return;
+    setLoopAggState((prev) => {
+      let changed = false;
+      const byRunId = { ...prev.byRunId };
+      const runOrder = prev.runOrder.slice();
+      if (!byRunId[jobId]) {
+        byRunId[jobId] = { rowsById: new Map(), order: [], version: 1 };
+        runOrder.push(jobId);
+        changed = true;
+      }
+      const existingStore = byRunId[jobId];
+      const rowsById = new Map(existingStore.rowsById);
+      const order = existingStore.order.slice();
+      let appendedRowId: string | null = null;
+      for (const row of filteredRows) {
+        const rowId = makeResultSignature(row);
+        if (rowsById.has(rowId)) continue;
+        rowsById.set(rowId, { ...row, __runJobId: jobId });
+        order.push(rowId);
+        appendedRowId = rowId;
+        changed = true;
+      }
+      if (!changed) return prev;
+      byRunId[jobId] = { rowsById, order, version: existingStore.version + 1 };
+      const next = { runOrder, byRunId, version: prev.version + 1 };
+      const nextTotalRows = runOrder.reduce((acc, runId) => acc + (byRunId[runId]?.order.length ?? 0), 0);
+      setTotalRows(nextTotalRows);
+      if (appendedRowId) {
+        debugTrackedRowIdRef.current = appendedRowId;
+        setLoopDebugTrackedRowIds((prevIds) => [appendedRowId!, ...prevIds].slice(0, 3));
+        logAppendOnlyDebug("append", { jobId, rowId: appendedRowId, source, totalRows: nextTotalRows });
+      }
+      maybeLogRowsDebug(jobId, filteredRows.length, nextTotalRows);
       return next;
     });
-  }, [minTrades]);
+  }, [logAppendOnlyDebug, maybeLogRowsDebug, minTrades]);
 
   const fetchAllResultsForJob = useCallback(async (jobId: string) => {
     const first = await getJobResults(jobId, { page: 1, sortKey, sortDir });
@@ -1088,11 +1167,11 @@ useEffect(() => {
     completedLoopRunIdsRef.current[jobId] = true;
     try {
       const rows = await fetchAllResultsForJob(jobId);
-      upsertLoopRunResults(jobId, rows);
+      upsertLoopRunRowsAppend(jobId, rows, "completed");
     } catch {
       delete completedLoopRunIdsRef.current[jobId];
     }
-  }, [fetchAllResultsForJob, upsertLoopRunResults]);
+  }, [fetchAllResultsForJob, upsertLoopRunRowsAppend]);
 
 
   useEffect(() => {
@@ -1282,6 +1361,7 @@ useEffect(() => {
     liveSingleRowsMapRef.current = new Map();
     liveRowsPendingByJobIdRef.current = {};
     debugTrackedRowIdRef.current = null;
+    setLoopDebugTrackedRowIds([]);
     if (liveRowsFlushTimerRef.current != null) {
       window.clearTimeout(liveRowsFlushTimerRef.current);
       liveRowsFlushTimerRef.current = null;
@@ -1442,46 +1522,35 @@ useEffect(() => {
     if (!jobId || rows.length === 0) return;
 
     if (loopActive && jobId === loopJobId) {
-      setLoopAggRows((prev) => {
-        const currentJobRows = prev.filter((row) => row.__runJobId === jobId);
-        const retainedRows = prev.filter((row) => row.__runJobId !== jobId);
-        const map = new Map<string, LoopOptimizerResultRow>();
-        for (const row of currentJobRows) map.set(makeResultSignature(row), row);
-        for (const row of rows) map.set(makeResultSignature(row), { ...row, __runJobId: jobId });
-        const next = retainedRows.concat(Array.from(map.values()));
-        setTotalRows(next.length);
-        maybeLogRowsDebug(jobId, rows.length, next.length);
-        return next;
-      });
+      upsertLoopRunRowsAppend(jobId, rows, "ws");
       return;
     }
 
     if (loopActive || jobId !== activeJobId) return;
     queueLiveRowsAppend(jobId, rows);
-  }, [activeJobId, flushLiveRowsForActiveJob, lastMsg, logAppendOnlyDebug, loopActive, loopJobId, maybeLogRowsDebug, queueLiveRowsAppend]);
+  }, [activeJobId, flushLiveRowsForActiveJob, lastMsg, logAppendOnlyDebug, loopActive, loopJobId, queueLiveRowsAppend, upsertLoopRunRowsAppend]);
 
   useEffect(() => {
     if (!loopActive || !loopJobId) return;
     let alive = true;
     const syncActiveRunResults = async () => {
       try {
+        const existingCount = loopAggState.byRunId[loopJobId]?.order.length ?? 0;
+        if (existingCount > 0) return;
         const rows = await fetchAllResultsForJob(loopJobId);
         if (!alive) return;
-        upsertLoopRunResults(loopJobId, rows);
+        logAppendOnlyDebug("hydrate", { jobId: loopJobId, source: "poll", rows: rows.length });
+        upsertLoopRunRowsAppend(loopJobId, rows, "poll");
       } catch {
         return;
       }
     };
     void syncActiveRunResults();
-    const timer = window.setInterval(() => {
-      void syncActiveRunResults();
-    }, ACTIVE_RESULTS_POLL_MS);
 
     return () => {
       alive = false;
-      window.clearInterval(timer);
     };
-  }, [fetchAllResultsForJob, loopActive, loopJobId, upsertLoopRunResults]);
+  }, [fetchAllResultsForJob, logAppendOnlyDebug, loopActive, loopAggState.byRunId, loopJobId, upsertLoopRunRowsAppend]);
   async function onSort(nextSortKey: OptimizerSortKeyExtended) {
     if (!activeJobId) return;
     const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
@@ -1620,7 +1689,7 @@ useEffect(() => {
   }
 
   const isLoopDisplay = lastTableSourceRef.current === "loop";
-  const displayedRows = isLoopDisplay ? (excludeNegative ? loopAggRows.filter((row) => row.netPnl >= 0) : loopAggRows) : singleRowsForRender;
+  const displayedRows = isLoopDisplay ? (excludeNegative ? loopAggRowsForRender.filter((row) => row.netPnl >= 0) : loopAggRowsForRender) : singleRowsForRender;
   const loopDisplayRows = useMemo(() => {
     if (!isLoopDisplay) return displayedRows;
     const start = (page - 1) * pageSize;
@@ -2007,7 +2076,8 @@ useEffect(() => {
               <OptimizerResultsBody
                 rows={loopDisplayRows}
                 activePrecision={activePrecision}
-                debugTrackedRowId={debugTrackedRowIdRef.current}
+                isLoopDisplay={isLoopDisplay}
+                debugTrackedRowIds={loopDebugTrackedRowIds}
                 onCopyToSettings={copyToSettings}
               />
             </Table>
