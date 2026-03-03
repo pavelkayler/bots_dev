@@ -1113,9 +1113,6 @@ useEffect(() => {
 
   const upsertLoopRunRowsAppend = useCallback((jobId: string, rows: OptimizationResult[], source: "ws" | "poll" | "completed") => {
     if (!jobId || rows.length === 0) return;
-    const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
-    const filteredRows = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
-    if (filteredRows.length === 0) return;
     setLoopAggState((prev) => {
       let changed = false;
       const byRunId = { ...prev.byRunId };
@@ -1129,7 +1126,7 @@ useEffect(() => {
       const rowsById = new Map(existingStore.rowsById);
       const order = existingStore.order.slice();
       let appendedRowId: string | null = null;
-      for (const row of filteredRows) {
+      for (const row of rows) {
         const rowId = makeResultSignature(row);
         if (rowsById.has(rowId)) continue;
         rowsById.set(rowId, { ...row, __runJobId: jobId });
@@ -1147,10 +1144,10 @@ useEffect(() => {
         setLoopDebugTrackedRowIds((prevIds) => [appendedRowId!, ...prevIds].slice(0, 3));
         logAppendOnlyDebug("append", { jobId, rowId: appendedRowId, source, totalRows: nextTotalRows });
       }
-      maybeLogRowsDebug(jobId, filteredRows.length, nextTotalRows);
+      maybeLogRowsDebug(jobId, rows.length, nextTotalRows);
       return next;
     });
-  }, [logAppendOnlyDebug, maybeLogRowsDebug, minTrades]);
+  }, [logAppendOnlyDebug, maybeLogRowsDebug]);
 
   const fetchAllResultsForJob = useCallback(async (jobId: string) => {
     const first = await getJobResults(jobId, { page: 1, sortKey, sortDir });
@@ -1527,19 +1524,19 @@ useEffect(() => {
     if (lastTableSourceRef.current === "loop") {
       if (import.meta.env.DEV && localStorage.getItem("debugOptimizerRows") === "1") {
         const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
-        const filteredRows = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
+        const displayEligibleCount = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit).length;
         const runStores = Object.values(loopAggState.byRunId);
         const totalBefore = runStores.reduce((acc, store) => acc + store.order.length, 0);
         const currentRunStore = loopAggState.byRunId[jobId];
         const existingRowIds = new Set(currentRunStore?.order ?? []);
         let appendedCount = 0;
-        for (const row of filteredRows) {
+        for (const row of rows) {
           const rowId = makeResultSignature(row);
           if (existingRowIds.has(rowId)) continue;
           existingRowIds.add(rowId);
           appendedCount += 1;
         }
-        console.log("[optimizer-rows-append-loop]", { jobId, batchSize: rows.length, totalBefore, totalAfter: totalBefore + appendedCount });
+        console.log("[optimizer-rows-append-loop]", { jobId, rawBatchSize: rows.length, minTradesLimit, displayEligibleCount, appendedCount, totalBefore, totalAfter: totalBefore + appendedCount });
       }
       upsertLoopRunRowsAppend(jobId, rows, "ws");
       return;
@@ -1715,7 +1712,14 @@ useEffect(() => {
   }
 
   const isLoopDisplay = lastTableSourceRef.current === "loop";
-  const displayedRows = isLoopDisplay ? (excludeNegative ? loopAggRowsForRender.filter((row) => row.netPnl >= 0) : loopAggRowsForRender) : singleRowsForRender;
+  const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
+  const rawRows = isLoopDisplay ? loopAggRowsForRender : singleRowsForRender;
+  const rowsForDisplay = rawRows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
+  const displayedRows = isLoopDisplay
+    ? (excludeNegative ? rowsForDisplay.filter((row) => row.netPnl >= 0) : rowsForDisplay)
+    : rowsForDisplay;
+  const rawRowsCount = rawRows.length;
+  const displayedRowsCount = displayedRows.length;
   const loopDisplayRows = useMemo(() => {
     if (!isLoopDisplay) return displayedRows;
     const start = (page - 1) * pageSize;
@@ -1786,9 +1790,9 @@ useEffect(() => {
         : (loopStatus?.loop?.finishedAtMs ?? loopStatus?.loop?.updatedAtMs ?? loopStartMs);
   const loopElapsedSec = loopStartMs == null || loopEndMs == null ? null : Math.max(0, (loopEndMs - loopStartMs) / 1000);
 
-  const loopOrJobRunning = isLoopDisplay && (jobStatus === "running" || jobStatus === "paused" || Boolean(loopStatus?.loop?.isRunning) || Boolean(loopStatus?.loop?.isPaused));
+  const loopOrJobRunning = jobStatus === "running" || jobStatus === "paused" || Boolean(loopStatus?.loop?.isRunning) || Boolean(loopStatus?.loop?.isPaused);
   useEffect(() => {
-    if (!loopOrJobRunning || loopAggRowsForRender.length > 0) {
+    if (!loopOrJobRunning || rawRowsCount > 0) {
       setShowLoopNoRowsWarning(false);
       return;
     }
@@ -1796,7 +1800,7 @@ useEffect(() => {
       setShowLoopNoRowsWarning(true);
     }, LOOP_EMPTY_RESULTS_WARNING_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [loopAggRowsForRender.length, loopOrJobRunning]);
+  }, [loopOrJobRunning, rawRowsCount]);
 
   return (
     <>
@@ -2090,6 +2094,7 @@ useEffect(() => {
             {historyTransferMessage ? <div style={{ fontSize: 12, marginBottom: 8 }}>{historyTransferMessage}</div> : null}
 
             {showLoopNoRowsWarning ? <div style={{ fontSize: 12, marginBottom: 8, color: "#a86d00" }}>No result rows received yet. If this persists, enable debugOptimizerRows.</div> : null}
+            {!showLoopNoRowsWarning && rawRowsCount > 0 && displayedRowsCount === 0 ? <div style={{ fontSize: 12, marginBottom: 8, color: "#6c757d" }}>Rows exist but are hidden by minTrades filter.</div> : null}
             <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
               <thead>
                 <tr>
