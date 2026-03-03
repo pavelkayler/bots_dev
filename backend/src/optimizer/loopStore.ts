@@ -27,6 +27,17 @@ export type OptimizerLoopState = {
   finishedAtMs: number | null;
   lastJobId: string | null;
   runPayload: OptimizerLoopRunPayload;
+  progress?: OptimizerLoopProgressState;
+};
+
+export type OptimizerLoopProgressState = {
+  jobId: string;
+  status: "running" | "done" | "canceled" | "error";
+  runIndex: number;
+  runTotal: number;
+  runPct: number;
+  overallPct: number;
+  updatedAt: number;
 };
 
 const LOOP_STATE_PATH = path.resolve(process.cwd(), "data", "optimizer_loops", "current.json");
@@ -53,6 +64,19 @@ export function readLoopState(): OptimizerLoopState | null {
       finishedAtMs: typeof parsed.finishedAtMs === "number" ? parsed.finishedAtMs : null,
       lastJobId: typeof parsed.lastJobId === "string" ? parsed.lastJobId : null,
       runPayload: parsed.runPayload as OptimizerLoopRunPayload,
+      ...(parsed.progress && typeof parsed.progress === "object" ? {
+        progress: {
+          jobId: String((parsed.progress as any).jobId ?? ""),
+          status: (["running", "done", "canceled", "error"].includes(String((parsed.progress as any).status))
+            ? String((parsed.progress as any).status)
+            : "running") as OptimizerLoopProgressState["status"],
+          runIndex: Math.max(0, Math.floor(Number((parsed.progress as any).runIndex) || 0)),
+          runTotal: Math.max(1, Math.floor(Number((parsed.progress as any).runTotal) || 1)),
+          runPct: Math.max(0, Math.min(100, Number((parsed.progress as any).runPct) || 0)),
+          overallPct: Math.max(0, Math.min(100, Number((parsed.progress as any).overallPct) || 0)),
+          updatedAt: Number((parsed.progress as any).updatedAt) || Date.now(),
+        },
+      } : {}),
     };
   } catch {
     return null;

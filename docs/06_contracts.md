@@ -265,6 +265,7 @@ Optimizer (loop):
 - `POST /api/optimizer/loop/resume`
 - `POST /api/optimizer/loop/stop`
 - `GET /api/optimizer/loop/status`
+  - includes persisted `progress` snapshot: `{ jobId, status, runIndex, runTotal, runPct, overallPct, updatedAt }`
 
 Health:
 - `GET /api/doctor`

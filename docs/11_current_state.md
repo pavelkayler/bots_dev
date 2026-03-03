@@ -141,9 +141,10 @@ New concept: **Dataset Target** = { Universe, Range }.
 - Universe: selected pool of symbols (existing Universe builder logic remains, but selection becomes explicit for data fetch).
 - Range: preset (24h/48h/1w/2w/4w/1mo) or manual start/end datetime.
 Workflow:
-1) User selects Universe + Range and presses **Set/Apply**.
-2) User presses **Receive Data** to fetch missing historical points into the cache.
+1) User selects Universe + Range.
+2) User presses **Receive Data** to apply the selected target and fetch missing historical points into the cache.
 3) Optimizer loop runs on cached points. No repeated Bybit history queries per loop iteration.
 
-Data fetch must be rate-limit aware (target: ~500 requests / 5 seconds) and provide progress/ETA.
+`klineTfMin` does **not** affect Universe naming and is unrelated to Universe file name/id semantics.
 
+Data fetch must be rate-limit aware (strict limit: 500 requests / 5 seconds) and provide progress/ETA.

@@ -13,7 +13,7 @@ type SessionSummaryResponse = any;
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
 import { getOptimizerSettings, getTapeSizeBytes, listTapeSegments, listTapes, safeId, setOptimizerSettings } from "../optimizer/tapeStore.js";
 import { incrementTapeRuns } from "../optimizer/tapeRunsStore.js";
-import { readLoopState, recoverLoopStateOnBoot, type OptimizerLoopRunPayload, type OptimizerLoopState, writeLoopState } from "../optimizer/loopStore.js";
+import { readLoopState, recoverLoopStateOnBoot, type OptimizerLoopProgressState, type OptimizerLoopRunPayload, type OptimizerLoopState, writeLoopState } from "../optimizer/loopStore.js";
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 import {
   DEFAULT_OPTIMIZER_PRECISION,
@@ -495,11 +495,12 @@ function restoreLatestJobSnapshot() {
     if (!parsed?.jobId) return false;
     const wasRunning = parsed.status === "running";
     const now = Date.now();
+    const restoredPct = parsed.status === "done" ? 100 : 0;
     const job: OptimizerJob = {
       status: wasRunning ? "paused" : parsed.status,
       total: 100,
-      done: 0,
-      lastPct: 0,
+      done: restoredPct,
+      lastPct: restoredPct,
       cancelRequested: false,
       pauseRequested: false,
       paused: wasRunning || parsed.status === "paused",
@@ -757,6 +758,38 @@ function updateLoopState(patch: Partial<OptimizerLoopState>) {
   writeLoopState(optimizerLoopState);
 }
 
+function buildLoopProgressState(jobId: string, status: OptimizerLoopProgressState["status"], runIndex: number, runTotal: number, runPct: number): OptimizerLoopProgressState {
+  const safeRunTotal = Math.max(1, runTotal);
+  const safeRunIndex = Math.max(0, runIndex);
+  const clampedRunPct = Math.max(0, Math.min(100, Math.round(runPct * 100) / 100));
+  const completedRuns = Math.min(safeRunTotal, Math.max(0, safeRunIndex - 1));
+  const overallRaw = ((completedRuns + (clampedRunPct / 100)) / safeRunTotal) * 100;
+  const overallPct = status === "done" ? 100 : Math.max(0, Math.min(100, Math.round(overallRaw * 100) / 100));
+  return {
+    jobId,
+    status,
+    runIndex: safeRunIndex,
+    runTotal: safeRunTotal,
+    runPct: status === "done" ? 100 : clampedRunPct,
+    overallPct,
+    updatedAt: Date.now(),
+  };
+}
+
+function updateLoopProgressState(patch: Partial<OptimizerLoopProgressState> | null) {
+  if (!optimizerLoopState) return;
+  if (!patch) return;
+  const current = optimizerLoopState.progress;
+  if (!current) {
+    if (!patch.jobId || !patch.status || patch.runIndex == null || patch.runTotal == null || patch.runPct == null || patch.overallPct == null || patch.updatedAt == null) {
+      return;
+    }
+    updateLoopState({ progress: patch as OptimizerLoopProgressState });
+    return;
+  }
+  updateLoopState({ progress: { ...current, ...patch } });
+}
+
 async function startLoopJob(app: FastifyInstance) {
   if (!optimizerLoopState || !optimizerLoopState.isRunning || optimizerLoopState.isPaused) return;
   const state = optimizerLoopState;
@@ -774,7 +807,12 @@ async function startLoopJob(app: FastifyInstance) {
     updateLoopState({ isRunning: false, isPaused: false });
     return;
   }
-  updateLoopState({ lastJobId: parsed.jobId });
+  const nextRunIndex = state.runIndex + 1;
+  const runTotal = state.isInfinite ? Math.max(nextRunIndex, 1) : Math.max(1, state.runsCount);
+  updateLoopState({
+    lastJobId: parsed.jobId,
+    progress: buildLoopProgressState(parsed.jobId, "running", nextRunIndex, runTotal, 0),
+  });
 }
 
 async function tickOptimizerLoop(app: FastifyInstance) {
@@ -1403,6 +1441,11 @@ export function registerHttpRoutes(app: FastifyInstance) {
             optimizerWorkerManager.resume(jobId);
           }
           if (job.cancelRequested) optimizerWorkerManager.cancel(jobId);
+          if (optimizerLoopState?.lastJobId === jobId && optimizerLoopState.progress?.jobId === jobId) {
+            const state = optimizerLoopState;
+            const runTotal = state.isInfinite ? Math.max(state.runIndex + 1, 1) : Math.max(1, state.runsCount);
+            updateLoopProgressState(buildLoopProgressState(jobId, "running", state.runIndex + 1, runTotal, pct2));
+          }
           writeCheckpoint(jobId, job);
           writeJobSnapshot(jobId, job);
         },
@@ -1417,6 +1460,11 @@ export function registerHttpRoutes(app: FastifyInstance) {
           if (job.cancelRequested) {
             job.status = "cancelled";
             job.message = "Optimization cancelled.";
+            if (optimizerLoopState?.lastJobId === jobId) {
+              const state = optimizerLoopState;
+              const runTotal = state.isInfinite ? Math.max(state.runIndex + 1, 1) : Math.max(1, state.runsCount);
+              updateLoopProgressState(buildLoopProgressState(jobId, "canceled", state.runIndex + 1, runTotal, job.done));
+            }
           } else {
             job.lastPct = 100;
             job.done = 100;
@@ -1425,6 +1473,11 @@ export function registerHttpRoutes(app: FastifyInstance) {
             const totalStored = Array.isArray(job.results) ? job.results.length : 0;
             const tradedCandidates = totalStored > 0 ? job.results.filter((r) => (r?.trades ?? 0) > 0).length : 0;
             job.message = `Min trades filter: ${minTrades} | Candidates with trades>0: ${tradedCandidates}/${totalStored}`;
+            if (optimizerLoopState?.lastJobId === jobId) {
+              const state = optimizerLoopState;
+              const runTotal = state.isInfinite ? Math.max(state.runIndex + 1, 1) : Math.max(1, state.runsCount);
+              updateLoopProgressState(buildLoopProgressState(jobId, "done", state.runIndex + 1, runTotal, 100));
+            }
           }
           if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
           appendOptimizerJobHistory(jobId, job);
@@ -1438,6 +1491,11 @@ export function registerHttpRoutes(app: FastifyInstance) {
           job.updatedAtMs = Date.now();
           if (job.finishedAtMs == null) job.finishedAtMs = Date.now();
           job.message = String(msg?.errorMessage ?? "worker_error");
+          if (optimizerLoopState?.lastJobId === jobId) {
+            const state = optimizerLoopState;
+            const runTotal = state.isInfinite ? Math.max(state.runIndex + 1, 1) : Math.max(1, state.runsCount);
+            updateLoopProgressState(buildLoopProgressState(jobId, "error", state.runIndex + 1, runTotal, job.done));
+          }
           appendOptimizerJobHistory(jobId, job);
           writeCheckpoint(jobId, job, { force: true });
           writeJobSnapshot(jobId, job, { force: true });
@@ -1544,6 +1602,10 @@ export function registerHttpRoutes(app: FastifyInstance) {
         optimizerWorkerManager.cancel(state.lastJobId);
         writeCheckpoint(state.lastJobId, job);
         writeJobSnapshot(state.lastJobId, job);
+        if (optimizerLoopState?.progress?.jobId === state.lastJobId) {
+          const runTotal = state.isInfinite ? Math.max(state.runIndex + 1, 1) : Math.max(1, state.runsCount);
+          updateLoopProgressState(buildLoopProgressState(state.lastJobId, "canceled", state.runIndex + 1, runTotal, job.done));
+        }
       }
     }
     updateLoopState({ isRunning: false, isPaused: false });
@@ -1593,6 +1655,7 @@ export function registerHttpRoutes(app: FastifyInstance) {
       runsCompleted: optimizerLoopState.runIndex,
       runsTotal: optimizerLoopState.isInfinite ? null : optimizerLoopState.runsCount,
       lastJobStatus: getLoopLastJobStatus(),
+      progress: optimizerLoopState.progress ?? null,
     };
   });
 

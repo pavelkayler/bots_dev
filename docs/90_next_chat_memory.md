@@ -82,8 +82,7 @@ Continue stability/ops improvements:
 Planned direction:
 - Remove tape recording subsystem completely.
 - Introduce Dataset Target (Universe + Range) and a server-side historical cache built from Bybit REST history endpoints.
-- Add UI: Universe selector, Range presets/manual datetime, Set/Apply, Receive Data with rate-limit-aware progress.
+- Add UI: Universe selector, Range presets/manual datetime, Receive Data (applies selected target) with rate-limit-aware progress.
 - Standardize table pagination UI across the app.
 - Universe page: remove unused buttons, fix Create 400, add progress, preserve Create state across routing.
 - Optimizer: remove single-run controls and manual from/to; use Dataset Target range.
-

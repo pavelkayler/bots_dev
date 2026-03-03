@@ -72,6 +72,7 @@ const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl:
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
 const ACTIVE_RESULTS_POLL_MS = 800;
 const LOOP_STATUS_POLL_MS = 1000;
+const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
 
 const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
 const HISTORY_CELL_STYLE = { padding: "4px 6px", whiteSpace: "nowrap", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12 } as const;
@@ -299,6 +300,24 @@ useEffect(() => {
   const historyImportInputRef = useRef<HTMLInputElement | null>(null);
   const completedLoopRunIdsRef = useRef<Record<string, boolean>>({});
   const prevLoopRunningRef = useRef(false);
+  const lastDebugProgressLogAtRef = useRef(0);
+
+  const maybeLogProgress = useCallback((progress: OptimizerLoopStatus["progress"]) => {
+    if (!import.meta.env.DEV) return;
+    if (localStorage.getItem("debugOptimizerProgress") !== "1") return;
+    if (!progress) return;
+    const now = Date.now();
+    if (now - lastDebugProgressLogAtRef.current < DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS) return;
+    lastDebugProgressLogAtRef.current = now;
+    console.log("[optimizer-progress]", {
+      jobId: progress.jobId,
+      status: progress.status,
+      run: `${progress.runIndex}/${progress.runTotal}`,
+      runPct: progress.runPct,
+      overallPct: progress.overallPct,
+      timestamp: progress.updatedAt,
+    });
+  }, []);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -768,15 +787,15 @@ useEffect(() => {
 
         const currentLoopJobId = next.loop?.lastJobId ?? null;
         const completedJobId = currentLoopJobId ?? lastNonNullLoopJobIdRef.current;
-        let donePercent = Math.floor(Number(next.lastJobStatus?.donePercent ?? 0));
-        let runStatus = next.lastJobStatus?.status;
+        let donePercent = Math.floor(Number(next.progress?.runPct ?? next.lastJobStatus?.donePercent ?? 0));
+        let runStatus = next.progress?.status === "canceled" ? "cancelled" : next.lastJobStatus?.status;
 
         if (currentLoopJobId) {
           try {
             const statusRes = await getJobStatus(currentLoopJobId);
             if (!mounted) return;
             const progress = getStableProgressForJob(currentLoopJobId, statusRes as { donePct?: number; done?: number; startedAtMs?: number | null });
-            donePercent = Math.floor(progress.pct);
+            donePercent = Math.floor(Number(next.progress?.runPct ?? progress.pct));
             runStatus = statusRes.status;
             setJobStartedAtMs((prev) => (prev === progress.startedAtMs ? prev : progress.startedAtMs));
             setJobUpdatedAtMs((prev) => {
@@ -796,12 +815,13 @@ useEffect(() => {
         const didCompleteRun = prevLoopRunningRef.current && (donePercent === 100 || runStatus === "done");
 
         setLoopStatus(next);
+        maybeLogProgress(next.progress);
         setNowMs(Date.now());
         setTotal(100);
         setDone((prev) => {
+          if (next.progress) return Math.floor(clamp(next.progress.runPct, 0, 100));
           if (donePercent === 100) return 100;
           if (!isRunningNow && !next.loop?.isPaused) return prev;
-          if (currentLoopJobId == null && donePercent <= 0) return prev;
           return donePercent;
         });
 
