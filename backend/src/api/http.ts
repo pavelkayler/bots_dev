@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { runtime } from "../runtime/runtime.js";
@@ -800,18 +800,33 @@ async function startLoopJob(app: FastifyInstance) {
   }
   const res = await app.inject({ method: "POST", url: "/api/optimizer/run", payload: withDatasetResolved(state.runPayload as Record<string, unknown>) });
   if (res.statusCode !== 200) {
-    updateLoopState({ isRunning: false, isPaused: false });
+    updateLoopState({
+      isRunning: false,
+      isPaused: false,
+      lastError: {
+        statusCode: res.statusCode,
+        bodySnippet: String(res.body ?? "").slice(0, 300),
+      },
+    });
     return;
   }
   const parsed = JSON.parse(res.body || "{}") as { jobId?: string };
   if (!parsed.jobId) {
-    updateLoopState({ isRunning: false, isPaused: false });
+    updateLoopState({
+      isRunning: false,
+      isPaused: false,
+      lastError: {
+        statusCode: 200,
+        bodySnippet: "missing jobId in /api/optimizer/run response",
+      },
+    });
     return;
   }
   const nextRunIndex = state.runIndex + 1;
   const runTotal = state.isInfinite ? Math.max(nextRunIndex, 1) : Math.max(1, state.runsCount);
   updateLoopState({
     lastJobId: parsed.jobId,
+    lastError: null,
     progress: buildLoopProgressState(parsed.jobId, "running", nextRunIndex, runTotal, 0),
   });
 }
@@ -861,21 +876,49 @@ function normalizeOptionalTs(value: unknown): number | undefined {
 }
 
 
-function computeDatasetHoursFromTarget(target: ReturnType<typeof readDatasetTarget>["range"]): number {
-  if (target.kind === "manual") {
-    const delta = target.endMs - target.startMs;
-    return Number.isFinite(delta) && delta > 0 ? Math.max(0, Math.round(delta / 3_600_000)) : 0;
+function computeDatasetHoursFromHistories(histories: Array<{ startMs: number; endMs: number }>): number {
+  const sorted = histories
+    .map((h) => ({ startMs: Number(h.startMs), endMs: Number(h.endMs) }))
+    .filter((h) => Number.isFinite(h.startMs) && Number.isFinite(h.endMs) && h.endMs >= h.startMs)
+    .sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs));
+
+  if (!sorted.length) return 0;
+
+  const merged: Array<{ startMs: number; endMs: number }> = [];
+  for (const window of sorted) {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...window });
+      continue;
+    }
+    if (window.startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, window.endMs);
+      continue;
+    }
+    merged.push({ ...window });
   }
-  const presetToHours: Record<string, number> = { "6h": 6, "12h": 12, "24h": 24, "48h": 48, "1w": 168, "2w": 336, "4w": 672, "1mo": 720 };
-  return presetToHours[String((target as any).preset ?? "24h")] ?? 24;
+
+  const totalMs = merged.reduce((acc, window) => acc + Math.max(0, window.endMs - window.startMs), 0);
+  return Math.round((totalMs / 3_600_000) * 100) / 100;
 }
 
-function resolveDatasetRangeMs(target: ReturnType<typeof readDatasetTarget>["range"], nowMs: number): { startMs: number; endMs: number } | null {
-  if (target.kind === "manual") return { startMs: target.startMs, endMs: target.endMs };
-  const presetToMs: Record<string, number> = { "6h": 6 * 60 * 60 * 1000, "12h": 12 * 60 * 60 * 1000, "24h": 24 * 60 * 60 * 1000, "48h": 48 * 60 * 60 * 1000, "1w": 7 * 24 * 60 * 60 * 1000, "2w": 14 * 24 * 60 * 60 * 1000, "4w": 28 * 24 * 60 * 60 * 1000, "1mo": 30 * 24 * 60 * 60 * 1000 };
-  const preset = String((target as any).preset ?? "24h");
-  const span = presetToMs[preset] ?? 24 * 60 * 60 * 1000;
-  return { startMs: nowMs - span, endMs: nowMs };
+function buildDatasetRunKey(input: {
+  datasetHistoryIds: string[];
+  directionMode: string;
+  optTfMin: number | undefined;
+  candidates: number;
+  seed: number;
+}) {
+  const normalizedHistoryIds = [...input.datasetHistoryIds].map((id) => String(id ?? "").trim()).filter(Boolean).sort();
+  const raw = [
+    `hist=${normalizedHistoryIds.join(",")}`,
+    `dir=${input.directionMode}`,
+    `tf=${input.optTfMin ?? 0}`,
+    `c=${Math.floor(input.candidates)}`,
+    `s=${Number.isFinite(input.seed) ? input.seed : 1}`,
+  ].join("|");
+  const digest = createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  return `datasetHist=${digest}`;
 }
 
 function resolveTapeFilesAtRunStart(baseTapeIds: string[], explicitTapeIds: string[]): Array<{ tapeId: string; bytes: number }> {
@@ -1127,17 +1170,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
     return { histories: listDatasetHistories() };
   });
 
-  app.get("/api/data/history/:id/export", async (req, reply) => {
-    const id = String((req.params as any).id ?? "");
-    try {
-      const history = readDatasetHistory(id);
-      return { history };
-    } catch {
-      reply.code(404);
-      return { error: "history_not_found" };
-    }
-  });
-
   app.delete("/api/data/history/:id", async (req, reply) => {
     const id = String((req.params as any).id ?? "");
     try {
@@ -1357,6 +1389,10 @@ app.get("/api/config", async () => {
     histories.sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs) || (a.receivedAtMs - b.receivedAtMs));
 
     const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs }));
+    if (cacheDatasets.some((ds) => !Array.isArray(ds.symbols) || ds.symbols.length === 0)) {
+      reply.code(400);
+      return { error: "dataset_history_symbols_missing", message: "Selected history contains no symbols." };
+    }
     const allSymbols = new Set<string>();
     for (const ds of cacheDatasets) for (const s of ds.symbols) allSymbols.add(s);
 
@@ -1375,7 +1411,7 @@ app.get("/api/config", async () => {
     // count this loop start for each selected history
     incrementDatasetHistoryLoops(datasetHistoryIds, 1);
 
-const candidates = Number(body?.candidates);
+    const candidates = Number(body?.candidates);
     const seed = Number(body?.seed ?? 1);
     const directionMode = body?.directionMode == null ? "both" : String(body.directionMode);
     const optTfMinRaw = body?.optTfMin;
@@ -1391,7 +1427,13 @@ const candidates = Number(body?.candidates);
       reply.code(400);
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
-    const runKey = `dataset=${target.universeId}|dir=${directionMode}|tf=${optTfMin ?? 0}`;
+    const runKey = buildDatasetRunKey({
+      datasetHistoryIds,
+      directionMode,
+      optTfMin,
+      candidates: Number.isFinite(candidates) ? candidates : 0,
+      seed,
+    });
 
     if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
       reply.code(400);
@@ -1450,7 +1492,8 @@ const candidates = Number(body?.candidates);
 
     const runPayload = {
       tapeIds: [],
-      cacheDataset: { symbols, startMs: resolvedRange.startMs, endMs: resolvedRange.endMs },
+      datasetHistoryIds,
+      cacheDatasets,
       candidates: totalCandidates,
       seed: Number.isFinite(seed) ? seed : 1,
       ...(ranges ? { ranges } : {}),
@@ -1460,7 +1503,7 @@ const candidates = Number(body?.candidates);
       minTrades,
       excludeNegative,
       rememberNegatives,
-      datasetHours: computeDatasetHoursFromTarget(target.range),
+      datasetHours: computeDatasetHoursFromHistories(histories),
       sim,
     };
     job.runPayload = runPayload;
@@ -1668,6 +1711,7 @@ let sim: OptimizerSimulationParams;
       updatedAtMs: now,
       finishedAtMs: null,
       lastJobId: null,
+      lastError: null,
       runPayload: payload,
     };
     writeLoopState(optimizerLoopState);
@@ -1676,7 +1720,7 @@ let sim: OptimizerSimulationParams;
       const failedLoopId = optimizerLoopState.loopId;
       updateLoopState({ isRunning: false, isPaused: false });
       reply.code(400);
-      return { error: "optimizer_loop_start_failed", loopId: failedLoopId };
+      return { error: "optimizer_loop_start_failed", message: "Failed to start optimizer loop.", loopId: failedLoopId, ...(optimizerLoopState.lastError ? { lastError: optimizerLoopState.lastError } : {}) };
     }
     return { loopId: optimizerLoopState.loopId };
   });

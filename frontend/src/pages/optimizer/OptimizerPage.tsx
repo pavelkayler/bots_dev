@@ -28,7 +28,7 @@ import {
 } from "../../features/optimizer/api/optimizerApi";
 import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
 import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard";
-import { deleteDatasetHistory, exportDatasetHistory, listDatasetHistories, type DatasetHistoryRecord } from "../../features/datasetHistory/api/datasetHistoryApi";
+import { deleteDatasetHistory, listDatasetHistories, type DatasetHistoryRecord } from "../../features/datasetHistory/api/datasetHistoryApi";
 import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataReceiveApi";
 
 type OptimizerResultRow = OptimizationResult;
@@ -66,14 +66,13 @@ const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
 const LOOP_RESULTS_DRAFT_STORAGE_KEY = "optimizerLoopResultsDraft";
-const DATASET_CACHE_ERROR = "Run Receive Data first";
-
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
 const ACTIVE_RESULTS_POLL_MS = 800;
 const LOOP_STATUS_POLL_MS = 1000;
 const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
+
 
 const HISTORY_TABLE_STYLE = { tableLayout: "fixed", width: "100%", fontSize: 12 } as const;
 const HISTORY_CELL_STYLE = { padding: "4px 6px", whiteSpace: "nowrap", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12 } as const;
@@ -221,6 +220,7 @@ export function OptimizerPage() {
   const [datasetHistories, setDatasetHistories] = useState<DatasetHistoryRecord[]>([]);
   const [historyBusy, setHistoryBusy] = useState(false);
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<string[]>([]);
+  const loopStartDebugLogLastAtRef = useRef(0);
   const [historySortKey, setHistorySortKey] = useState<keyof DatasetHistoryRecord | "rangeMs" | "universeLabel">("receivedAtMs");
   const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
   const [historyPage, setHistoryPage] = useState(1);
@@ -614,6 +614,26 @@ useEffect(() => {
     prevLoopActiveRef.current = loopActive;
   }, [loopActive, loopAggRows.length]);
 
+
+  const debugLoopStart = useCallback((stage: "before_request" | "error", data: { payloadKeys?: string[]; errorMessage?: string }) => {
+    if (!import.meta.env.DEV) return;
+    if (localStorage.getItem("debugOptimizerLoop") !== "1") return;
+    const now = Date.now();
+    if (now - loopStartDebugLogLastAtRef.current < 500) return;
+    loopStartDebugLogLastAtRef.current = now;
+    if (stage === "before_request") {
+      console.log("[optimizer-loop:start]", {
+        selectedHistoryIds,
+        requestPayloadKeys: data.payloadKeys ?? [],
+      });
+      return;
+    }
+    console.log("[optimizer-loop:error]", {
+      selectedHistoryIds,
+      errorMessage: data.errorMessage ?? "unknown_error",
+    });
+  }, [selectedHistoryIds]);
+
   async function onStartLoop() {
     if (rangeError) return;
     if (!selectedHistoryIds.length) {
@@ -644,7 +664,7 @@ useEffect(() => {
         timeoutSec: Math.max(countDecimals(ranges.timeoutSec.min), countDecimals(ranges.timeoutSec.max)),
         rearmMs: Math.max(countDecimals(ranges.rearmMs.min), countDecimals(ranges.rearmMs.max)),
       };
-      await startOptimizerLoop({
+      const loopPayload = {
         tapeIds: [],
         datasetHistoryIds: selectedHistoryIds,
         candidates: Number(candidates),
@@ -665,8 +685,10 @@ useEffect(() => {
         precision,
         runsCount: Math.max(1, Math.floor(Number(loopRunsCount) || 1)),
         infinite: loopInfinite,
-        datasetCache,
-      });
+        ...(datasetCache ? { datasetCache } : {}),
+      };
+      debugLoopStart("before_request", { payloadKeys: Object.keys(loopPayload) });
+      await startOptimizerLoop(loopPayload);
       setLoopAggRows([]);
       completedLoopRunIdsRef.current = {};
       localStorage.removeItem(LOOP_RESULTS_DRAFT_STORAGE_KEY);
@@ -681,7 +703,9 @@ useEffect(() => {
           pauseFreezeAtMsRef.current = null;
         }
     } catch (e: any) {
-      setError(String(e?.message ?? e));
+      const errorMessage = String(e?.message ?? e);
+      debugLoopStart("error", { errorMessage });
+      setError(errorMessage);
     } finally {
       setLoopBusy(false);
     }
@@ -823,19 +847,6 @@ useEffect(() => {
     } finally {
       setHistoryBusy(false);
     }
-  }, []);
-
-  const onExportDatasetHistory = useCallback(async (id: string) => {
-    const res = await exportDatasetHistory(id);
-    const blob = new Blob([JSON.stringify(res.history, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `history_${id}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
   }, []);
 
   function buildRangesPayload() {
@@ -1450,7 +1461,6 @@ useEffect(() => {
                             <td>{Number(h.loopsCount) || 0}</td>
                             <td>
                               <div className="d-flex gap-2">
-                                <Button size="sm" variant="outline-secondary" onClick={() => void onExportDatasetHistory(h.id)}>Export</Button>
                                 <Button size="sm" variant="outline-danger" onClick={() => void onDeleteHistory(h.id)}>Delete</Button>
                               </div>
                             </td>
