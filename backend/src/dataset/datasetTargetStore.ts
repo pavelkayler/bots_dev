@@ -10,8 +10,15 @@ export type DatasetRange =
 export type DatasetTarget = {
   universeId: string | null;
   range: DatasetRange;
+  interval: BybitKlineInterval;
   updatedAtMs: number;
 };
+
+export const BYBIT_KLINE_INTERVALS = ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"] as const;
+export type BybitKlineInterval = typeof BYBIT_KLINE_INTERVALS[number];
+
+const DEFAULT_INTERVAL: BybitKlineInterval = "1";
+const INTERVAL_SET = new Set<string>(BYBIT_KLINE_INTERVALS);
 
 const DATASET_TARGET_PATH = path.resolve(process.cwd(), "data", "dataset_target.json");
 const DEFAULT_PRESET: DatasetRangePreset = "24h";
@@ -21,8 +28,14 @@ function defaultTarget(): DatasetTarget {
   return {
     universeId: null,
     range: { kind: "preset", preset: DEFAULT_PRESET },
+    interval: DEFAULT_INTERVAL,
     updatedAtMs: 0,
   };
+}
+
+export function normalizeBybitKlineInterval(input: unknown): BybitKlineInterval {
+  const raw = typeof input === "string" ? input.trim() : "";
+  return INTERVAL_SET.has(raw) ? (raw as BybitKlineInterval) : DEFAULT_INTERVAL;
 }
 
 function normalizeRange(input: unknown): DatasetRange {
@@ -55,10 +68,12 @@ export function normalizeDatasetTarget(input: unknown): DatasetTarget {
   const universeRaw = typeof row?.universeId === "string" ? row.universeId.trim() : "";
   const universeId = universeRaw ? universeRaw : null;
   const range = normalizeRange(row?.range);
+  const interval = normalizeBybitKlineInterval(row?.interval);
 
   return {
     universeId,
     range,
+    interval,
     updatedAtMs: Date.now(),
   };
 }
@@ -73,9 +88,10 @@ export function readDatasetTarget(): DatasetTarget {
     const universeRaw = typeof row?.universeId === "string" ? row.universeId.trim() : "";
     const universeId = universeRaw ? universeRaw : null;
     const range = normalizeRange(row?.range);
+    const interval = normalizeBybitKlineInterval(row?.interval);
     const updatedAtRaw = Number(row?.updatedAtMs);
     const updatedAtMs = Number.isFinite(updatedAtRaw) ? Math.floor(updatedAtRaw) : 0;
-    return { universeId, range, updatedAtMs };
+    return { universeId, range, interval, updatedAtMs };
   } catch {
     return defaultTarget();
   }

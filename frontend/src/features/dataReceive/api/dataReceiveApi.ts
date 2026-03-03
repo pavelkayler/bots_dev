@@ -21,6 +21,7 @@ export type ReceiveDataJob = {
 export type ReceiveDataStartPayload = {
   universeId: string | null;
   range: { kind: "preset"; preset: string } | { kind: "manual"; startMs: number; endMs: number };
+  interval?: string;
 };
 
 export async function startReceiveData(payload?: ReceiveDataStartPayload): Promise<{ jobId: string; datasetCache?: string }> {

@@ -1,7 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { readDatasetTarget, writeDatasetTarget, type DatasetRangePreset, type DatasetTarget } from "../dataset/datasetTargetStore.js";
+import {
+  readDatasetTarget,
+  writeDatasetTarget,
+  type DatasetRangePreset,
+  type DatasetTarget,
+  type BybitKlineInterval,
+  normalizeBybitKlineInterval,
+} from "../dataset/datasetTargetStore.js";
 import { readUniverse } from "../universe/universeStore.js";
 import { upsertLatestDatasetHistory } from "./datasetHistoryStore.js";
 
@@ -41,10 +48,54 @@ const BYBIT_BASE_URL = process.env.BYBIT_REST_URL ?? "https://api.bybit.com";
 const REQUEST_LIMIT = 1000;
 const WINDOW_MS = 5000;
 const RATE_LIMIT_MAX_REQUESTS = 500;
-const KLINE_BATCH_SPAN_MS = 60_000 * REQUEST_LIMIT;
+const INTERVAL_MS_MAP: Partial<Record<BybitKlineInterval, number>> = {
+  "1": 60_000,
+  "3": 3 * 60_000,
+  "5": 5 * 60_000,
+  "15": 15 * 60_000,
+  "30": 30 * 60_000,
+  "60": 60 * 60_000,
+  "120": 120 * 60_000,
+  "240": 240 * 60_000,
+  "360": 360 * 60_000,
+  "720": 720 * 60_000,
+  D: 24 * 60 * 60_000,
+  W: 7 * 24 * 60 * 60_000,
+  M: 30 * 24 * 60 * 60_000,
+};
+
+function intervalToMs(interval: BybitKlineInterval): number {
+  const ms = INTERVAL_MS_MAP[interval];
+  return Number.isFinite(ms) && ms! > 0 ? Number(ms) : 60_000;
+}
+
+function cacheDirByInterval(interval: BybitKlineInterval): string {
+  return path.join(CACHE_DIR, interval);
+}
+
+function symbolCachePath(symbol: string, interval: BybitKlineInterval): string {
+  return path.join(cacheDirByInterval(interval), `${symbol}.jsonl`);
+}
+
+function legacySymbolCachePath(symbol: string): string {
+  return path.join(CACHE_DIR, `${symbol}.jsonl`);
+}
+
+function resolveReadCachePath(symbol: string, interval: BybitKlineInterval): string {
+  const scoped = symbolCachePath(symbol, interval);
+  if (fs.existsSync(scoped)) return scoped;
+  if (interval === "1") {
+    const legacy = legacySymbolCachePath(symbol);
+    if (fs.existsSync(legacy)) return legacy;
+  }
+  return scoped;
+}
+
 const PROGRESS_THROTTLE_MS = 80;
 const MAX_RANGE_MS = 180 * 24 * 60 * 60 * 1000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
+
+
 
 const jobs = new Map<string, ReceiveJobInternal>();
 
@@ -106,9 +157,9 @@ function resolveRangeMs(target: DatasetTarget["range"], nowMs: number): { startM
   return { startMs: nowMs - delta, endMs: nowMs };
 }
 
-function loadSymbolCache(symbol: string): Map<number, any> {
+function loadSymbolCache(symbol: string, interval: BybitKlineInterval): Map<number, any> {
   const out = new Map<number, any>();
-  const fp = path.join(CACHE_DIR, `${symbol}.jsonl`);
+  const fp = resolveReadCachePath(symbol, interval);
   if (!fs.existsSync(fp)) return out;
   const raw = fs.readFileSync(fp, "utf8");
   for (const line of raw.split("\n")) {
@@ -125,11 +176,11 @@ function loadSymbolCache(symbol: string): Map<number, any> {
   return out;
 }
 
-function writeSymbolCache(symbol: string, rows: Map<number, any>) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
+function writeSymbolCache(symbol: string, interval: BybitKlineInterval, rows: Map<number, any>) {
+  fs.mkdirSync(cacheDirByInterval(interval), { recursive: true });
   const sorted = Array.from(rows.entries()).sort((a, b) => a[0] - b[0]).map(([, row]) => row);
   const body = sorted.map((r) => JSON.stringify(r)).join("\n");
-  fs.writeFileSync(path.join(CACHE_DIR, `${symbol}.jsonl`), body ? `${body}\n` : "", "utf8");
+  fs.writeFileSync(symbolCachePath(symbol, interval), body ? `${body}\n` : "", "utf8");
 }
 
 function toReceiveError(code: string, message: string): { code: string; message: string } {
@@ -150,11 +201,11 @@ function setProgress(job: ReceiveJobInternal, patch: Partial<ReceiveProgress>, f
   job.lastProgressEmitMs = now;
 }
 
-async function fetchKlinesBatch(symbol: string, startMs: number, endMs: number): Promise<string[][]> {
+async function fetchKlinesBatch(symbol: string, interval: BybitKlineInterval, startMs: number, endMs: number): Promise<string[][]> {
   const url = new URL(`${BYBIT_BASE_URL.replace(/\/+$/g, "")}/v5/market/kline`);
   url.searchParams.set("category", "linear");
   url.searchParams.set("symbol", symbol);
-  url.searchParams.set("interval", "1");
+  url.searchParams.set("interval", interval);
   url.searchParams.set("start", String(startMs));
   url.searchParams.set("end", String(endMs));
   url.searchParams.set("limit", String(REQUEST_LIMIT));
@@ -209,26 +260,28 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     }
 
     const universe = readUniverse(target.universeId);
+    const interval = normalizeBybitKlineInterval(target.interval);
+    const klineBatchSpanMs = intervalToMs(interval) * REQUEST_LIMIT;
     const symbols = Array.isArray(universe.symbols) ? universe.symbols.filter((s) => typeof s === "string" && s.trim()) : [];
-    const batchesPerSymbol = Math.max(1, Math.ceil((resolvedRange.endMs - resolvedRange.startMs) / KLINE_BATCH_SPAN_MS));
+    const batchesPerSymbol = Math.max(1, Math.ceil((resolvedRange.endMs - resolvedRange.startMs) / klineBatchSpanMs));
     job.progress.totalSteps = Math.max(1, symbols.length * batchesPerSymbol);
     setProgress(job, { totalSteps: job.progress.totalSteps, message: "Starting receive." }, true);
 
     let completedSteps = 0;
     const symbolErrors: string[] = [];
-  const failedSymbols = new Set<string>();
+    const failedSymbols = new Set<string>();
 
     for (const symbol of symbols) {
       if (job.cancelRequested) break;
 
-      const merged = loadSymbolCache(symbol);
+      const merged = loadSymbolCache(symbol, interval);
       setProgress(job, { currentSymbol: symbol, message: `Receiving ${symbol}` }, true);
 
-      for (let cursor = resolvedRange.startMs; cursor < resolvedRange.endMs; cursor += KLINE_BATCH_SPAN_MS) {
+      for (let cursor = resolvedRange.startMs; cursor < resolvedRange.endMs; cursor += klineBatchSpanMs) {
         if (job.cancelRequested) break;
-        const batchEnd = Math.min(resolvedRange.endMs, cursor + KLINE_BATCH_SPAN_MS - 1);
+        const batchEnd = Math.min(resolvedRange.endMs, cursor + klineBatchSpanMs - 1);
         try {
-          const batch = await fetchKlinesBatch(symbol, cursor, batchEnd);
+          const batch = await fetchKlinesBatch(symbol, interval, cursor, batchEnd);
           for (const row of batch) {
             const startMs = Number(row?.[0]);
             if (!Number.isFinite(startMs)) continue;
@@ -253,7 +306,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         setProgress(job, { completedSteps, currentSymbol: symbol });
       }
 
-      writeSymbolCache(symbol, merged);
+      writeSymbolCache(symbol, interval, merged);
       await waitImmediate();
     }
 
@@ -284,6 +337,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         startMs: resolvedRange.startMs,
         endMs: resolvedRange.endMs,
         receivedAtMs: job.finishedAtMs ?? Date.now(),
+        interval,
         receivedSymbols: okSymbols,
       });
     } catch {
@@ -303,6 +357,7 @@ export function startReceiveDataJob(input?: Partial<DatasetTarget>) {
   const target: DatasetTarget = {
     universeId: typeof input?.universeId === "string" || input?.universeId === null ? input.universeId : persisted.universeId,
     range: input?.range ?? persisted.range,
+    interval: normalizeBybitKlineInterval((input as any)?.interval ?? persisted.interval),
     updatedAtMs: Date.now(),
   };
 

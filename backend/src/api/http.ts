@@ -901,6 +901,30 @@ function normalizeOptionalTs(value: unknown): number | undefined {
 }
 
 
+function cachePathForSymbolInterval(symbol: string, interval: string): string {
+  return path.resolve(process.cwd(), "data", "cache", "bybit_klines", interval, `${symbol}.jsonl`);
+}
+
+function resolveDatasetCachePath(symbol: string, interval: string): string {
+  const scoped = cachePathForSymbolInterval(symbol, interval);
+  if (fs.existsSync(scoped)) return scoped;
+  if (interval === "1") {
+    const legacy = path.resolve(process.cwd(), "data", "cache", "bybit_klines", `${symbol}.jsonl`);
+    if (fs.existsSync(legacy)) return legacy;
+  }
+  return scoped;
+}
+
+function ensureSingleIntervalOrReply(reply: any, histories: Array<{ interval?: string }>): string | null {
+  const uniq = [...new Set(histories.map((h) => String(h.interval ?? "1")))];
+  if (!uniq.length) return "1";
+  if (uniq.length > 1) {
+    reply.code(400);
+    return null;
+  }
+  return uniq[0]!;
+}
+
 function computeDatasetHoursFromHistories(histories: Array<{ startMs: number; endMs: number }>): number {
   const sorted = histories
     .map((h) => ({ startMs: Number(h.startMs), endMs: Number(h.endMs) }))
@@ -1420,7 +1444,12 @@ app.get("/api/config", async () => {
     }
     histories.sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs) || (a.receivedAtMs - b.receivedAtMs));
 
-    const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs }));
+    const interval = ensureSingleIntervalOrReply(reply, histories);
+    if (!interval) {
+      return { error: "dataset_history_interval_mismatch", message: "Selected history rows must have the same timeframe." };
+    }
+
+    const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs, interval }));
     if (cacheDatasets.some((ds) => !Array.isArray(ds.symbols) || ds.symbols.length === 0)) {
       reply.code(400);
       return { error: "dataset_history_symbols_missing", message: "Selected history contains no symbols." };
@@ -1434,7 +1463,7 @@ app.get("/api/config", async () => {
     }
 
     for (const symbol of allSymbols) {
-      if (!fs.existsSync(path.resolve(process.cwd(), "data", "cache", "bybit_klines", `${symbol}.jsonl`))) {
+      if (!fs.existsSync(resolveDatasetCachePath(symbol, interval))) {
         reply.code(400);
         return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
       }
@@ -1526,6 +1555,7 @@ app.get("/api/config", async () => {
       tapeIds: [],
       datasetHistoryIds,
       cacheDatasets,
+      interval,
       candidates: totalCandidates,
       seed: Number.isFinite(seed) ? seed : 1,
       ...(ranges ? { ranges } : {}),
@@ -1700,7 +1730,12 @@ app.get("/api/config", async () => {
     }
     histories.sort((a, b) => (a.startMs - b.startMs) || (a.endMs - b.endMs) || (a.receivedAtMs - b.receivedAtMs));
 
-    const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs }));
+    const interval = ensureSingleIntervalOrReply(reply, histories);
+    if (!interval) {
+      return { error: "dataset_history_interval_mismatch", message: "Selected history rows must have the same timeframe." };
+    }
+
+    const cacheDatasets = histories.map((h) => ({ symbols: h.receivedSymbols, startMs: h.startMs, endMs: h.endMs, interval }));
     const allSymbols = new Set<string>();
     for (const ds of cacheDatasets) for (const s of ds.symbols) allSymbols.add(s);
 
@@ -1710,7 +1745,7 @@ app.get("/api/config", async () => {
     }
 
     for (const symbol of allSymbols) {
-      if (!fs.existsSync(path.resolve(process.cwd(), "data", "cache", "bybit_klines", `${symbol}.jsonl`))) {
+      if (!fs.existsSync(resolveDatasetCachePath(symbol, interval))) {
         reply.code(400);
         return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
       }
@@ -1731,6 +1766,7 @@ let sim: OptimizerSimulationParams;
       tapeIds: [],
       datasetHistoryIds,
       cacheDatasets,
+      interval,
       candidates: Number(body?.candidates),
       seed: Number(body?.seed ?? 1),
       directionMode: body?.directionMode == null ? "both" : String(body.directionMode) as "both" | "long" | "short",

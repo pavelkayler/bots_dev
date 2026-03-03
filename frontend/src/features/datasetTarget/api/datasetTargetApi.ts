@@ -7,9 +7,12 @@ export type DatasetRange =
   | { kind: "preset"; preset: DatasetRangePreset }
   | { kind: "manual"; startMs: number; endMs: number };
 
+export type BybitKlineInterval = "1" | "3" | "5" | "15" | "30" | "60" | "120" | "240" | "360" | "720" | "D" | "W" | "M";
+
 export type DatasetTarget = {
   universeId: string | null;
   range: DatasetRange;
+  interval: BybitKlineInterval;
   updatedAtMs: number;
 };
 

@@ -282,6 +282,12 @@ useEffect(() => {
       if (cancelled) return;
       const items = Array.isArray(res.histories) ? res.histories : [];
       setDatasetHistories(items);
+      if (import.meta.env.DEV && localStorage.getItem("debugDatasetTf") === "1") {
+        console.log("[optimizer-history-tf]", {
+          selectedHistoryIds,
+          intervals: [...new Set(items.map((h) => h.interval))],
+        });
+      }
 
       // drop selections that disappeared
       setSelectedHistoryIds((prev) => prev.filter((id) => items.some((h) => h.id === id)));
@@ -1552,6 +1558,7 @@ useEffect(() => {
                         <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("endMs")}>to</th>
                         <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("rangeMs")}>range</th>
                         <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("universeLabel")}>universe</th>
+                        <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("interval")}>tf</th>
                         <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("receivedAtMs")}>received</th>
                         <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("loopsCount")}>loop runs</th>
                         <th style={{ width: 200 }}>actions</th>
@@ -1559,7 +1566,7 @@ useEffect(() => {
                     </thead>
                     <tbody>
                       {historyRowsPaged.length === 0 ? (
-                        <tr><td colSpan={8} className="text-muted">No history</td></tr>
+                        <tr><td colSpan={9} className="text-muted">No history</td></tr>
                       ) : historyRowsPaged.map((h: any) => {
                         const checked = selectedHistoryIds.includes(h.id);
                         const rangeSec = Math.floor((h.rangeMs ?? 0) / 1000);
@@ -1572,6 +1579,7 @@ useEffect(() => {
                             <td>{formatHistoryEndedAt(Number(h.endMs))}</td>
                             <td>{formatDuration(rangeSec)}</td>
                             <td>{h.universeLabel}</td>
+                            <td>{h.interval}</td>
                             <td>{formatHistoryEndedAt(Number(h.receivedAtMs))}</td>
                             <td>{Number(h.loopsCount) || 0}</td>
                             <td>
