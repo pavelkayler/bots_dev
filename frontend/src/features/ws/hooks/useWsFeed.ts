@@ -82,6 +82,7 @@ function patchState(patch: Partial<WsFeedState>) {
 
   const liteChanged =
     prev.conn !== state.conn ||
+    prev.lastMsg !== state.lastMsg ||
     prev.lastServerTime !== state.lastServerTime ||
     prev.wsSessionState !== state.wsSessionState ||
     prev.wsSessionId !== state.wsSessionId ||
@@ -218,6 +219,7 @@ export function useWsFeedLite() {
 
   return {
     conn: localState.conn,
+    lastMsg: localState.lastMsg,
     lastServerTime: localState.lastServerTime,
     wsSessionState: localState.wsSessionState,
     wsSessionId: localState.wsSessionId,

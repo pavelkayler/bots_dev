@@ -3,6 +3,7 @@ import { Worker } from "node:worker_threads";
 export type WorkerManagerHandlers = {
   onProgress: (payload: any) => void;
   onCheckpoint: (payload: any) => void;
+  onRowsAppend: (payload: any) => void;
   onDone: (payload: any) => void;
   onError: (payload: any) => void;
 };
@@ -42,6 +43,7 @@ class OptimizerWorkerManager {
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "progress") handlers.onProgress(msg);
       if (msg.type === "checkpoint") handlers.onCheckpoint(msg);
+      if (msg.type === "rows_append") handlers.onRowsAppend(msg);
       if (msg.type === "done") {
         handlers.onDone(msg);
         this.terminate(jobId);

@@ -373,6 +373,7 @@ export type RunOptimizationHooks = {
   onProgress?: (done: number, total: number, partialResults: OptimizerResult[]) => void;
   onBlacklistUpdate?: (summary: { count: number; skipped: number }) => void;
   onCheckpoint?: (summary: { done: number; total: number; donePercent: number; partialResults: OptimizerResult[] }) => void;
+  onRowsAppend?: (rows: OptimizerResult[]) => void;
 };
 
 export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: RunOptimizationHooks): Promise<{
@@ -869,6 +870,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
     if (!args.excludeNegative || candidateResult.netPnl >= 0) {
       results.push(candidateResult);
+      hooks?.onRowsAppend?.([candidateResult]);
     }
     // report progress in 0.01% steps (total=10000)
     const candidateDone = i + 1;

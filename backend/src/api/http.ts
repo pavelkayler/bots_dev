@@ -31,6 +31,7 @@ import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 import { readDatasetTarget, writeDatasetTarget, normalizeDatasetTarget } from "../dataset/datasetTargetStore.js";
 import { cancelReceiveDataJob, getReceiveDataJob, startReceiveDataJob } from "../dataset/receiveDataStore.js";
 import { deleteDatasetHistory, incrementDatasetHistoryLoops, listDatasetHistories, readDatasetHistory } from "../dataset/datasetHistoryStore.js";
+import { broadcastOptimizerRowsAppend, setOptimizerSnapshotProvider } from "./wsHub.js";
 
 type OptimizerJob = {
   status: "running" | "paused" | "done" | "error" | "cancelled";
@@ -347,6 +348,30 @@ function appendOptimizerJobHistory(jobId: string, job: OptimizerJob) {
   writeOptimizerJobHistory(prev.slice(0, 500));
 }
 
+
+
+function optimizerResultSignature(row: OptimizerResult): string {
+  return [
+    Number(row?.params?.priceThresholdPct ?? 0),
+    Number(row?.params?.oivThresholdPct ?? 0),
+    Number(row?.params?.tpRoiPct ?? 0),
+    Number(row?.params?.slRoiPct ?? 0),
+    Number(row?.params?.entryOffsetPct ?? 0),
+    Number(row?.params?.timeoutSec ?? 0),
+    Number(row?.params?.rearmMs ?? 0),
+  ].join("|");
+}
+
+function mergeJobResults(existing: OptimizerResult[], incoming: OptimizerResult[], maxRows: number): OptimizerResult[] {
+  const merged = new Map<string, OptimizerResult>();
+  for (const row of Array.isArray(existing) ? existing : []) {
+    merged.set(optimizerResultSignature(row), row);
+  }
+  for (const row of Array.isArray(incoming) ? incoming : []) {
+    merged.set(optimizerResultSignature(row), row);
+  }
+  return Array.from(merged.values()).slice(0, Math.max(1, maxRows));
+}
 
 function ensureCheckpointDir() {
   fs.mkdirSync(checkpointDir, { recursive: true });
@@ -1042,6 +1067,13 @@ export function registerHttpRoutes(app: FastifyInstance) {
   app.get("/api/session/status", async () => runtime.getStatus());
 
 
+  setOptimizerSnapshotProvider(() => {
+    const jobId = resolveCurrentOptimizerJobId();
+    if (!jobId) return { jobId: null, rows: [] };
+    const job = optimizerJobs.get(jobId);
+    return { jobId, rows: Array.isArray(job?.results) ? job!.results : [] };
+  });
+
   app.get("/api/doctor", async () => {
     const tapesDir = getOptimizerSettings().tapesDir;
     const warnings: string[] = [];
@@ -1530,7 +1562,10 @@ app.get("/api/config", async () => {
             if (Number.isFinite(totalCountRaw) && totalCountRaw > 0) job.totalCandidates = totalCountRaw;
 
             const preview = Array.isArray((msg as any)?.previewResults) ? (msg as any).previewResults : [];
-            job.results = preview.filter((r: any) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0).slice(0, 200);
+            const previewFiltered = preview.filter((r: any) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0);
+            if (previewFiltered.length > 0) {
+              job.results = mergeJobResults(job.results, previewFiltered, 2000);
+            }
 
             if (optimizerLoopState?.lastJobId === jobId && optimizerLoopState.progress?.jobId === jobId) {
               const state = optimizerLoopState;
@@ -1558,6 +1593,17 @@ app.get("/api/config", async () => {
           if (job.cancelRequested) optimizerWorkerManager.cancel(jobId);
           writeCheckpoint(jobId, job);
           writeJobSnapshot(jobId, job);
+        },
+        onRowsAppend: (msg) => {
+          const incomingRows = Array.isArray((msg as any)?.rows) ? (msg as any).rows : [];
+          if (incomingRows.length === 0) return;
+          const filtered = incomingRows.filter((r: any) => !job.excludeNegative || (r?.netPnl ?? 0) >= 0);
+          if (!filtered.length) return;
+          job.results = mergeJobResults(job.results, filtered, 2000);
+          job.updatedAtMs = Date.now();
+          writeCheckpoint(jobId, job);
+          writeJobSnapshot(jobId, job);
+          broadcastOptimizerRowsAppend(jobId, filtered);
         },
         onCheckpoint: () => {
           writeCheckpoint(jobId, job);
