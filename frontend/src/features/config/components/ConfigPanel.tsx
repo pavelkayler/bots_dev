@@ -73,11 +73,10 @@ function parseNumber(v: string, label: string): number {
   return n;
 }
 
-function clampInt(value: unknown, min: number, max: number): number {
+function toNonNegativeRoundedInt(value: unknown): number {
   const n = Number(value);
-  if (!Number.isFinite(n)) return min;
-  const intValue = Math.floor(n);
-  return Math.max(min, Math.min(max, intValue));
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.round(n));
 }
 
 function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft | null): { ok: true; parsed: RuntimeConfig } | { ok: false } {
@@ -107,7 +106,7 @@ function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft |
         tpRoiPct: parseNumber(numericDraft.paperTpRoiPct, "tpRoiPct"),
         slRoiPct: parseNumber(numericDraft.paperSlRoiPct, "slRoiPct"),
         makerFeeRate: parseNumber(numericDraft.paperMakerFeeRate, "makerFeeRate"),
-        rearmDelayMs: clampInt(parseNumber(numericDraft.paperRearmSec, "rearmSec"), 0, 60) * 1000,
+        rearmDelayMs: toNonNegativeRoundedInt(parseNumber(numericDraft.paperRearmSec, "rearmSec")) * 1000,
         maxDailyLossUSDT: parseNumber(numericDraft.paperMaxDailyLossUSDT, "maxDailyLossUSDT"),
       },
     };
@@ -278,12 +277,10 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
           tpRoiPct: Number(patch?.paper?.tpRoiPct ?? draft.paper.tpRoiPct),
           slRoiPct: Number(patch?.paper?.slRoiPct ?? draft.paper.slRoiPct),
           entryOffsetPct: Number(patch?.paper?.entryOffsetPct ?? draft.paper.entryOffsetPct),
-          rearmDelayMs: clampInt(
+          rearmDelayMs: toNonNegativeRoundedInt(
             patch?.paper?.rearmSec != null
               ? Number(patch.paper.rearmSec)
               : ((patch?.paper?.rearmMs ?? patch?.paper?.rearmDelayMs ?? draft.paper.rearmDelayMs) / 1000),
-            0,
-            60,
           ) * 1000,
           maxDailyLossUSDT: Number(patch?.paper?.maxDailyLossUSDT ?? draft.paper.maxDailyLossUSDT),
         },

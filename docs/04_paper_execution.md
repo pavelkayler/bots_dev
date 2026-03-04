@@ -60,5 +60,10 @@ Worst-case resolution in `conservativeOhlc`:
 
 Close price for TP/SL events remains the TP/SL level itself (not bar close).
 
+## Rearm delay
+- `rearmDelayMs` is persisted as milliseconds in backend config.
+- Config UI edits this value as `rearmSec` and sends `rearmDelayMs = round(rearmSec) * 1000` on apply.
+- No upper cap is enforced; large values are allowed intentionally.
+
 ## Logging
 All actions are written to `events.jsonl` (one event per line) and streamed to UI via WS.

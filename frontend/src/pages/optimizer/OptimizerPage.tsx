@@ -1874,10 +1874,10 @@ useEffect(() => {
   const copyToSettings = useCallback((row: OptimizationResult) => {
     const rowRearmSec = Number((row.params as { rearmSec?: unknown }).rearmSec);
     const rowRearmMs = Number((row.params as { rearmMs?: unknown }).rearmMs);
-    const mappedRearmSec = Number.isFinite(rowRearmSec) && rowRearmSec >= 0 && rowRearmSec <= 60
+    const mappedRearmSec = Number.isFinite(rowRearmSec) && rowRearmSec >= 0
       ? rowRearmSec
       : (Number.isFinite(rowRearmMs) ? Math.round(rowRearmMs / 1000) : 0);
-    const clampedRearmSec = Math.max(0, Math.min(60, Math.floor(mappedRearmSec)));
+    const paperRearmSec = Math.max(0, Math.round(mappedRearmSec));
 
     const patch = {
       source: "optimizer",
@@ -1895,7 +1895,7 @@ useEffect(() => {
           slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
           entryOffsetPct: quantizeByPrecision(row.params.entryOffsetPct, activePrecision.offset),
           entryTimeoutSec: quantizeByPrecision(row.params.timeoutSec, activePrecision.timeoutSec),
-          rearmSec: clampedRearmSec,
+          rearmSec: paperRearmSec,
         },
       },
     };

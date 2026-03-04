@@ -66,7 +66,7 @@ const paperSchema = z
     makerFeeRate: z.number().finite().min(0).max(0.01),
     applyFunding: z.boolean(),
 
-    rearmDelayMs: z.number().finite().min(0).max(60_000),
+    rearmDelayMs: z.number().finite().min(0),
     maxDailyLossUSDT: z.number().finite().min(0).max(1_000_000_000),
   })
   .strict();
