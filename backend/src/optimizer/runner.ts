@@ -527,83 +527,31 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         const row = JSON.parse(text) as {
           startMs?: number;
           close?: string;
-          open?: string;
-          high?: string;
-          low?: string;
-          turnover?: string;
-          volume?: string;
           oi?: string;
-          fundingRate?: string;
         };
         const candleStart = Number(row.startMs);
         if (!Number.isFinite(candleStart) || !inAnyWindow(candleStart)) continue;
 
-        const open = Number(row.open);
-        const high = Number(row.high);
-        const low = Number(row.low);
         const close = Number(row.close);
         if (!Number.isFinite(close) || close <= 0) continue;
         const oiBase = Number(row.oi);
         if (Number.isFinite(oiBase) && oiBase > 0) candleWithOiCount += 1;
         const openInterestValue = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : 0;
         const tsClose = candleStart + replayIntervalMin * 60_000;
-        if (replayInterval === "1") {
-          const openPrice = Number.isFinite(open) && open > 0 ? open : close;
-          const highPrice = Number.isFinite(high) && high > 0 ? high : close;
-          const lowPrice = Number.isFinite(low) && low > 0 ? low : close;
-          const hasRange = highPrice > lowPrice;
 
-          const push1mTick = (ts: number, markPrice: number) => {
-            const oiv = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * markPrice : 0;
-            events.push({
-              type: "ticker",
-              ts,
-              symbol,
-              payload: { markPrice, openInterest: oiv, openInterestValue: oiv, fundingRate: 0 },
-            });
-          };
+        events.push({
+          type: "ticker",
+          ts: tsClose,
+          symbol,
+          payload: {
+            markPrice: close,
+            openInterest: openInterestValue,
+            openInterestValue,
+            fundingRate: 0,
+          },
+        });
+        events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
 
-          if (!hasRange) {
-            push1mTick(tsClose, close);
-          } else {
-            push1mTick(candleStart, openPrice);
-            if (close >= openPrice) {
-              push1mTick(candleStart + 1, lowPrice);
-              push1mTick(candleStart + 2, highPrice);
-            } else {
-              push1mTick(candleStart + 1, highPrice);
-              push1mTick(candleStart + 2, lowPrice);
-            }
-            push1mTick(tsClose, close);
-          }
-
-          events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
-        } else {
-          const fundingRateRaw = Number(row.fundingRate);
-          if (Number.isFinite(fundingRateRaw)) candleWithFundingCount += 1;
-          const fundingRate = Number.isFinite(fundingRateRaw) ? fundingRateRaw : 0;
-          const tickerPayload = { openInterest: openInterestValue, openInterestValue, fundingRate };
-          const openPrice = Number.isFinite(open) && open > 0 ? open : close;
-          const highPrice = Number.isFinite(high) && high > 0 ? high : close;
-          const lowPrice = Number.isFinite(low) && low > 0 ? low : close;
-          const hasRange = highPrice > lowPrice;
-
-          if (!hasRange) {
-            events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
-          } else {
-            events.push({ type: "ticker", ts: candleStart, symbol, payload: { markPrice: openPrice, ...tickerPayload } });
-            if (close >= openPrice) {
-              events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
-              events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
-            } else {
-              events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
-              events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
-            }
-            events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
-          }
-
-          events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
-        }
         if (firstTsMs == null || candleStart < firstTsMs) firstTsMs = candleStart;
         if (lastTsMs == null || tsClose > lastTsMs) lastTsMs = tsClose;
         candleCount += 1;
@@ -613,6 +561,20 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         sampleSymbolCandleCount = candleCount;
         sampleSymbolOiSamplesUsed = candleWithOiCount;
         sampleSymbolFundingSamplesUsed = candleWithFundingCount;
+      }
+
+      let prevTickerTs: number | null = null;
+      const tickerDeltasSec: number[] = [];
+      for (const event of events) {
+        if (event.type !== "ticker") continue;
+        if (prevTickerTs != null && event.ts > prevTickerTs) {
+          tickerDeltasSec.push((event.ts - prevTickerTs) / 1000);
+        }
+        prevTickerTs = event.ts;
+      }
+      const tapeMedianTickIntervalSec = median(tickerDeltasSec);
+      if (tapeMedianTickIntervalSec > 0 && globalTickIntervals.length < MAX_TICK_INTERVAL_SAMPLES) {
+        globalTickIntervals.push(tapeMedianTickIntervalSec);
       }
 
       if (DEBUG_DATASET_TF && tapes.length === 0) {
@@ -773,9 +735,22 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         directionMode: args.directionMode ?? "both",
       });
 
+      const tfMinRaw = Number(args.optTfMin ?? tape.meta?.klineTfMin ?? baseConfig.universe.klineTfMin);
+      const tfMinFromMeta = Number.isFinite(tfMinRaw) && tfMinRaw > 0 ? Math.floor(tfMinRaw) : baseConfig.universe.klineTfMin;
+      const durationMs = Math.max(0, (tape.lastTsMs ?? 0) - (tape.firstTsMs ?? 0));
+      const durationMin = durationMs / 60_000;
+      let effectiveTfMin = tfMinFromMeta;
+      if (durationMin > 0 && durationMin < tfMinFromMeta) {
+        effectiveTfMin = Math.max(1, Math.floor(durationMin));
+      }
+      const tfMs = effectiveTfMin * 60_000;
+      effectiveTfMinByTapeId[tape.tapeId] = effectiveTfMin;
+      durationMinByTapeId[tape.tapeId] = durationMin;
+
       const baseTimeout = Math.max(1, Math.floor(params.timeoutSec));
-      const intervalBased = Math.ceil(2 * medianTickIntervalSec);
-      const effectiveEntryTimeoutSec = Math.max(baseTimeout, intervalBased, 5);
+      const tickBased = Math.ceil(medianTickIntervalSec) + 1;
+      const effectiveEntryTimeoutSec = Math.max(baseTimeout, tickBased, 5);
+      const minRearmMs = effectiveTfMin * 60_000;
 
       const candidateConfig = {
         ...baseConfig,
@@ -795,7 +770,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           slRoiPct: params.slRoiPct,
           entryOffsetPct: params.entryOffsetPct,
           entryTimeoutSec: effectiveEntryTimeoutSec,
-          rearmDelayMs: Math.max(0, Math.floor(params.rearmMs)),
+          rearmDelayMs: Math.max(Math.max(0, Math.floor(params.rearmMs)), minRearmMs),
           applyFunding: false,
         },
       };
@@ -822,17 +797,6 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
       const paper = new PaperBroker(candidateConfig.paper, logger as any);
       let lastEventTs = 0;
-      const tfMinRaw = Number(args.optTfMin ?? tape.meta?.klineTfMin ?? baseConfig.universe.klineTfMin);
-      const tfMinFromMeta = Number.isFinite(tfMinRaw) && tfMinRaw > 0 ? Math.floor(tfMinRaw) : baseConfig.universe.klineTfMin;
-      const durationMs = Math.max(0, (tape.lastTsMs ?? 0) - (tape.firstTsMs ?? 0));
-      const durationMin = durationMs / 60_000;
-      let effectiveTfMin = tfMinFromMeta;
-      if (durationMin > 0 && durationMin < tfMinFromMeta) {
-        effectiveTfMin = Math.max(1, Math.floor(durationMin));
-      }
-      const tfMs = effectiveTfMin * 60_000;
-      effectiveTfMinByTapeId[tape.tapeId] = effectiveTfMin;
-      durationMinByTapeId[tape.tapeId] = durationMin;
 
       const fallbackBySymbol = new Map<string, {
         lastBucketId: number | undefined;
