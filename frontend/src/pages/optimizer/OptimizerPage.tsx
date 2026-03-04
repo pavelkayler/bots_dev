@@ -972,13 +972,6 @@ useEffect(() => {
   }, [filterValNetPnlPos]);
 
   useEffect(() => {
-    if (!filterValPnlPerTradePos) return;
-    if (sortKey !== "netPnl") return;
-    setSortKey("valPnlPerTrade");
-    setSortDir("desc");
-  }, [filterValPnlPerTradePos, sortKey]);
-
-  useEffect(() => {
     localStorage.setItem(REMEMBER_NEGATIVES_STORAGE_KEY, rememberNegatives ? "1" : "0");
   }, [rememberNegatives]);
 
@@ -2310,12 +2303,6 @@ useEffect(() => {
                 <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={hideNegativeNetPnl} onChange={(e) => setHideNegativeNetPnl(e.currentTarget.checked)} />
                 <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val pnl/trade > 0" checked={filterValPnlPerTradePos} onChange={(e) => setFilterValPnlPerTradePos(e.currentTarget.checked)} />
                 <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val netPnl > 0" checked={filterValNetPnlPos} onChange={(e) => setFilterValNetPnlPos(e.currentTarget.checked)} />
-                <Button size="sm" variant="outline-secondary" onClick={() => {
-                  setSortKey("valPnlPerTrade");
-                  setSortDir("desc");
-                }}>
-                  Sort: val pnl/trade
-                </Button>
               </div>
               <div>
                 Page <b>{Math.min(page, totalPages)}</b> of <b>{totalPages}</b> · Total <b>{isLoopDisplay ? sortedDisplayedRows.length : totalRows}</b>
