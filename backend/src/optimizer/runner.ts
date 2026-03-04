@@ -5,7 +5,7 @@ import readline from "node:readline";
 import { BybitMarketCache } from "../engine/BybitMarketCache.js";
 import { CandleTracker } from "../engine/CandleTracker.js";
 import { SignalEngine } from "../engine/SignalEngine.js";
-import { PaperBroker, type PaperStats } from "../paper/PaperBroker.js";
+import { PaperBroker, type PaperExecutionModel, type PaperStats, type PaperTickOhlc } from "../paper/PaperBroker.js";
 import { configStore } from "../runtime/configStore.js";
 import { getTapePath, safeId } from "./tapeStore.js";
 
@@ -214,6 +214,9 @@ export function fundingRateAtTs(samples: Array<{ ts: number; rate: number }>, ts
 
 export type ReplayCacheRow = {
   startMs?: number;
+  open?: string;
+  high?: string;
+  low?: string;
   close?: string;
   oi?: string;
 };
@@ -245,8 +248,13 @@ export function createReplayEventsFromCacheRows(args: {
     const candleStart = Number(row.startMs);
     if (!Number.isFinite(candleStart) || !inAnyWindow(candleStart)) continue;
 
+    const open = Number(row.open);
+    const high = Number(row.high);
+    const low = Number(row.low);
     const close = Number(row.close);
     if (!Number.isFinite(close) || close <= 0) continue;
+    const hasOhlc = Number.isFinite(open) && Number.isFinite(high) && Number.isFinite(low);
+    const ohlc: PaperTickOhlc | undefined = hasOhlc ? { open, high, low, close } : undefined;
     const oiBase = Number(row.oi);
     if (Number.isFinite(oiBase) && oiBase > 0) candleWithOiCount += 1;
     const openInterestValue = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : 0;
@@ -260,6 +268,7 @@ export function createReplayEventsFromCacheRows(args: {
       symbol,
       payload: {
         markPrice: close,
+        ...(ohlc ? { ohlc } : {}),
         openInterest: openInterestValue,
         openInterestValue,
         fundingRate,
@@ -528,6 +537,7 @@ export type RunOptimizationArgs = {
   precision?: Partial<OptimizerPrecision>;
   directionMode?: "both" | "long" | "short";
   optTfMin?: number;
+  executionModel?: PaperExecutionModel;
   onProgress?: (done: number, total: number, partialResults: OptimizerResult[]) => void;
   shouldStop?: () => boolean;
   shouldPause?: () => boolean;
@@ -829,6 +839,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       rearmMs: Math.max(Number(randomizedParams.rearmMs) || 0, effectiveTf * 60_000),
     };
     const candidateKey = buildCandidateKey(params, effectiveDirection, effectiveTf, args.sim);
+    const effectiveExecutionModel: PaperExecutionModel = args.executionModel ?? "closeOnly";
     if (blacklistState && blacklistState.negativeSet.has(candidateKey)) {
       skippedBlacklisted += 1;
       hooks?.onBlacklistUpdate?.({ count: blacklistState?.negativeSet.size ?? 0, skipped: skippedBlacklisted });
@@ -895,6 +906,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           entryTimeoutSec: Math.max(params.timeoutSec, MIN_TIMEOUT_SEC),
           rearmDelayMs: Math.max(params.rearmMs, effectiveTfMin * 60_000),
           applyFunding: false,
+          executionModel: effectiveExecutionModel,
         },
       };
 
@@ -996,10 +1008,12 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             const isWindowClose = tfMs > 0 && ts % tfMs === 0;
 
             if (!isWindowClose) {
+              const tickOhlc = (event.payload as { ohlc?: PaperTickOhlc } | undefined)?.ohlc;
               paper.tick({
                 symbol: event.symbol,
                 nowMs: ts,
                 markPrice,
+                ...(tickOhlc ? { ohlc: tickOhlc } : {}),
                 fundingRate,
                 nextFundingTime: 0,
                 signal: null,
@@ -1039,10 +1053,12 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
             cadenceBySymbol.set(event.symbol, cadenceState);
 
+            const tickOhlc = (event.payload as { ohlc?: PaperTickOhlc } | undefined)?.ohlc;
             paper.tick({
               symbol: event.symbol,
               nowMs: ts,
               markPrice,
+              ...(tickOhlc ? { ohlc: tickOhlc } : {}),
               fundingRate,
               nextFundingTime: 0,
               signal,

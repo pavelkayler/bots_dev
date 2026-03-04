@@ -103,6 +103,22 @@ describe("PaperBroker", () => {
     expect(close?.payload?.realizedPnl).toBeCloseTo(pnlFromMove - entryFee - exitFee, 8);
   });
 
+
+  it("uses SL as worst-case when TP and SL are both hit inside one OHLC bar", () => {
+    const { broker, events } = createHarness({ executionModel: "conservativeOhlc", makerFeeRate: 0 });
+    tick(broker, { nowMs: 1_000, markPrice: 100, signal: "LONG" });
+    tick(broker, {
+      nowMs: 1_100,
+      markPrice: 100,
+      ohlc: { open: 100, high: 103, low: 98, close: 100 },
+    });
+
+    expect(events.some((ev) => ev.type === "ORDER_FILLED")).toBe(true);
+    expect(events.some((ev) => ev.type === "POSITION_OPEN")).toBe(true);
+    expect(events.some((ev) => ev.type === "POSITION_CLOSE_SL")).toBe(true);
+    expect(events.some((ev) => ev.type === "POSITION_CLOSE_TP")).toBe(false);
+  });
+
   it("expires entry orders after timeout without opening a position", () => {
     const { broker, events } = createHarness({ entryTimeoutSec: 1 });
     tick(broker, { nowMs: 1_000, markPrice: 100, signal: "LONG" });

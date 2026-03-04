@@ -14,11 +14,13 @@ This document describes the Optimizer feature used to tune paper-trading paramet
 - Price source: cached 1-minute klines from `backend/data/cache/bybit_klines/`.
 - OI source: cached at a 5-minute grid (Bybit `intervalTime` minimum is 5min), then used without synthetic interpolation.
 - Funding source: `/v5/market/funding/history` point series from `backend/data/cache/bybit_funding_history/`; replay applies last-known funding value between timestamps.
-- Execution replay is close-only (no OHLC extrema), so optimizer cannot rely on synthetic intra-candle ticks.
+- Execution replay supports two modes: default `closeOnly`, and optional `conservativeOhlc` for bar-range touch checks with worst-case tie resolution.
 - Decision cadence is signal-window based: new entry decisions are evaluated only on `tf(opt)` window-close timestamps (`ts % tfMs === 0`).
 - In-between 1m close ticks are execution-only: replay still calls broker tick processing each minute for fills/TP/SL/expiry, but does not generate new entry signals.
 - `priceMovePct` and `oivMovePct` references are defined between consecutive signal-window closes (previous window close vs current window close), not per-minute bucket rollover values.
 - `openInterestValue` uses `oi * close` only (no fabricated OI/OIV).
+- Replay still emits one ticker per 1m candle close (no synthetic intermediate ticks). In conservative mode, each ticker additionally carries that candle OHLC so fill/TP/SL checks can use bar ranges without path simulation.
+- Conservative worst-case policy: if TP and SL are both reachable in the same bar, SL is chosen so optimizer cannot gain optimistic sequencing advantages.
 - PnL applies trading fees; funding fee is not applied in pnl. Funding is used only for direction gating.
 - Unfinished positions at range end are excluded from optimizer stats.
 
@@ -162,7 +164,7 @@ Per symbol, for the selected range:
 Optimizer replay still uses the same cache data, but now each Receive Data snapshot carries an auditable quality and integrity footprint. Operators can verify coverage and hashes before trusting loop results or comparing repeated runs over the same Universe+Range.
 
 ## Why optimizer is not “better than paper”
-- Optimizer and paper share the same close-only execution model; no intrabar high/low assumptions are introduced in replay.
+- Optimizer and paper share the same execution policy selected for the run: default close-only, or optional conservative OHLC with worst-case tie-breaking.
 - Optimizer signal generation is intentionally throttled to signal-window closes only, matching policy and avoiding unrealistically frequent 1m entries.
 - Funding gating remains the same (`requireFundingSign=true`, funding from history-aligned cache), so optimizer does not gain privileged directional information.
 
@@ -175,7 +177,7 @@ To reduce overfitting to a single contiguous range, each optimizer candidate is 
 - Split timestamp is rounded down to a full minute boundary to avoid partial-minute edge effects.
 
 Replay mechanics are unchanged for both segments:
-- close-only replay
+- replay is bar-based: close-only by default, or conservative OHLC when enabled
 - decisions only on signal-window closes (`ts % tfMs === 0`)
 - `openInterestValue = oi * close`
 - funding-direction gating from funding history
