@@ -26,6 +26,7 @@ import {
   type OptimizerSortDir,
   type OptimizerSortKeyExtended,
   type OptimizerHistorySortKey,
+  type OptimizerExecutionModel,
 } from "../../features/optimizer/api/optimizerApi";
 import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
 import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard";
@@ -65,6 +66,7 @@ const SIM_MARGIN_STORAGE_KEY = "bots_dev.optimizer.sim.marginPerTrade";
 const SIM_LEVERAGE_STORAGE_KEY = "bots_dev.optimizer.sim.leverage";
 const SIM_FEE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.feeBps";
 const SIM_SLIPPAGE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.slippageBps";
+const EXECUTION_MODEL_STORAGE_KEY = "bots_dev.optimizer.executionModel";
 const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
 const FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY = "bots_dev.optimizer.filterValPnlPerTradePos";
@@ -501,6 +503,10 @@ export function OptimizerPage() {
   const [simLeverage, setSimLeverage] = useState(() => localStorage.getItem(SIM_LEVERAGE_STORAGE_KEY) ?? "5");
   const [simFeeBps, setSimFeeBps] = useState(() => localStorage.getItem(SIM_FEE_BPS_STORAGE_KEY) ?? "0");
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
+  const [executionModel, setExecutionModel] = useState<OptimizerExecutionModel>(() => {
+    const raw = localStorage.getItem(EXECUTION_MODEL_STORAGE_KEY);
+    return raw === "conservativeOhlc" ? "conservativeOhlc" : "closeOnly";
+  });
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState("15");
   const [hideNegativeNetPnl, setHideNegativeNetPnl] = useState(false);
@@ -960,6 +966,10 @@ useEffect(() => {
   }, [simSlippageBps]);
 
   useEffect(() => {
+    localStorage.setItem(EXECUTION_MODEL_STORAGE_KEY, executionModel);
+  }, [executionModel]);
+
+  useEffect(() => {
     localStorage.setItem(EXCLUDE_NEGATIVE_STORAGE_KEY, hideNegativeNetPnl ? "1" : "0");
   }, [hideNegativeNetPnl]);
 
@@ -1129,6 +1139,7 @@ useEffect(() => {
           feeBps: Number(simFeeBps) || 0,
           slippageBps: Number(simSlippageBps) || 0,
         },
+        executionModel,
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
         precision,
         runsCount: Math.max(1, Math.floor(Number(loopRunsCount) || 1)),
@@ -2150,7 +2161,6 @@ useEffect(() => {
                   <option value="120">120</option>
                   <option value="240">240</option>
                 </Form.Select>
-                <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>Execution: close-only replay (no OHLC extrema).</div>
                 </Form.Group>
               </Col>
               <Col md={2} sm={4} xs={6}>
@@ -2193,6 +2203,15 @@ useEffect(() => {
                 <Form.Group>
                   <Form.Label style={{ fontSize: 12 }}>slippageBps</Form.Label>
                   <Form.Control value={simSlippageBps} onChange={(e) => setSimSlippageBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
+                </Form.Group>
+              </Col>
+              <Col md={3} sm={6} xs={12}>
+                <Form.Group>
+                  <Form.Label style={{ fontSize: 12 }}>execution</Form.Label>
+                  <Form.Select value={executionModel} onChange={(e) => setExecutionModel(e.currentTarget.value as OptimizerExecutionModel)}>
+                    <option value="closeOnly">Close-only (safe)</option>
+                    <option value="conservativeOhlc">Conservative OHLC</option>
+                  </Form.Select>
                 </Form.Group>
               </Col>
             </Row>

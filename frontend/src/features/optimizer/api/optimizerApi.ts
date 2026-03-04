@@ -99,6 +99,8 @@ export type OptimizerSimulationParams = {
   slippageBps?: number;
 };
 
+export type OptimizerExecutionModel = "closeOnly" | "conservativeOhlc";
+
 export type DoctorStatus = {
   ok: boolean;
   nowMs: number;
@@ -205,6 +207,7 @@ export async function runOptimizationJob(payload: {
   excludeNegative?: boolean;
   rememberNegatives?: boolean;
   sim?: OptimizerSimulationParams;
+  executionModel?: OptimizerExecutionModel;
   datasetCache?: string;
   datasetHistoryIds?: string[];
 }): Promise<{ jobId: string }> {
@@ -321,6 +324,7 @@ export async function startOptimizerLoop(payload: {
   runsCount?: number;
   infinite?: boolean;
   sim?: OptimizerSimulationParams;
+  executionModel?: OptimizerExecutionModel;
   datasetCache?: string;
   datasetHistoryIds?: string[];
 }): Promise<{ loopId: string }> {
