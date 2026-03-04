@@ -111,8 +111,13 @@ export type OptimizerSimulationParams = {
 type CloseSnapshot = { ts: number; realizedPnl: number };
 
 const MAX_TICK_INTERVAL_SAMPLES = 20_000;
-const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
-const FUNDING_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_funding_history");
+function getCacheDir() {
+  return path.resolve(process.cwd(), "data", "cache", "bybit_klines");
+}
+
+function getFundingCacheDir() {
+  return path.resolve(process.cwd(), "data", "cache", "bybit_funding_history");
+}
 const MIN_OPT_TF_MIN = 15;
 const MIN_TIMEOUT_SEC = 61;
 const DEBUG_DATASET_TF = process.env.DEBUG_DATASET_TF === "1";
@@ -142,21 +147,21 @@ function intervalToMinutes(interval: string): number {
 }
 
 function cachePathForSymbolInterval(symbol: string, interval: string): string {
-  return path.join(CACHE_DIR, interval, `${symbol}.jsonl`);
+  return path.join(getCacheDir(), interval, `${symbol}.jsonl`);
 }
 
 function resolveReadCachePath(symbol: string, interval: string): string {
   const scoped = cachePathForSymbolInterval(symbol, interval);
   if (fs.existsSync(scoped)) return scoped;
   if (interval === "1") {
-    const legacy = path.join(CACHE_DIR, `${symbol}.jsonl`);
+    const legacy = path.join(getCacheDir(), `${symbol}.jsonl`);
     if (fs.existsSync(legacy)) return legacy;
   }
   return scoped;
 }
 
 function loadFundingHistory(symbol: string): Array<{ ts: number; rate: number }> {
-  const fp = path.join(FUNDING_CACHE_DIR, `${symbol}.jsonl`);
+  const fp = path.join(getFundingCacheDir(), `${symbol}.jsonl`);
   if (!fs.existsSync(fp)) return [];
   const out: Array<{ ts: number; rate: number }> = [];
   const raw = fs.readFileSync(fp, "utf8");
@@ -176,7 +181,7 @@ function loadFundingHistory(symbol: string): Array<{ ts: number; rate: number }>
   return out;
 }
 
-function fundingRateAtTs(samples: Array<{ ts: number; rate: number }>, ts: number): number {
+export function fundingRateAtTs(samples: Array<{ ts: number; rate: number }>, ts: number): number {
   if (!samples.length) return 0;
   let lo = 0;
   let hi = samples.length - 1;
@@ -192,6 +197,69 @@ function fundingRateAtTs(samples: Array<{ ts: number; rate: number }>, ts: numbe
     }
   }
   return ans >= 0 ? samples[ans]!.rate : 0;
+}
+
+export type ReplayCacheRow = {
+  startMs?: number;
+  close?: string;
+  oi?: string;
+};
+
+export function createReplayEventsFromCacheRows(args: {
+  rows: ReplayCacheRow[];
+  windows: Array<{ startMs: number; endMs: number }>;
+  replayIntervalMin: number;
+  symbol: string;
+  fundingSamples: Array<{ ts: number; rate: number }>;
+}) {
+  const { rows, windows, replayIntervalMin, symbol, fundingSamples } = args;
+  const events: TapeEvent[] = [];
+  let firstTsMs: number | null = null;
+  let lastTsMs: number | null = null;
+  let candleCount = 0;
+  let candleWithOiCount = 0;
+  let candleWithFundingCount = 0;
+
+  const inAnyWindow = (candleStartMs: number): boolean => {
+    for (const w of windows) {
+      if (candleStartMs < w.startMs) return false;
+      if (candleStartMs >= w.startMs && candleStartMs <= w.endMs) return true;
+    }
+    return false;
+  };
+
+  for (const row of rows) {
+    const candleStart = Number(row.startMs);
+    if (!Number.isFinite(candleStart) || !inAnyWindow(candleStart)) continue;
+
+    const close = Number(row.close);
+    if (!Number.isFinite(close) || close <= 0) continue;
+    const oiBase = Number(row.oi);
+    if (Number.isFinite(oiBase) && oiBase > 0) candleWithOiCount += 1;
+    const openInterestValue = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : 0;
+    const tsClose = candleStart + replayIntervalMin * 60_000;
+    const fundingRate = fundingRateAtTs(fundingSamples, tsClose);
+    if (fundingRate !== 0) candleWithFundingCount += 1;
+
+    events.push({
+      type: "ticker",
+      ts: tsClose,
+      symbol,
+      payload: {
+        markPrice: close,
+        openInterest: openInterestValue,
+        openInterestValue,
+        fundingRate,
+      },
+    });
+    events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
+
+    if (firstTsMs == null || candleStart < firstTsMs) firstTsMs = candleStart;
+    if (lastTsMs == null || tsClose > lastTsMs) lastTsMs = tsClose;
+    candleCount += 1;
+  }
+
+  return { events, firstTsMs, lastTsMs, candleCount, candleWithOiCount, candleWithFundingCount };
 }
 
 function pctChange(now: number, ref: number): number | null {
@@ -570,60 +638,23 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       const replayIntervalMin = intervalToMinutes(replayInterval);
       if (symbol === sampleSymbolForDebug) sampleIntervalForDebug = replayInterval;
       const raw = await fs.promises.readFile(fp, "utf8");
-      const events: TapeEvent[] = [];
-      let firstTsMs: number | null = null;
-      let lastTsMs: number | null = null;
-      let candleCount = 0;
-      let candleWithOiCount = 0;
-      let candleWithFundingCount = 0;
+      const rows: ReplayCacheRow[] = [];
       const fundingSamples = loadFundingHistory(symbol);
-
-      const inAnyWindow = (candleStartMs: number): boolean => {
-        // windows are sorted/merged
-        for (const w of windows) {
-          if (candleStartMs < w.startMs) return false;
-          if (candleStartMs >= w.startMs && candleStartMs <= w.endMs) return true;
-        }
-        return false;
-      };
 
       for (const line of raw.split(/\r?\n/)) {
         const text = line.trim();
         if (!text) continue;
-        const row = JSON.parse(text) as {
-          startMs?: number;
-          close?: string;
-          oi?: string;
-        };
-        const candleStart = Number(row.startMs);
-        if (!Number.isFinite(candleStart) || !inAnyWindow(candleStart)) continue;
-
-        const close = Number(row.close);
-        if (!Number.isFinite(close) || close <= 0) continue;
-        const oiBase = Number(row.oi);
-        if (Number.isFinite(oiBase) && oiBase > 0) candleWithOiCount += 1;
-        const openInterestValue = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : 0;
-        const tsClose = candleStart + replayIntervalMin * 60_000;
-        const fundingRate = fundingRateAtTs(fundingSamples, tsClose);
-        if (fundingRate !== 0) candleWithFundingCount += 1;
-
-        events.push({
-          type: "ticker",
-          ts: tsClose,
-          symbol,
-          payload: {
-            markPrice: close,
-            openInterest: openInterestValue,
-            openInterestValue,
-            fundingRate,
-          },
-        });
-        events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
-
-        if (firstTsMs == null || candleStart < firstTsMs) firstTsMs = candleStart;
-        if (lastTsMs == null || tsClose > lastTsMs) lastTsMs = tsClose;
-        candleCount += 1;
+        rows.push(JSON.parse(text) as ReplayCacheRow);
       }
+
+      const {
+        events,
+        firstTsMs,
+        lastTsMs,
+        candleCount,
+        candleWithOiCount,
+        candleWithFundingCount,
+      } = createReplayEventsFromCacheRows({ rows, windows, replayIntervalMin, symbol, fundingSamples });
 
       if (symbol === sampleSymbolForDebug) {
         sampleSymbolCandleCount = candleCount;
@@ -1257,7 +1288,7 @@ function blacklistPath(hash: string) {
   return path.join(getBlacklistDir(), `${hash}.json`);
 }
 
-function loadNegativeBlacklist(runKey: string): NegativeBlacklistState {
+export function loadNegativeBlacklist(runKey: string): NegativeBlacklistState {
   const hash = runKeyHash(runKey);
   fs.mkdirSync(getBlacklistDir(), { recursive: true });
   const filePath = blacklistPath(hash);
@@ -1283,7 +1314,7 @@ function loadNegativeBlacklist(runKey: string): NegativeBlacklistState {
   }
 }
 
-function flushNegativeBlacklist(state: NegativeBlacklistState) {
+export function flushNegativeBlacklist(state: NegativeBlacklistState) {
   state.updatedAtMs = Date.now();
   const negativeSet: Record<string, true> = {};
   for (const sig of state.negativeSet) negativeSet[sig] = true;
@@ -1298,7 +1329,7 @@ function flushNegativeBlacklist(state: NegativeBlacklistState) {
 }
 
 
-function buildCandidateKey(
+export function buildCandidateKey(
   params: RandomizedParams,
   directionMode: "both" | "long" | "short",
   optTfMin: number,

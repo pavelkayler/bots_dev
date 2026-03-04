@@ -44,4 +44,6 @@
     "moduleResolution": "bundler",
     "esModuleInterop": true,
   }
+,
+  "include": ["src/**/*.ts"]
 }
