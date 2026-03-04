@@ -548,12 +548,36 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         const openInterestValue = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : 0;
         const tsClose = candleStart + replayIntervalMin * 60_000;
         if (replayInterval === "1") {
-          events.push({
-            type: "ticker",
-            ts: tsClose,
-            symbol,
-            payload: { markPrice: close, openInterest: openInterestValue, openInterestValue, fundingRate: 0 },
-          });
+          const openPrice = Number.isFinite(open) && open > 0 ? open : close;
+          const highPrice = Number.isFinite(high) && high > 0 ? high : close;
+          const lowPrice = Number.isFinite(low) && low > 0 ? low : close;
+          const hasRange = highPrice > lowPrice;
+
+          const push1mTick = (ts: number, markPrice: number) => {
+            const oiv = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * markPrice : 0;
+            events.push({
+              type: "ticker",
+              ts,
+              symbol,
+              payload: { markPrice, openInterest: oiv, openInterestValue: oiv, fundingRate: 0 },
+            });
+          };
+
+          if (!hasRange) {
+            push1mTick(tsClose, close);
+          } else {
+            push1mTick(candleStart, openPrice);
+            if (close >= openPrice) {
+              push1mTick(candleStart + 1, lowPrice);
+              push1mTick(candleStart + 2, highPrice);
+            } else {
+              push1mTick(candleStart + 1, highPrice);
+              push1mTick(candleStart + 2, lowPrice);
+            }
+            push1mTick(tsClose, close);
+          }
+
+          events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
         } else {
           const fundingRateRaw = Number(row.fundingRate);
           if (Number.isFinite(fundingRateRaw)) candleWithFundingCount += 1;
