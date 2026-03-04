@@ -58,19 +58,6 @@ type BybitOpenInterestResponse = {
   };
 };
 
-type BybitFundingItem = {
-  fundingRate?: string;
-  fundingRateTimestamp?: string;
-};
-
-type BybitFundingHistoryResponse = {
-  retCode?: number;
-  retMsg?: string;
-  result?: {
-    list?: BybitFundingItem[];
-  };
-};
-
 type OiIntervalTime = "5min" | "15min" | "30min" | "1h" | "4h" | "1d";
 
 const BYBIT_BASE_URL = process.env.BYBIT_REST_URL ?? "https://api.bybit.com";
@@ -311,49 +298,6 @@ async function fetchOpenInterestPage(
   };
 }
 
-async function fetchFundingHistoryBatch(symbol: string, startMs: number, endMs: number): Promise<Array<{ fundingRate: string; fundingTs: number }>> {
-  const out: Array<{ fundingRate: string; fundingTs: number }> = [];
-  let currentEnd = endMs;
-  let pages = 0;
-
-  while (currentEnd > startMs) {
-    const url = new URL(`${BYBIT_BASE_URL.replace(/\/+$/g, "")}/v5/market/funding/history`);
-    url.searchParams.set("category", "linear");
-    url.searchParams.set("symbol", symbol);
-    url.searchParams.set("startTime", String(startMs));
-    url.searchParams.set("endTime", String(currentEnd));
-    url.searchParams.set("limit", "200");
-
-    await limiter.acquire();
-    const res = await fetch(url.toString(), { method: "GET" });
-    const json = (await res.json()) as BybitFundingHistoryResponse;
-    const retCode = Number(json?.retCode ?? 0);
-    if (!(res.ok && retCode === 0)) {
-      const msg = String(json?.retMsg ?? `http_${res.status}`);
-      throw new Error(`funding_fetch_failed:${symbol}:${retCode}:${msg}`);
-    }
-
-    const list = Array.isArray(json?.result?.list) ? json.result!.list! : [];
-    if (!list.length) break;
-
-    let oldestTs = Number.POSITIVE_INFINITY;
-    for (const item of list) {
-      const fundingTs = Number(item?.fundingRateTimestamp);
-      const fundingRate = String(item?.fundingRate ?? "");
-      if (!Number.isFinite(fundingTs) || !fundingRate) continue;
-      out.push({ fundingRate, fundingTs });
-      if (fundingTs < oldestTs) oldestTs = fundingTs;
-    }
-    if (!Number.isFinite(oldestTs)) break;
-
-    currentEnd = oldestTs - 1;
-    pages += 1;
-    if (pages % 5 === 0) await waitImmediate();
-  }
-
-  return out;
-}
-
 async function runReceiveJob(jobId: string, target: DatasetTarget) {
   const job = jobs.get(jobId);
   if (!job) return;
@@ -390,7 +334,6 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     const symbolErrors: string[] = [];
     const failedSymbols = new Set<string>();
     let hasAnyOi = false;
-    let hasAnyFunding = false;
 
     for (const symbol of symbols) {
       if (job.cancelRequested) break;
@@ -411,14 +354,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
       const oiSamples = Array.from(oiByTs.entries()).map(([timestamp, openInterest]) => ({ timestamp, openInterest }))
         .sort((a, b) => a.timestamp - b.timestamp);
 
-      const fundingSamplesRaw = await fetchFundingHistoryBatch(symbol, resolvedRange.startMs, resolvedRange.endMs);
-      const fundingByTs = new Map<number, string>();
-      for (const item of fundingSamplesRaw) fundingByTs.set(item.fundingTs, item.fundingRate);
-      const fundingSamples = Array.from(fundingByTs.entries()).map(([fundingTs, fundingRate]) => ({ fundingTs, fundingRate }))
-        .sort((a, b) => a.fundingTs - b.fundingTs);
-
       let oiPtr = -1;
-      let fundingPtr = -1;
       const candleMs = intervalToMs(interval);
 
       for (let cursor = resolvedRange.startMs; cursor < resolvedRange.endMs; cursor += klineBatchSpanMs) {
@@ -438,10 +374,8 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
 
             const candleEndMs = startMs + candleMs - 1;
             while (oiPtr + 1 < oiSamples.length && oiSamples[oiPtr + 1]!.timestamp <= candleEndMs) oiPtr += 1;
-            while (fundingPtr + 1 < fundingSamples.length && fundingSamples[fundingPtr + 1]!.fundingTs <= candleEndMs) fundingPtr += 1;
 
             const alignedOi = oiPtr >= 0 ? oiSamples[oiPtr]! : null;
-            const alignedFunding = fundingPtr >= 0 ? fundingSamples[fundingPtr]! : null;
 
             const cacheRow: any = {
               symbol,
@@ -457,11 +391,6 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
               cacheRow.oi = alignedOi.openInterest;
               cacheRow.oiTs = alignedOi.timestamp;
               hasAnyOi = true;
-            }
-            if (alignedFunding) {
-              cacheRow.fundingRate = alignedFunding.fundingRate;
-              cacheRow.fundingTs = alignedFunding.fundingTs;
-              hasAnyFunding = true;
             }
             merged.set(startMs, cacheRow);
           }
@@ -509,7 +438,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         interval,
         receivedSymbols: okSymbols,
         hasOi: hasAnyOi,
-        hasFunding: hasAnyFunding,
+        hasFunding: false,
       });
     } catch {
       // ignore

@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import readline from "node:readline";
 import { BybitMarketCache } from "../engine/BybitMarketCache.js";
 import { CandleTracker } from "../engine/CandleTracker.js";
-import { FundingCooldownGate } from "../engine/FundingCooldownGate.js";
 import { SignalEngine } from "../engine/SignalEngine.js";
 import { PaperBroker } from "../paper/PaperBroker.js";
 import { configStore } from "../runtime/configStore.js";
@@ -91,7 +90,6 @@ export type OptimizerSimulationParams = {
   marginPerTrade?: number;
   leverage?: number;
   feeBps?: number;
-  fundingBpsPer8h?: number;
   slippageBps?: number;
 };
 
@@ -538,18 +536,9 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         const low = Number(row.low);
         const close = Number(row.close);
         if (!Number.isFinite(close) || close <= 0) continue;
-        const turnoverNum = Number(row.turnover);
-        const volumeNum = Number(row.volume);
         const oiBase = Number(row.oi);
         if (Number.isFinite(oiBase) && oiBase > 0) candleWithOiCount += 1;
-        const openInterestValueFromOi = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : Number.NaN;
-        const openInterestValue = Number.isFinite(openInterestValueFromOi)
-          ? openInterestValueFromOi
-          : Number.isFinite(turnoverNum)
-            ? turnoverNum
-            : Number.isFinite(volumeNum)
-              ? volumeNum
-              : 0;
+        const openInterestValue = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : 0;
         const fundingRateRaw = Number(row.fundingRate);
         if (Number.isFinite(fundingRateRaw)) candleWithFundingCount += 1;
         const fundingRate = Number.isFinite(fundingRateRaw) ? fundingRateRaw : 0;
@@ -564,8 +553,13 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
         } else {
           events.push({ type: "ticker", ts: candleStart, symbol, payload: { markPrice: openPrice, ...tickerPayload } });
-          events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
-          events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
+          if (close >= openPrice) {
+            events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
+            events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
+          } else {
+            events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
+            events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
+          }
           events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
         }
 
@@ -732,11 +726,10 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     for (const tape of tapes) {
       const cache = new BybitMarketCache();
       const candles = new CandleTracker(cache);
-      const fundingGate = new FundingCooldownGate(baseConfig.fundingCooldown.beforeMin, baseConfig.fundingCooldown.afterMin);
       const signalEngine = new SignalEngine({
         priceThresholdPct: params.priceThresholdPct,
         oivThresholdPct: params.oivThresholdPct,
-        requireFundingSign: true,
+        requireFundingSign: false,
         directionMode: args.directionMode ?? "both",
       });
 
@@ -839,8 +832,6 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           const row = cache.getRawRow(event.symbol);
           const markPrice = Number(row?.markPrice ?? 0);
           const openInterestValue = Number(row?.openInterestValue ?? 0);
-          const fundingRate = Number(row?.fundingRate ?? 0);
-          const nextFundingTime = Number(row?.nextFundingTime ?? 0);
 
           const refs = candles.getRefs(event.symbol);
           const useTrackerRefs = args.optTfMin == null;
@@ -873,12 +864,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           const priceMovePct = priceRef == null || markPrice <= 0 ? null : pctChange(markPrice, priceRef);
           const oivMovePct = oivRef == null || openInterestValue <= 0 ? null : pctChange(openInterestValue, oivRef);
 
-          const cooldownState = fundingGate.state(nextFundingTime || null, ts);
           const decision = signalEngine.decide({
             priceMovePct,
             oivMovePct,
-            fundingRate,
-            cooldownActive: cooldownState?.active ?? false,
+            fundingRate: 0,
+            cooldownActive: false,
           });
           if (decision.reason === "no_refs") decisionsNoRefs += 1;
           if (decision.reason === "ok_long" || decision.reason === "ok_short") signalsOk += 1;
@@ -887,11 +877,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             symbol: event.symbol,
             nowMs: ts,
             markPrice,
-            fundingRate,
-            nextFundingTime,
+            fundingRate: 0,
+            nextFundingTime: 0,
             signal: decision.signal,
             signalReason: decision.reason,
-            cooldownActive: cooldownState?.active ?? false,
+            cooldownActive: false,
           });
         }
 
@@ -907,6 +897,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         nowMs: lastEventTs || 0,
         symbols,
         getMarkPrice: (symbol: string) => cache.getMarkPrice(symbol),
+        closeOpenPositions: false,
       });
 
       const stats = paper.getStats();
