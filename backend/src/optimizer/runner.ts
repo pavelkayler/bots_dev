@@ -464,7 +464,14 @@ export type RunOptimizationHooks = {
   onLoadProgress?: (bytesRead: number, totalBytes: number) => void;
   onProgress?: (done: number, total: number, partialResults: OptimizerResult[]) => void;
   onBlacklistUpdate?: (summary: { count: number; skipped: number }) => void;
-  onCheckpoint?: (summary: { done: number; total: number; donePercent: number; partialResults: OptimizerResult[] }) => void;
+  onCheckpoint?: (summary: {
+    done: number;
+    total: number;
+    donePercent: number;
+    partialResults: OptimizerResult[];
+    skippedBlacklistedTotal: number;
+    negativeSetSize: number;
+  }) => void;
   onRowsAppend?: (rows: OptimizerResult[]) => void;
   onCandidateComplete?: (summary: { params: OptimizerParams; trades: any[]; stats: PaperStats }) => void;
 };
@@ -739,7 +746,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const effectiveTfMinByTapeId: Record<string, number> = {};
   const durationMinByTapeId: Record<string, number> = {};
 
-  for (let i = 0; i < args.candidates; i += 1) {
+  let evaluated = 0;
+  let attempts = 0;
+  const attemptsCap = Math.max(args.candidates * 50, args.candidates);
+  while (evaluated < args.candidates && attempts < attemptsCap) {
+    attempts += 1;
     if (hooks?.shouldCancel?.()) {
       cancelled = true;
       break;
@@ -767,10 +778,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     const candidateKey = buildCandidateKey(params, effectiveDirection, effectiveTf, args.sim);
     if (blacklistState && blacklistState.negativeSet.has(candidateKey)) {
       skippedBlacklisted += 1;
-      const done = i + 1;
-      reportProgress(done);
+      hooks?.onBlacklistUpdate?.({ count: blacklistState?.negativeSet.size ?? 0, skipped: skippedBlacklisted });
       continue;
     }
+
+    const candidateIndexBase = evaluated;
 
     let netPnlTotal = 0;
     let tradesTotal = 0;
@@ -907,7 +919,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           }
           const totalEvents = tape.events.length || 1;
           const fracWithin = Math.min(1, eventCounter / totalEvents);
-          reportProgressFrac(i, fracWithin);
+          reportProgressFrac(candidateIndexBase, fracWithin);
           await new Promise<void>((resolve) => setImmediate(resolve));
         }
 
@@ -1074,11 +1086,19 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       hooks?.onRowsAppend?.([candidateResult]);
     }
     // report progress in 0.01% steps (total=10000)
-    const candidateDone = i + 1;
+    evaluated += 1;
+    const candidateDone = evaluated;
     reportProgress(candidateDone);
     const done = lastProgressDone < 0 ? 0 : lastProgressDone;
     const donePercent = progressTotal > 0 ? Math.max(0, Math.min(100, Math.round((done / progressTotal) * 10_000) / 100)) : 0;
-    hooks?.onCheckpoint?.({ done, total: progressTotal, donePercent, partialResults: results });
+    hooks?.onCheckpoint?.({
+      done,
+      total: progressTotal,
+      donePercent,
+      partialResults: results,
+      skippedBlacklistedTotal: skippedBlacklisted,
+      negativeSetSize: blacklistState?.negativeSet.size ?? 0,
+    });
     hooks?.onBlacklistUpdate?.({ count: blacklistState?.negativeSet.size ?? 0, skipped: skippedBlacklisted });
     // yield occasionally so worker thread can flush messages during fast runs
     if (donePercent > lastPctLocal) {
@@ -1273,17 +1293,21 @@ function buildCandidateKey(
   const normalized = {
     directionMode,
     optTfMin,
-    marginPerTrade: Number(sim?.marginPerTrade) || 0,
-    leverage: Number(sim?.leverage) || 0,
-    feeBps: Number(sim?.feeBps) || 0,
-    slippageBps: Number(sim?.slippageBps) || 0,
-    priceTh: Number(params.priceThresholdPct) || 0,
-    oivTh: Number(params.oivThresholdPct) || 0,
-    tp: Number(params.tpRoiPct) || 0,
-    sl: Number(params.slRoiPct) || 0,
-    offset: Number(params.entryOffsetPct) || 0,
-    timeoutSec: Number(params.timeoutSec) || 0,
-    rearmMs: Number(params.rearmMs) || 0,
+    sim: {
+      marginPerTrade: Number(sim?.marginPerTrade) || 0,
+      leverage: Number(sim?.leverage) || 0,
+      feeBps: Number(sim?.feeBps) || 0,
+      slippageBps: Number(sim?.slippageBps) || 0,
+    },
+    params: {
+      priceThresholdPct: Number(params.priceThresholdPct) || 0,
+      oivThresholdPct: Number(params.oivThresholdPct) || 0,
+      tpRoiPct: Number(params.tpRoiPct) || 0,
+      slRoiPct: Number(params.slRoiPct) || 0,
+      entryOffsetPct: Number(params.entryOffsetPct) || 0,
+      timeoutSec: Number(params.timeoutSec) || 0,
+      rearmMs: Number(params.rearmMs) || 0,
+    },
   };
   return JSON.stringify(normalized);
 }
