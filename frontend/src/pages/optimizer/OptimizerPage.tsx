@@ -67,6 +67,8 @@ const SIM_FEE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.feeBps";
 const SIM_SLIPPAGE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.slippageBps";
 const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
+const FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY = "bots_dev.optimizer.filterValPnlPerTradePos";
+const FILTER_VAL_NET_PNL_POS_STORAGE_KEY = "bots_dev.optimizer.filterValNetPnlPos";
 const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
 const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
@@ -243,7 +245,7 @@ function readOptimizerSortValue(row: OptimizerResultRow, key: OptimizerSortKeyEx
     case "valTrades":
       return Number(row.valTrades) || 0;
     case "valPnlPerTrade":
-      return Number(row.valPnlPerTrade) || 0;
+      return readValPnlPerTrade(row);
     case "priceTh":
       return Number(row.params.priceThresholdPct) || 0;
     case "oivTh":
@@ -309,6 +311,13 @@ const OPTIMIZER_SORT_KEYS: OptimizerSortKeyExtended[] = [
 ];
 
 const n = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const readValPnlPerTrade = (row: Pick<OptimizationResult, "valPnlPerTrade" | "valTrades" | "valNetPnl">): number => {
+  const direct = Number(row.valPnlPerTrade);
+  if (Number.isFinite(direct)) return direct;
+  const valTrades = Number(row.valTrades) || 0;
+  if (valTrades <= 0) return 0;
+  return (Number(row.valNetPnl) || 0) / valTrades;
+};
 const fmt = (v: unknown, digits: number): string => {
   const x = n(v);
   return x === undefined ? `0.${"0".repeat(digits)}` : x.toFixed(digits);
@@ -377,7 +386,7 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
   const trainTrades = Number(row.trainTrades) || 0;
   const valNetPnl = Number(row.valNetPnl) || 0;
   const valTrades = Number(row.valTrades) || 0;
-  const valPnlPerTrade = Number(row.valPnlPerTrade) || 0;
+  const valPnlPerTrade = readValPnlPerTrade(row);
   return (
     <tr>
       <td style={{ whiteSpace: "nowrap" }}>{fmt(pnlPerTrade, 4)}</td>
@@ -495,6 +504,8 @@ export function OptimizerPage() {
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState("15");
   const [hideNegativeNetPnl, setHideNegativeNetPnl] = useState(false);
+  const [filterValPnlPerTradePos, setFilterValPnlPerTradePos] = useState(false);
+  const [filterValNetPnlPos, setFilterValNetPnlPos] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
   const [, setOptimizerPaused] = useState(false);
   const [jobStartedAtMs, setJobStartedAtMs] = useState<number | null>(null);
@@ -843,6 +854,8 @@ useEffect(() => {
       if (Number.isFinite(n) && n >= 0) setMinTrades(String(n));
     }
     setHideNegativeNetPnl(localStorage.getItem(EXCLUDE_NEGATIVE_STORAGE_KEY) === "1");
+    setFilterValPnlPerTradePos(localStorage.getItem(FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY) === "1");
+    setFilterValNetPnlPos(localStorage.getItem(FILTER_VAL_NET_PNL_POS_STORAGE_KEY) === "1");
     setRememberNegatives(localStorage.getItem(REMEMBER_NEGATIVES_STORAGE_KEY) === "1");
     setLoopRunsCount(loadStoredPositiveInt(LOOP_RUNS_COUNT_STORAGE_KEY, "3", 1));
     setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
@@ -949,6 +962,21 @@ useEffect(() => {
   useEffect(() => {
     localStorage.setItem(EXCLUDE_NEGATIVE_STORAGE_KEY, hideNegativeNetPnl ? "1" : "0");
   }, [hideNegativeNetPnl]);
+
+  useEffect(() => {
+    localStorage.setItem(FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY, filterValPnlPerTradePos ? "1" : "0");
+  }, [filterValPnlPerTradePos]);
+
+  useEffect(() => {
+    localStorage.setItem(FILTER_VAL_NET_PNL_POS_STORAGE_KEY, filterValNetPnlPos ? "1" : "0");
+  }, [filterValNetPnlPos]);
+
+  useEffect(() => {
+    if (!filterValPnlPerTradePos) return;
+    if (sortKey !== "netPnl") return;
+    setSortKey("valPnlPerTrade");
+    setSortDir("desc");
+  }, [filterValPnlPerTradePos, sortKey]);
 
   useEffect(() => {
     localStorage.setItem(REMEMBER_NEGATIVES_STORAGE_KEY, rememberNegatives ? "1" : "0");
@@ -1903,9 +1931,14 @@ useEffect(() => {
   const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
   const rawRows = isLoopDisplay ? loopAggRowsForRender : singleRowsForRender;
   const rowsForDisplay = rawRows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
-  const displayedRows = isLoopDisplay
+  const baseDisplayRows = isLoopDisplay
     ? (hideNegativeNetPnl ? rowsForDisplay.filter((row) => row.netPnl >= 0) : rowsForDisplay)
     : rowsForDisplay;
+  const displayedRows = baseDisplayRows.filter((row) => {
+    if (filterValPnlPerTradePos && readValPnlPerTrade(row) <= 0) return false;
+    if (filterValNetPnlPos && (Number(row.valNetPnl) || 0) <= 0) return false;
+    return true;
+  });
   const sortedDisplayedRows = useMemo(() => sortOptimizerRows(displayedRows, sortKey, sortDir), [displayedRows, sortDir, sortKey]);
   const rawRowsCount = rawRows.length;
   const displayedRowsCount = sortedDisplayedRows.length;
@@ -2265,7 +2298,7 @@ useEffect(() => {
             {historyTransferMessage ? <div style={{ fontSize: 12, marginBottom: 8 }}>{historyTransferMessage}</div> : null}
 
             {showLoopNoRowsWarning ? <div style={{ fontSize: 12, marginBottom: 8, color: "#a86d00" }}>No result rows received yet. If this persists, enable debugOptimizerRows.</div> : null}
-            {!showLoopNoRowsWarning && rawRowsCount > 0 && displayedRowsCount === 0 ? <div style={{ fontSize: 12, marginBottom: 8, color: "#6c757d" }}>Rows exist but are hidden by minTrades filter.</div> : null}
+            {!showLoopNoRowsWarning && rawRowsCount > 0 && displayedRowsCount === 0 ? <div style={{ fontSize: 12, marginBottom: 8, color: "#6c757d" }}>Rows exist but are hidden by active display filters.</div> : null}
             <div className="d-flex align-items-center justify-content-between mb-2" style={{ fontSize: 12 }}>
               <div className="d-flex align-items-center gap-2">
                 <span>Rows per page</span>
@@ -2275,6 +2308,14 @@ useEffect(() => {
                 <span>minTrades</span>
                 <Form.Control size="sm" value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} style={{ width: 90 }} />
                 <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={hideNegativeNetPnl} onChange={(e) => setHideNegativeNetPnl(e.currentTarget.checked)} />
+                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val pnl/trade > 0" checked={filterValPnlPerTradePos} onChange={(e) => setFilterValPnlPerTradePos(e.currentTarget.checked)} />
+                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val netPnl > 0" checked={filterValNetPnlPos} onChange={(e) => setFilterValNetPnlPos(e.currentTarget.checked)} />
+                <Button size="sm" variant="outline-secondary" onClick={() => {
+                  setSortKey("valPnlPerTrade");
+                  setSortDir("desc");
+                }}>
+                  Sort: val pnl/trade
+                </Button>
               </div>
               <div>
                 Page <b>{Math.min(page, totalPages)}</b> of <b>{totalPages}</b> · Total <b>{isLoopDisplay ? sortedDisplayedRows.length : totalRows}</b>
