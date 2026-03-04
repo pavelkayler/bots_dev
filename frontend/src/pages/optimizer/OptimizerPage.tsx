@@ -75,6 +75,7 @@ const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
 const POLL_MS = 1000;
+const DATASET_HISTORY_POLL_MS = 2000;
 const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
 const LIVE_ROWS_SORT_THROTTLE_MS = 200;
 const DEBUG_ROWS_LOG_MIN_INTERVAL_MS = 500;
@@ -450,7 +451,7 @@ export function OptimizerPage() {
   const [datasetCache, setDatasetCache] = useState<string | null>(() => localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
 
   const [datasetHistories, setDatasetHistories] = useState<DatasetHistoryRecord[]>([]);
-  const [historyBusy, setHistoryBusy] = useState(false);
+  const [, setHistoryBusy] = useState(false);
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<string[]>([]);
   const loopStartDebugLogLastAtRef = useRef(0);
   const [historySortKey, setHistorySortKey] = useState<keyof DatasetHistoryRecord | "rangeMs" | "universeLabel">("receivedAtMs");
@@ -550,7 +551,12 @@ export function OptimizerPage() {
   useInterval(syncDatasetCache, POLL_MS);
 
 
-  const refreshDatasetHistories = useCallback(async () => {
+  const refreshDatasetHistories = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastDatasetHistoryFetchMsRef.current < DATASET_HISTORY_POLL_MS) return;
+    if (datasetHistoryInFlightRef.current) return;
+    datasetHistoryInFlightRef.current = true;
+    lastDatasetHistoryFetchMsRef.current = now;
     try {
       setHistoryBusy(true);
       const res = await listDatasetHistories();
@@ -558,7 +564,6 @@ export function OptimizerPage() {
       setDatasetHistories(items);
       if (import.meta.env.DEV && localStorage.getItem("debugDatasetTf") === "1") {
         console.log("[optimizer-history-tf]", {
-          selectedHistoryIds,
           intervals: [...new Set(items.map((h) => h.interval))],
         });
       }
@@ -570,17 +575,21 @@ export function OptimizerPage() {
     } catch {
       // ignore
     } finally {
+      datasetHistoryInFlightRef.current = false;
       setHistoryBusy(false);
     }
-  }, [selectedHistoryIds]);
+  }, []);
 
   useEffect(() => {
-    void refreshDatasetHistories();
+    void refreshDatasetHistories(true);
   }, [refreshDatasetHistories]);
 
-  useInterval(() => {
-    void refreshDatasetHistories();
-  }, POLL_MS);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshDatasetHistories();
+    }, DATASET_HISTORY_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [refreshDatasetHistories]);
 
 
   const loopAggRowsForRender = useMemo(() => (
@@ -644,6 +653,8 @@ useEffect(() => {
   const [showLoopNoRowsWarning, setShowLoopNoRowsWarning] = useState(false);
   const prevLoopAggVersionRef = useRef(0);
   const prevLoopAggTotalRef = useRef(0);
+  const lastDatasetHistoryFetchMsRef = useRef(0);
+  const datasetHistoryInFlightRef = useRef(false);
 
   const isAppendOnlyDebug = useCallback(() => import.meta.env.DEV && localStorage.getItem("debugRunAppendOnly") === "1", []);
   const logAppendOnlyDebug = useCallback((message: string, payload?: Record<string, unknown>) => {
@@ -1993,7 +2004,6 @@ useEffect(() => {
               <Card.Body className="py-2">
                 <div className="d-flex align-items-center gap-2 mb-2" style={{ fontSize: 12 }}>
                   <div>Selected: <b>{selectedHistoryIds.length}</b></div>
-                  {historyBusy ? <div className="text-muted">loading…</div> : null}
                 </div>
                 <div style={{ overflowX: "auto" }}>
                   <Table size="sm" bordered hover className="mb-2" style={{ minWidth: 980 }}>
@@ -2065,12 +2075,6 @@ useEffect(() => {
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>seed</Form.Label>
                 <Form.Control value={seed} onChange={(e) => setSeed(e.currentTarget.value)} type="number" />
-                </Form.Group>
-              </Col>
-              <Col md={2} sm={4} xs={6}>
-                <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>minTrades</Form.Label>
-                <Form.Control value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} />
                 </Form.Group>
               </Col>
               <Col md={2} sm={4} xs={6}>
@@ -2241,6 +2245,8 @@ useEffect(() => {
                 <Form.Select size="sm" value={resultsPageSize} onChange={(e) => void onResultsPageSizeChange(e)} style={{ width: 90 }}>
                   {RESULTS_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
                 </Form.Select>
+                <span>minTrades</span>
+                <Form.Control size="sm" value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} style={{ width: 90 }} />
                 <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={hideNegativeNetPnl} onChange={(e) => setHideNegativeNetPnl(e.currentTarget.checked)} />
               </div>
               <div>
