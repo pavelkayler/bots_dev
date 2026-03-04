@@ -11,6 +11,8 @@ export type DatasetHistoryRecord = {
   receivedAtMs: number;
   receivedSymbolsCount: number;
   loopsCount: number;
+  hasOi?: boolean;
+  hasFunding?: boolean;
 };
 
 export async function listDatasetHistories(): Promise<{ histories: DatasetHistoryRecord[] }> {
