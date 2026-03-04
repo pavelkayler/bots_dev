@@ -72,7 +72,7 @@ const LOOP_RESULTS_DRAFT_STORAGE_KEY = "optimizerLoopResultsDraft";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
-const ACTIVE_RESULTS_POLL_MS = 800;
+const ACTIVE_RESULTS_POLL_MS = 1000;
 const LOOP_STATUS_POLL_MS = 1000;
 const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
 const LIVE_ROWS_SORT_THROTTLE_MS = 200;
@@ -288,6 +288,7 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
       <td style={{ whiteSpace: "nowrap" }}>{row.netPnl.toFixed(4)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.trades}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.winRatePct.toFixed(2)}%</td>
+      <td style={{ whiteSpace: "nowrap" }}>{String(row.directionMode ?? "both").toLowerCase()}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.expectancy.toFixed(4)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.profitFactor.toFixed(3)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.maxDrawdownUsdt.toFixed(4)}</td>
@@ -359,7 +360,7 @@ const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePr
       })}
       {!rows.length ? (
         <tr>
-          <td colSpan={17} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
+          <td colSpan={18} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
         </tr>
       ) : null}
     </tbody>
@@ -391,7 +392,7 @@ export function OptimizerPage() {
   const [simFeeBps, setSimFeeBps] = useState(() => localStorage.getItem(SIM_FEE_BPS_STORAGE_KEY) ?? "0");
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
-  const [optTfMin, setOptTfMin] = useState<string>("1");
+  const [optTfMin, setOptTfMin] = useState<string>("15");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
   const [, setOptimizerPaused] = useState(false);
@@ -448,7 +449,7 @@ export function OptimizerPage() {
   useEffect(() => {
     const syncDatasetCache = () => setDatasetCache(localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
     syncDatasetCache();
-    const timer = window.setInterval(syncDatasetCache, 500);
+    const timer = window.setInterval(syncDatasetCache, 1000);
     const onStorage = (event: StorageEvent) => {
       if (event.key === DATASET_CACHE_STORAGE_KEY) syncDatasetCache();
     };
@@ -707,10 +708,10 @@ useEffect(() => {
     const savedOptTf = localStorage.getItem(OPT_TF_STORAGE_KEY);
     if (savedOptTf != null) {
       const n = Math.floor(Number(savedOptTf));
-      if (Number.isFinite(n) && n >= 1) setOptTfMin(String(n));
-      else setOptTfMin("1");
+      if (Number.isFinite(n) && n >= 5) setOptTfMin(String(n));
+      else setOptTfMin("15");
     } else {
-      setOptTfMin("1");
+      setOptTfMin("15");
     }
     const savedMinTrades = localStorage.getItem(MIN_TRADES_STORAGE_KEY);
     if (savedMinTrades != null) {
@@ -804,7 +805,7 @@ useEffect(() => {
   useEffect(() => {
     try {
       const n = Math.floor(Number(optTfMin));
-      if (Number.isFinite(n) && n >= 1) localStorage.setItem(OPT_TF_STORAGE_KEY, String(n));
+      if (Number.isFinite(n) && n >= 5) localStorage.setItem(OPT_TF_STORAGE_KEY, String(n));
     } catch {
       return;
     }
@@ -850,7 +851,7 @@ useEffect(() => {
 
   useEffect(() => {
     if (jobStatus !== "running") return;
-    const id = window.setInterval(() => setNowMs(Date.now()), 500);
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [jobStatus]);
 
@@ -1349,7 +1350,7 @@ useEffect(() => {
       mounted = false;
       if (timer != null) window.clearInterval(timer);
     };
-  }, [appendCompletedRunByJobId, getStableProgressForJob, loopStatus?.loop]);
+  }, [appendCompletedRunByJobId, getStableProgressForJob, loopStatus?.loop?.loopId]);
 
 
 
@@ -1450,7 +1451,7 @@ useEffect(() => {
       try {
         const reqJobId = singleJobId;
         const now = Date.now();
-        if (lastStatusFetchRef.current.jobId === reqJobId && now - lastStatusFetchRef.current.ts < 200) return;
+        if (lastStatusFetchRef.current.jobId === reqJobId && now - lastStatusFetchRef.current.ts < 1000) return;
         lastStatusFetchRef.current = { jobId: reqJobId, ts: now };
         const res = await getJobStatus(reqJobId);
         if (loopActive || singleJobId !== reqJobId) return;
@@ -2024,8 +2025,6 @@ useEffect(() => {
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
                 <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(e.currentTarget.value)}>
-                  <option value="1">1</option>
-                  <option value="3">3</option>
                   <option value="5">5</option>
                   <option value="15">15</option>
                   <option value="30">30</option>
@@ -2182,6 +2181,7 @@ useEffect(() => {
                                     <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trades")}>trades</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("winRatePct")}>winRate</th>
+                  <th style={{ whiteSpace: "nowrap" }}>direction</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("expectancy")}>expectancy</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("profitFactor")}>profitFactor</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("maxDrawdownUsdt")}>maxDD</th>
@@ -2296,14 +2296,14 @@ useEffect(() => {
                                 <Table striped bordered hover size="sm" className="mb-0" style={{ marginTop: 8, marginLeft: 8 }}>
                                   <thead>
                                     <tr>
-                                      <th>netPnl</th><th>trades</th><th>winRate</th><th>expectancy</th><th>profitFactor</th><th>maxDD</th>
+                                      <th>netPnl</th><th>trades</th><th>winRate</th><th>direction</th><th>expectancy</th><th>profitFactor</th><th>maxDD</th>
                                       <th>placed</th><th>filled</th><th>expired</th><th>priceTh</th><th>oivTh</th><th>tp</th><th>sl</th><th>offset</th><th>timeoutSec</th><th>rearmMs</th><th>action</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {detailsRows.map((r, i) => (
                                       <tr key={`${row.jobId}-${r.netPnl}-${r.trades}-${r.params.priceThresholdPct}-${r.params.oivThresholdPct}-${i}`}>
-                                        <td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
+                                        <td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{String(r.directionMode ?? "both").toLowerCase()}</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
                                         <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
                                         <td><Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button></td>
                                       </tr>

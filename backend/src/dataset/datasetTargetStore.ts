@@ -17,7 +17,7 @@ export type DatasetTarget = {
 export const BYBIT_KLINE_INTERVALS = ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"] as const;
 export type BybitKlineInterval = typeof BYBIT_KLINE_INTERVALS[number];
 
-const DEFAULT_INTERVAL: BybitKlineInterval = "1";
+const DEFAULT_INTERVAL: BybitKlineInterval = "15";
 const INTERVAL_SET = new Set<string>(BYBIT_KLINE_INTERVALS);
 
 const DATASET_TARGET_PATH = path.resolve(process.cwd(), "data", "dataset_target.json");

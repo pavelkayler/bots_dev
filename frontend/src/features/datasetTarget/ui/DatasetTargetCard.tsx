@@ -19,7 +19,7 @@ const STORAGE_KEY = "datasetTargetDraft";
 const RECEIVE_JOB_STORAGE_KEY = "receiveDataJobId";
 const RECEIVE_LAST_JOB_STORAGE_KEY = "receiveDataLastJob";
 const PRESETS: DatasetRangePreset[] = ["6h", "12h", "24h", "48h", "1w", "2w", "4w", "1mo"];
-const TIMEFRAMES: BybitKlineInterval[] = ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"];
+const TIMEFRAMES: BybitKlineInterval[] = ["5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"];
 
 function toDatetimeLocal(ms: number): string {
   if (!Number.isFinite(ms)) return "";
@@ -41,7 +41,7 @@ function defaultDraft(): DraftState {
     universeId: null,
     rangeKind: "preset",
     preset: "24h",
-    interval: "1",
+    interval: "15",
     manualStart: toDatetimeLocal(now - 24 * 60 * 60 * 1000),
     manualEnd: toDatetimeLocal(now),
   };
@@ -78,9 +78,10 @@ function parseStoredDraft(raw: string | null): DraftState | null {
       : "24h";
     const rangeKind = parsed.rangeKind === "manual" ? "manual" : "preset";
     const universeId = typeof parsed.universeId === "string" && parsed.universeId.trim() ? parsed.universeId : null;
-    const interval = typeof parsed.interval === "string" && TIMEFRAMES.includes(parsed.interval as BybitKlineInterval)
-      ? (parsed.interval as BybitKlineInterval)
-      : "1";
+    const parsedInterval = typeof parsed.interval === "string" ? parsed.interval : "";
+    const interval = TIMEFRAMES.includes(parsedInterval as BybitKlineInterval)
+      ? (parsedInterval as BybitKlineInterval)
+      : "15";
     const manualStart = typeof parsed.manualStart === "string" ? parsed.manualStart : defaults.manualStart;
     const manualEnd = typeof parsed.manualEnd === "string" ? parsed.manualEnd : defaults.manualEnd;
     return { universeId, rangeKind, preset, interval, manualStart, manualEnd };
@@ -227,7 +228,7 @@ export default function DatasetTargetCard() {
       })();
     };
     fetchJob();
-    const timer = window.setInterval(fetchJob, 400);
+    const timer = window.setInterval(fetchJob, 1000);
 
     return () => {
       active = false;

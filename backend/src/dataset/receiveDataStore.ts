@@ -58,7 +58,7 @@ type BybitOpenInterestResponse = {
   };
 };
 
-type OiIntervalTime = "5min" | "15min" | "30min" | "1h" | "4h" | "1d";
+type OiIntervalTime = "5min";
 
 const BYBIT_BASE_URL = process.env.BYBIT_REST_URL ?? "https://api.bybit.com";
 const REQUEST_LIMIT = 1000;
@@ -110,8 +110,7 @@ function resolveReadCachePath(symbol: string, interval: BybitKlineInterval): str
 const PROGRESS_THROTTLE_MS = 80;
 const MAX_RANGE_MS = 180 * 24 * 60 * 60 * 1000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
-
-
+const OI_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_open_interest", "5min");
 
 const jobs = new Map<string, ReceiveJobInternal>();
 
@@ -199,6 +198,78 @@ function writeSymbolCache(symbol: string, interval: BybitKlineInterval, rows: Ma
   fs.writeFileSync(symbolCachePath(symbol, interval), body ? `${body}\n` : "", "utf8");
 }
 
+function oiCachePath(symbol: string): string {
+  return path.join(OI_CACHE_DIR, `${symbol}.jsonl`);
+}
+
+function loadOiCache(symbol: string): Map<number, string> {
+  const out = new Map<number, string>();
+  const fp = oiCachePath(symbol);
+  if (!fs.existsSync(fp)) return out;
+  const raw = fs.readFileSync(fp, "utf8");
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line) as { timestamp?: number; openInterest?: string };
+      const timestamp = Number(row?.timestamp);
+      const openInterest = String(row?.openInterest ?? "");
+      if (!Number.isFinite(timestamp) || !openInterest) continue;
+      out.set(timestamp, openInterest);
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+function writeOiCache(symbol: string, rows: Map<number, string>) {
+  fs.mkdirSync(OI_CACHE_DIR, { recursive: true });
+  const sorted = Array.from(rows.entries()).sort((a, b) => a[0] - b[0]);
+  const body = sorted.map(([timestamp, openInterest]) => JSON.stringify({ timestamp, openInterest })).join("\n");
+  fs.writeFileSync(oiCachePath(symbol), body ? `${body}\n` : "", "utf8");
+}
+
+function alignToStep(ms: number, stepMs: number): number {
+  return Math.floor(ms / stepMs) * stepMs;
+}
+
+function expectedTimestampsInRange(startMs: number, endMs: number, stepMs: number): number[] {
+  const out: number[] = [];
+  let ts = alignToStep(startMs, stepMs);
+  if (ts < startMs) ts += stepMs;
+  for (; ts <= endMs; ts += stepMs) out.push(ts);
+  return out;
+}
+
+function computeMissingWindows(
+  existing: Set<number>,
+  startMs: number,
+  endMs: number,
+  stepMs: number
+): Array<{ startMs: number; endMs: number }> {
+  const expected = expectedTimestampsInRange(startMs, endMs, stepMs);
+  const windows: Array<{ startMs: number; endMs: number }> = [];
+  let windowStart: number | null = null;
+  let prevMissing: number | null = null;
+  for (const ts of expected) {
+    if (existing.has(ts)) continue;
+    if (windowStart == null) {
+      windowStart = ts;
+      prevMissing = ts;
+      continue;
+    }
+    if (prevMissing != null && ts === prevMissing + stepMs) {
+      prevMissing = ts;
+      continue;
+    }
+    windows.push({ startMs: windowStart, endMs: prevMissing ?? windowStart });
+    windowStart = ts;
+    prevMissing = ts;
+  }
+  if (windowStart != null) windows.push({ startMs: windowStart, endMs: prevMissing ?? windowStart });
+  return windows;
+}
+
 function toReceiveError(code: string, message: string): { code: string; message: string } {
   return { code, message };
 }
@@ -210,10 +281,11 @@ function setProgress(job: ReceiveJobInternal, patch: Partial<ReceiveProgress>, f
     ...job.progress,
     ...patch,
   };
-  const total = Math.max(1, job.progress.totalSteps);
-  const clampedCompleted = Math.min(total, Math.max(0, job.progress.completedSteps));
+  const total = Math.max(0, Math.floor(Number(job.progress.totalSteps) || 0));
+  const clampedCompleted = Math.min(total, Math.max(0, Math.floor(Number(job.progress.completedSteps) || 0)));
+  job.progress.totalSteps = total;
   job.progress.completedSteps = clampedCompleted;
-  job.progress.pct = Math.floor((clampedCompleted / total) * 100);
+  job.progress.pct = total === 0 ? 100 : Math.floor((clampedCompleted / total) * 100);
   job.lastProgressEmitMs = now;
 }
 
@@ -249,15 +321,6 @@ async function fetchKlinesBatch(symbol: string, interval: BybitKlineInterval, st
   }
 
   return [];
-}
-
-function mapKlineIntervalToOiInterval(interval: BybitKlineInterval): OiIntervalTime {
-  if (interval === "1" || interval === "3" || interval === "5") return "5min";
-  if (interval === "15") return "15min";
-  if (interval === "30") return "30min";
-  if (interval === "60" || interval === "120") return "1h";
-  if (interval === "240" || interval === "360" || interval === "720") return "4h";
-  return "1d";
 }
 
 async function fetchOpenInterestPage(
@@ -323,88 +386,121 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     }
 
     const universe = readUniverse(target.universeId);
-    const interval = normalizeBybitKlineInterval(target.interval);
-    const klineBatchSpanMs = intervalToMs(interval) * REQUEST_LIMIT;
+    const selectedKlineInterval = normalizeBybitKlineInterval(target.interval);
+    const baseKlineInterval: BybitKlineInterval = "1";
+    const intervalsToEnsure = [...new Set<BybitKlineInterval>([baseKlineInterval, selectedKlineInterval])];
     const symbols = Array.isArray(universe.symbols) ? universe.symbols.filter((s) => typeof s === "string" && s.trim()) : [];
-    const batchesPerSymbol = Math.max(1, Math.ceil((resolvedRange.endMs - resolvedRange.startMs) / klineBatchSpanMs));
-    job.progress.totalSteps = Math.max(1, symbols.length * batchesPerSymbol);
-    setProgress(job, { totalSteps: job.progress.totalSteps, message: "Starting receive." }, true);
+
+    const klineWindowsByKey = new Map<string, Array<{ startMs: number; endMs: number }>>();
+    const mergedByKey = new Map<string, Map<number, any>>();
+    for (const symbol of symbols) {
+      for (const interval of intervalsToEnsure) {
+        const merged = loadSymbolCache(symbol, interval);
+        mergedByKey.set(`${symbol}:${interval}`, merged);
+        const intervalMs = intervalToMs(interval);
+        const missingWindows = computeMissingWindows(new Set(merged.keys()), resolvedRange.startMs, resolvedRange.endMs, intervalMs);
+        const requestWindows: Array<{ startMs: number; endMs: number }> = [];
+        const chunkMs = intervalMs * REQUEST_LIMIT;
+        for (const window of missingWindows) {
+          for (let cursor = window.startMs; cursor <= window.endMs; cursor += chunkMs) {
+            const batchEndStartMs = Math.min(window.endMs, cursor + chunkMs - intervalMs);
+            requestWindows.push({ startMs: cursor, endMs: batchEndStartMs });
+          }
+        }
+        klineWindowsByKey.set(`${symbol}:${interval}`, requestWindows);
+      }
+    }
+
+    const totalKlineWindows = Array.from(klineWindowsByKey.values()).reduce((sum, arr) => sum + arr.length, 0);
+    setProgress(job, { totalSteps: totalKlineWindows, completedSteps: 0, message: "Starting receive." }, true);
 
     let completedSteps = 0;
     const symbolErrors: string[] = [];
     const failedSymbols = new Set<string>();
     let hasAnyOi = false;
+    const oiIntervalMs = 5 * 60_000;
+    const oiIntervalTime: OiIntervalTime = "5min";
 
     for (const symbol of symbols) {
       if (job.cancelRequested) break;
-
-      const merged = loadSymbolCache(symbol, interval);
       setProgress(job, { currentSymbol: symbol, message: `Receiving ${symbol}` }, true);
 
-      const oiIntervalTime = mapKlineIntervalToOiInterval(interval);
-      const oiSamplesRaw: Array<{ openInterest: string; timestamp: number }> = [];
-      let oiCursor: string | undefined;
-      do {
-        const page = await fetchOpenInterestPage(symbol, oiIntervalTime, resolvedRange.startMs, resolvedRange.endMs, oiCursor);
-        oiSamplesRaw.push(...page.list);
-        oiCursor = page.nextPageCursor;
-      } while (oiCursor);
-      const oiByTs = new Map<number, string>();
-      for (const item of oiSamplesRaw) oiByTs.set(item.timestamp, item.openInterest);
-      const oiSamples = Array.from(oiByTs.entries()).map(([timestamp, openInterest]) => ({ timestamp, openInterest }))
-        .sort((a, b) => a.timestamp - b.timestamp);
-
-      let oiPtr = -1;
-      const candleMs = intervalToMs(interval);
-
-      for (let cursor = resolvedRange.startMs; cursor < resolvedRange.endMs; cursor += klineBatchSpanMs) {
+      const oiMap = loadOiCache(symbol);
+      const oiMissingWindows = computeMissingWindows(new Set(oiMap.keys()), resolvedRange.startMs, resolvedRange.endMs, oiIntervalMs);
+      for (const window of oiMissingWindows) {
         if (job.cancelRequested) break;
-        const batchEnd = Math.min(resolvedRange.endMs, cursor + klineBatchSpanMs - 1);
-        try {
-          const batch = await fetchKlinesBatch(symbol, interval, cursor, batchEnd);
-          const sortedBatch = batch
-            .map((row) => ({ row, startMs: Number(row?.[0]) }))
-            .filter((item) => Number.isFinite(item.startMs))
-            .sort((a, b) => a.startMs - b.startMs);
+        let cursor: string | undefined;
+        do {
+          const page = await fetchOpenInterestPage(symbol, oiIntervalTime, window.startMs, window.endMs, cursor);
+          for (const item of page.list) oiMap.set(item.timestamp, item.openInterest);
+          cursor = page.nextPageCursor;
+        } while (cursor);
+      }
+      writeOiCache(symbol, oiMap);
+      const oiSamples = Array.from(oiMap.entries())
+        .map(([timestamp, openInterest]) => ({ timestamp, openInterest }))
+        .sort((a, b) => a.timestamp - b.timestamp);
+      if (oiSamples.length > 0) hasAnyOi = true;
 
-          for (const item of sortedBatch) {
-            const row = item.row;
-            const startMs = Number(row?.[0]);
-            if (!Number.isFinite(startMs)) continue;
-
-            const candleEndMs = startMs + candleMs - 1;
-            while (oiPtr + 1 < oiSamples.length && oiSamples[oiPtr + 1]!.timestamp <= candleEndMs) oiPtr += 1;
-
-            const alignedOi = oiPtr >= 0 ? oiSamples[oiPtr]! : null;
-
-            const cacheRow: any = {
-              symbol,
-              startMs,
-              open: String(row?.[1] ?? ""),
-              high: String(row?.[2] ?? ""),
-              low: String(row?.[3] ?? ""),
-              close: String(row?.[4] ?? ""),
-              volume: String(row?.[5] ?? ""),
-              turnover: String(row?.[6] ?? ""),
-            };
-            if (alignedOi) {
-              cacheRow.oi = alignedOi.openInterest;
-              cacheRow.oiTs = alignedOi.timestamp;
-              hasAnyOi = true;
+      for (const interval of intervalsToEnsure) {
+        if (job.cancelRequested) break;
+        const key = `${symbol}:${interval}`;
+        const merged = mergedByKey.get(key) ?? loadSymbolCache(symbol, interval);
+        const requestWindows = klineWindowsByKey.get(key) ?? [];
+        for (const window of requestWindows) {
+          if (job.cancelRequested) break;
+          try {
+            const fetchStart = window.startMs;
+            const fetchEnd = window.endMs + intervalToMs(interval) - 1;
+            const batch = await fetchKlinesBatch(symbol, interval, fetchStart, fetchEnd);
+            const sortedBatch = batch
+              .map((row) => ({ row, startMs: Number(row?.[0]) }))
+              .filter((item) => Number.isFinite(item.startMs))
+              .sort((a, b) => a.startMs - b.startMs);
+            for (const item of sortedBatch) {
+              const row = item.row;
+              const startMs = Number(row?.[0]);
+              if (!Number.isFinite(startMs)) continue;
+              merged.set(startMs, {
+                symbol,
+                startMs,
+                open: String(row?.[1] ?? ""),
+                high: String(row?.[2] ?? ""),
+                low: String(row?.[3] ?? ""),
+                close: String(row?.[4] ?? ""),
+                volume: String(row?.[5] ?? ""),
+                turnover: String(row?.[6] ?? ""),
+              });
             }
-            merged.set(startMs, cacheRow);
+          } catch (e: any) {
+            symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
+            failedSymbols.add(symbol);
+            break;
           }
-        } catch (e: any) {
-          symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
-          failedSymbols.add(symbol);
-          break;
+          completedSteps += 1;
+          setProgress(job, { completedSteps, currentSymbol: symbol });
         }
 
-        completedSteps += 1;
-        setProgress(job, { completedSteps, currentSymbol: symbol });
+        const intervalMs = intervalToMs(interval);
+        const startKeys = Array.from(merged.keys()).sort((a, b) => a - b);
+        let oiPtr = -1;
+        for (const startMs of startKeys) {
+          if (startMs < resolvedRange.startMs || startMs > resolvedRange.endMs) continue;
+          const candleEndMs = startMs + intervalMs - 1;
+          while (oiPtr + 1 < oiSamples.length && oiSamples[oiPtr + 1]!.timestamp <= candleEndMs) oiPtr += 1;
+          const row = merged.get(startMs);
+          if (!row) continue;
+          if (oiPtr >= 0) {
+            const aligned = oiSamples[oiPtr]!;
+            row.oi = aligned.openInterest;
+            row.oiTs = aligned.timestamp;
+          } else {
+            delete row.oi;
+            delete row.oiTs;
+          }
+        }
+        writeSymbolCache(symbol, interval, merged);
       }
-
-      writeSymbolCache(symbol, interval, merged);
       await waitImmediate();
     }
 
@@ -424,7 +520,6 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     job.status = "done";
     job.finishedAtMs = Date.now();
     setProgress(job, { completedSteps: job.progress.totalSteps, pct: 100 }, true);
-    // best-effort: persist dataset history metadata (for optimizer selection)
     try {
       const okSymbols = symbols.filter((s) => !failedSymbols.has(s));
       const universeName = universe.meta?.name ?? target.universeId;
@@ -435,7 +530,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         startMs: resolvedRange.startMs,
         endMs: resolvedRange.endMs,
         receivedAtMs: job.finishedAtMs ?? Date.now(),
-        interval,
+        interval: selectedKlineInterval,
         receivedSymbols: okSymbols,
         hasOi: hasAnyOi,
         hasFunding: false,
