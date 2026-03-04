@@ -2,6 +2,8 @@ import { getApiBase } from "../../../shared/config/env";
 import { getJson, postJson } from "../../../shared/api/http";
 
 export type OptimizationResult = {
+  rowId: string;
+  candidateKey?: string;
   rank: number;
   netPnl: number;
   trades: number;

@@ -358,6 +358,8 @@ function appendOptimizerJobHistory(jobId: string, job: OptimizerJob) {
 
 
 function optimizerResultSignature(row: OptimizerResult): string {
+  const stableRowId = typeof (row as any)?.rowId === "string" ? (row as any).rowId.trim() : "";
+  if (stableRowId) return stableRowId;
   return [
     Number(row?.params?.priceThresholdPct ?? 0),
     Number(row?.params?.oivThresholdPct ?? 0),
@@ -1590,6 +1592,8 @@ app.get("/api/config", async () => {
     writeJobSnapshot(jobId, job);
 
     const runPayload = {
+      jobId,
+      runId: jobId,
       tapeIds: [],
       datasetHistoryIds,
       cacheDatasets,
