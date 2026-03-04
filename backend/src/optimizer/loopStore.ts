@@ -22,6 +22,7 @@ export type OptimizerLoopState = {
   isInfinite: boolean;
   runsCount: number;
   runIndex: number;
+  loopIndex: number;
   createdAtMs: number;
   updatedAtMs: number;
   finishedAtMs: number | null;
@@ -63,6 +64,7 @@ export function readLoopState(): OptimizerLoopState | null {
       isInfinite: Boolean(parsed.isInfinite),
       runsCount: Math.max(1, Math.floor(Number(parsed.runsCount) || 1)),
       runIndex: Math.max(0, Math.floor(Number(parsed.runIndex) || 0)),
+      loopIndex: Math.max(0, Math.floor(Number(parsed.loopIndex) || 0)),
       createdAtMs: Number(parsed.createdAtMs) || Date.now(),
       updatedAtMs: Number(parsed.updatedAtMs) || Date.now(),
       finishedAtMs: typeof parsed.finishedAtMs === "number" ? parsed.finishedAtMs : null,
@@ -113,6 +115,7 @@ export function recoverLoopStateOnBoot() {
       isRunning: false,
       isPaused: false,
       runIndex: 0,
+      loopIndex: 0,
       lastJobId: null,
       createdAtMs: now,
       updatedAtMs: now,
@@ -126,6 +129,7 @@ export function recoverLoopStateOnBoot() {
     isRunning: false,
     isPaused: false,
     runIndex: 0,
+    loopIndex: 0,
     lastJobId: null,
     createdAtMs: now,
     finishedAtMs: state.finishedAtMs ?? now,
