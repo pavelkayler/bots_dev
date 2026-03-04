@@ -45,6 +45,13 @@ export type OptimizerParams = RandomizedParams;
 export type OptimizerResult = {
   netPnl: number;
   trades: number;
+  trainNetPnl: number;
+  trainTrades: number;
+  trainWinRatePct: number;
+  valNetPnl: number;
+  valTrades: number;
+  valWinRatePct: number;
+  valPnlPerTrade: number;
   winRatePct: number;
   expectancy: number;
   profitFactor: number;
@@ -71,6 +78,11 @@ export type OptimizerParamKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "
 export type OptimizerMetricSortKey =
   | "netPnl"
   | "trades"
+  | "trainNetPnl"
+  | "trainTrades"
+  | "valNetPnl"
+  | "valTrades"
+  | "valPnlPerTrade"
   | "winRatePct"
   | "expectancy"
   | "profitFactor"
@@ -120,6 +132,7 @@ function getFundingCacheDir() {
 }
 const MIN_OPT_TF_MIN = 15;
 const MIN_TIMEOUT_SEC = 61;
+const MINUTE_MS = 60_000;
 const DEBUG_DATASET_TF = process.env.DEBUG_DATASET_TF === "1";
 const DEBUG_OPT_TRADES = process.env.DEBUG_OPT_TRADES === "1";
 const DEBUG_OPT_MARKETDATA = process.env.DEBUG_OPT_MARKETDATA === "1";
@@ -307,6 +320,11 @@ function median(values: number[]): number {
   const mid = Math.floor(sorted.length / 2);
   if (sorted.length % 2 === 0) return (sorted[mid - 1]! + sorted[mid]!) / 2;
   return sorted[mid]!;
+}
+
+function floorToMinute(tsMs: number): number {
+  if (!Number.isFinite(tsMs)) return 0;
+  return Math.floor(tsMs / MINUTE_MS) * MINUTE_MS;
 }
 
 export const DEFAULT_OPTIMIZER_PRECISION: OptimizerPrecision = {
@@ -822,6 +840,12 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     let netPnlTotal = 0;
     let tradesTotal = 0;
     let winsTotal = 0;
+    let trainNetPnlTotal = 0;
+    let trainTradesTotal = 0;
+    let trainWinsTotal = 0;
+    let valNetPnlTotal = 0;
+    let valTradesTotal = 0;
+    let valWinsTotal = 0;
     let feesPaidTotal = 0;
     let fundingAccruedTotal = 0;
 
@@ -844,15 +868,6 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     const closes: CloseSnapshot[] = [];
 
     for (const tape of tapes) {
-      const cache = new BybitMarketCache();
-      const candles = new CandleTracker(cache);
-      const signalEngine = new SignalEngine({
-        priceThresholdPct: params.priceThresholdPct,
-        oivThresholdPct: params.oivThresholdPct,
-        requireFundingSign: true,
-        directionMode: args.directionMode ?? "both",
-      });
-
       const durationMs = Math.max(0, (tape.lastTsMs ?? 0) - (tape.firstTsMs ?? 0));
       const durationMin = durationMs / 60_000;
       const effectiveTfMin = Math.max(Math.floor(Number(args.optTfMin ?? MIN_OPT_TF_MIN)) || MIN_OPT_TF_MIN, MIN_OPT_TF_MIN);
@@ -929,125 +944,161 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         },
       };
 
-      const paper = new PaperBroker(candidateConfig.paper, logger as any);
-      let lastEventTs = 0;
+      const runSegment = async (segmentStartMs: number, segmentEndMs: number, progressOffset: number) => {
+        const cache = new BybitMarketCache();
+        const candles = new CandleTracker(cache);
+        const signalEngine = new SignalEngine({
+          priceThresholdPct: params.priceThresholdPct,
+          oivThresholdPct: params.oivThresholdPct,
+          requireFundingSign: true,
+          directionMode: args.directionMode ?? "both",
+        });
+        const paper = new PaperBroker(candidateConfig.paper, logger as any);
+        let lastEventTs = 0;
+        const cadenceBySymbol = new Map<string, {
+          prevWindowClose: number | null;
+          prevWindowOivClose: number | null;
+        }>();
 
-      const cadenceBySymbol = new Map<string, {
-        prevWindowClose: number | null;
-        prevWindowOivClose: number | null;
-      }>();
-
-      let eventCounter = 0;
-      for (const event of tape.events) {
-        const tsRaw = Number(event.ts) || 0;
-        const ts = tsRaw > 0 && tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
-        if (ts > lastEventTs) lastEventTs = ts;
-        eventCounter += 1;
-        if (eventCounter % 5000 === 0) {
-          if (hooks?.shouldCancel?.()) {
-            cancelled = true;
-            break;
-          }
-          if (hooks?.shouldPause?.()) {
-            const pauseOutcome = await hooks?.waitWhilePaused?.();
-            if (pauseOutcome === "cancelled") {
+        let eventCounter = 0;
+        for (const event of tape.events) {
+          const tsRaw = Number(event.ts) || 0;
+          const ts = tsRaw > 0 && tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
+          eventCounter += 1;
+          if (eventCounter % 5000 === 0) {
+            if (hooks?.shouldCancel?.()) {
               cancelled = true;
               break;
             }
+            if (hooks?.shouldPause?.()) {
+              const pauseOutcome = await hooks?.waitWhilePaused?.();
+              if (pauseOutcome === "cancelled") {
+                cancelled = true;
+                break;
+              }
+            }
+            const totalEvents = tape.events.length || 1;
+            const fracWithin = Math.min(1, (eventCounter / totalEvents) * 0.5 + progressOffset);
+            reportProgressFrac(candidateIndexBase, fracWithin);
+            await new Promise<void>((resolve) => setImmediate(resolve));
           }
-          const totalEvents = tape.events.length || 1;
-          const fracWithin = Math.min(1, eventCounter / totalEvents);
-          reportProgressFrac(candidateIndexBase, fracWithin);
-          await new Promise<void>((resolve) => setImmediate(resolve));
-        }
 
-        if (event.type === "ticker") {
-          cache.upsertFromTicker(event.symbol, event.payload ?? {});
+          if (ts < segmentStartMs || ts > segmentEndMs) continue;
+          if (ts > lastEventTs) lastEventTs = ts;
 
-          const row = cache.getRawRow(event.symbol);
-          const markPrice = Number(row?.markPrice ?? 0);
-          const openInterestValue = Number(row?.openInterestValue ?? 0);
-          const fundingRate = Number(row?.fundingRate ?? 0);
-          const isWindowClose = tfMs > 0 && ts % tfMs === 0;
+          if (event.type === "ticker") {
+            cache.upsertFromTicker(event.symbol, event.payload ?? {});
 
-          if (!isWindowClose) {
+            const row = cache.getRawRow(event.symbol);
+            const markPrice = Number(row?.markPrice ?? 0);
+            const openInterestValue = Number(row?.openInterestValue ?? 0);
+            const fundingRate = Number(row?.fundingRate ?? 0);
+            const isWindowClose = tfMs > 0 && ts % tfMs === 0;
+
+            if (!isWindowClose) {
+              paper.tick({
+                symbol: event.symbol,
+                nowMs: ts,
+                markPrice,
+                fundingRate,
+                nextFundingTime: 0,
+                signal: null,
+                signalReason: "wait_window_close",
+                cooldownActive: false,
+              });
+              continue;
+            }
+
+            const cadenceState = cadenceBySymbol.get(event.symbol) ?? {
+              prevWindowClose: null,
+              prevWindowOivClose: null,
+            };
+
+            let signal: "LONG" | "SHORT" | null = null;
+            let signalReason = "window_seed";
+
+            if (cadenceState.prevWindowClose == null || cadenceState.prevWindowOivClose == null) {
+              if (Number.isFinite(markPrice) && markPrice > 0) cadenceState.prevWindowClose = markPrice;
+              if (Number.isFinite(openInterestValue) && openInterestValue >= 0) cadenceState.prevWindowOivClose = openInterestValue;
+            } else {
+              const priceMovePct = pctChange(markPrice, cadenceState.prevWindowClose);
+              const oivMovePct = openInterestValue > 0 ? pctChange(openInterestValue, cadenceState.prevWindowOivClose) : null;
+              const decision = signalEngine.decide({
+                priceMovePct,
+                oivMovePct,
+                fundingRate,
+                cooldownActive: false,
+              });
+              signal = decision.signal;
+              signalReason = decision.reason;
+              if (decision.reason === "no_refs") decisionsNoRefs += 1;
+              if (decision.reason === "ok_long" || decision.reason === "ok_short") signalsOk += 1;
+              cadenceState.prevWindowClose = markPrice;
+              cadenceState.prevWindowOivClose = openInterestValue;
+            }
+
+            cadenceBySymbol.set(event.symbol, cadenceState);
+
             paper.tick({
               symbol: event.symbol,
               nowMs: ts,
               markPrice,
               fundingRate,
               nextFundingTime: 0,
-              signal: null,
-              signalReason: "wait_window_close",
+              signal,
+              signalReason,
               cooldownActive: false,
             });
-            continue;
           }
 
-          const cadenceState = cadenceBySymbol.get(event.symbol) ?? {
-            prevWindowClose: null,
-            prevWindowOivClose: null,
-          };
-
-          let signal: "LONG" | "SHORT" | null = null;
-          let signalReason = "window_seed";
-
-          if (cadenceState.prevWindowClose == null || cadenceState.prevWindowOivClose == null) {
-            if (Number.isFinite(markPrice) && markPrice > 0) cadenceState.prevWindowClose = markPrice;
-            if (Number.isFinite(openInterestValue) && openInterestValue >= 0) cadenceState.prevWindowOivClose = openInterestValue;
-          } else {
-            const priceMovePct = pctChange(markPrice, cadenceState.prevWindowClose);
-            const oivMovePct = openInterestValue > 0 ? pctChange(openInterestValue, cadenceState.prevWindowOivClose) : null;
-            const decision = signalEngine.decide({
-              priceMovePct,
-              oivMovePct,
-              fundingRate,
-              cooldownActive: false,
-            });
-            signal = decision.signal;
-            signalReason = decision.reason;
-            if (decision.reason === "no_refs") decisionsNoRefs += 1;
-            if (decision.reason === "ok_long" || decision.reason === "ok_short") signalsOk += 1;
-            cadenceState.prevWindowClose = markPrice;
-            cadenceState.prevWindowOivClose = openInterestValue;
+          if (event.type === "kline_confirm") {
+            candles.ingestKline(event.symbol, { confirm: true, close: event.payload?.close });
           }
-
-          cadenceBySymbol.set(event.symbol, cadenceState);
-
-          paper.tick({
-            symbol: event.symbol,
-            nowMs: ts,
-            markPrice,
-            fundingRate,
-            nextFundingTime: 0,
-            signal,
-            signalReason,
-            cooldownActive: false,
-          });
         }
 
-        if (event.type === "kline_confirm") {
-          candles.ingestKline(event.symbol, { confirm: true, close: event.payload?.close });
-        }
-      }
+        if (cancelled) return null;
 
-      if (cancelled) break;
+        const symbols = Array.isArray(tape.meta?.symbols) ? tape.meta.symbols : [];
+        paper.stopAll({
+          nowMs: lastEventTs || segmentEndMs || 0,
+          symbols,
+          getMarkPrice: (symbol: string) => cache.getMarkPrice(symbol),
+          closeOpenPositions: false,
+        });
+        return paper.getStats();
+      };
 
-      const symbols = Array.isArray(tape.meta?.symbols) ? tape.meta.symbols : [];
-      paper.stopAll({
-        nowMs: lastEventTs || 0,
-        symbols,
-        getMarkPrice: (symbol: string) => cache.getMarkPrice(symbol),
-        closeOpenPositions: false,
-      });
+      const tapeStartMs = floorToMinute(Number(tape.firstTsMs ?? 0));
+      const tapeEndMs = floorToMinute(Number(tape.lastTsMs ?? 0));
+      const totalMs = Math.max(0, tapeEndMs - tapeStartMs);
+      const splitRawMs = tapeStartMs + Math.floor(totalMs * 0.7);
+      const splitMs = Math.max(tapeStartMs, Math.min(tapeEndMs, floorToMinute(splitRawMs)));
 
-      const stats = paper.getStats();
-      netPnlTotal += stats.netRealized;
-      tradesTotal += stats.closedTrades;
-      winsTotal += stats.wins;
-      feesPaidTotal += Number(stats.feesPaid) || 0;
-      fundingAccruedTotal += Number(stats.fundingAccrued) || 0;
-      debugClosedTrades += stats.closedTrades;
+      const trainStats = await runSegment(tapeStartMs, splitMs, 0);
+      if (cancelled || !trainStats) break;
+      const valStats = await runSegment(splitMs, tapeEndMs, 0.5);
+      if (cancelled || !valStats) break;
+
+      trainNetPnlTotal += trainStats.netRealized;
+      trainTradesTotal += trainStats.closedTrades;
+      trainWinsTotal += trainStats.wins;
+      valNetPnlTotal += valStats.netRealized;
+      valTradesTotal += valStats.closedTrades;
+      valWinsTotal += valStats.wins;
+
+      const tapeStats = {
+        netRealized: trainStats.netRealized + valStats.netRealized,
+        closedTrades: trainStats.closedTrades + valStats.closedTrades,
+        wins: trainStats.wins + valStats.wins,
+        feesPaid: (Number(trainStats.feesPaid) || 0) + (Number(valStats.feesPaid) || 0),
+        fundingAccrued: (Number(trainStats.fundingAccrued) || 0) + (Number(valStats.fundingAccrued) || 0),
+      };
+      netPnlTotal += tapeStats.netRealized;
+      tradesTotal += tapeStats.closedTrades;
+      winsTotal += tapeStats.wins;
+      feesPaidTotal += tapeStats.feesPaid;
+      fundingAccruedTotal += tapeStats.fundingAccrued;
+      debugClosedTrades += tapeStats.closedTrades;
     }
 
     if (cancelled) break;
@@ -1072,6 +1123,9 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
 
     const winRatePct = tradesTotal > 0 ? (winsTotal / tradesTotal) * 100 : 0;
+    const trainWinRatePct = trainTradesTotal > 0 ? (trainWinsTotal / trainTradesTotal) * 100 : 0;
+    const valWinRatePct = valTradesTotal > 0 ? (valWinsTotal / valTradesTotal) * 100 : 0;
+    const valPnlPerTrade = valTradesTotal > 0 ? valNetPnlTotal / valTradesTotal : 0;
     const longsWinRatePct = longsCount > 0 ? (longsWins / longsCount) * 100 : 0;
     const shortsWinRatePct = shortsCount > 0 ? (shortsWins / shortsCount) * 100 : 0;
     const expectancy = tradesTotal > 0 ? netPnlTotal / tradesTotal : 0;
@@ -1083,6 +1137,13 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     const candidateResult: OptimizerResult = {
       netPnl: netPnlTotal,
       trades: tradesTotal,
+      trainNetPnl: trainNetPnlTotal,
+      trainTrades: trainTradesTotal,
+      trainWinRatePct,
+      valNetPnl: valNetPnlTotal,
+      valTrades: valTradesTotal,
+      valWinRatePct,
+      valPnlPerTrade,
       winRatePct,
       expectancy,
       profitFactor,

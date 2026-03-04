@@ -5,6 +5,11 @@ export type OptimizationResult = {
   rank: number;
   netPnl: number;
   trades: number;
+  trainNetPnl?: number;
+  trainTrades?: number;
+  valNetPnl?: number;
+  valTrades?: number;
+  valPnlPerTrade?: number;
   winRatePct: number;
   expectancy: number;
   profitFactor: number;
@@ -146,6 +151,11 @@ export type OptimizerJobHistoryRecord = {
 export type OptimizerSortKeyExtended =
   | OptimizerSortKey
   | "pnlPerTrade"
+  | "trainNetPnl"
+  | "trainTrades"
+  | "valNetPnl"
+  | "valTrades"
+  | "valPnlPerTrade"
   | "priceTh"
   | "oivTh"
   | "tp"
