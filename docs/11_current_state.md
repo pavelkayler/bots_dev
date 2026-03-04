@@ -25,7 +25,7 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
   - `backend/data/sessions/<sessionId>/summary.json` (after stop)
 
 ### Streams lifecycle (important)
-- Backend connects to Bybit public WS **only while session is RUNNING**.
+- Backend start flow enters `RESUMING` first, connects Bybit public WS, and transitions to `RUNNING` only after required streams are connected.
 - On STOPPING/STOPPED/PAUSED:
   - upstream WS is closed
   - reconnect timers are cancelled

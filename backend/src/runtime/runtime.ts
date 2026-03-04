@@ -23,6 +23,11 @@ type Status = {
   sessionId: string | null;
   eventsFile: string | null;
   summaryFile: string | null;
+  runningSinceMs: number | null;
+};
+
+type StartOptions = {
+  waitForReady?: () => Promise<void>;
 };
 
 
@@ -75,6 +80,7 @@ class Runtime extends EventEmitter {
 
   private summaryFilePath: string | null = null;
   private demoStartedAtMs: number | null = null;
+  private runningSinceMs: number | null = null;
 
   private getMarkPrice: ((symbol: string) => number | null) | null = null;
   private closedTrades: ClosedTrade[] = [];
@@ -88,7 +94,8 @@ class Runtime extends EventEmitter {
       sessionState: this.sessionState,
       sessionId: this.sessionId,
       eventsFile: this.logger?.filePath ?? null,
-      summaryFile: this.summaryFilePath
+      summaryFile: this.summaryFilePath,
+      runningSinceMs: this.runningSinceMs,
     };
   }
 
@@ -96,7 +103,7 @@ class Runtime extends EventEmitter {
     return this.sessionState === "RUNNING";
   }
 
-  async start(): Promise<Status> {
+  async start(opts?: StartOptions): Promise<Status> {
     if (this.sessionState !== "STOPPED") {
       await this.stop();
     }
@@ -104,6 +111,7 @@ class Runtime extends EventEmitter {
     this.sessionId = newSessionId();
     this.summaryFilePath = null;
     this.demoStartedAtMs = null;
+    this.runningSinceMs = null;
 
     this.closedTrades = [];
 
@@ -153,9 +161,26 @@ class Runtime extends EventEmitter {
     });
     this.emit("state", this.getStatus());
 
+    try {
+      await opts?.waitForReady?.();
+    } catch {
+      if (this.demo) {
+        this.demo.stop();
+      }
+      this.paper = null;
+      this.demo = null;
+      this.demoStartedAtMs = null;
+      this.runningSinceMs = null;
+      this.sessionState = "STOPPED";
+      const status = this.getStatus();
+      this.emit("state", status);
+      return status;
+    }
+
     this.sessionState = "RUNNING";
+    this.runningSinceMs = Date.now();
     if (cfg.execution.mode === "demo" && this.demo) {
-      this.demoStartedAtMs = Date.now();
+      this.demoStartedAtMs = this.runningSinceMs;
       this.demo.sessionStartBalanceUsdt = await this.demo.getWalletUsdtBalance();
     }
 
@@ -229,6 +254,7 @@ class Runtime extends EventEmitter {
       this.demo = null;
     }
     this.demoStartedAtMs = null;
+    this.runningSinceMs = null;
 
     this.sessionState = "STOPPED";
     this.logger?.log({
@@ -291,6 +317,7 @@ class Runtime extends EventEmitter {
     }
 
     this.sessionState = "RUNNING";
+    if (this.runningSinceMs == null) this.runningSinceMs = Date.now();
     if (this.demo) this.demo.start();
     this.logger?.log({
       ts: Date.now(),

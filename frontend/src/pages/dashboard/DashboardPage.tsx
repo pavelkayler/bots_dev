@@ -22,6 +22,7 @@ export function DashboardPage() {
     wsUrl,
     wsSessionState,
     wsSessionId,
+    wsRunningSinceMs,
     streams,
     universeSelectedId,
     universeSymbolsCount,
@@ -98,8 +99,9 @@ export function DashboardPage() {
     return `${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
   }
 
+  const runningSinceMs = wsSessionState === "RUNNING" ? wsRunningSinceMs : status.runningSinceMs ?? null;
   const runningSessionId = wsSessionState === "RUNNING" ? wsSessionId : status.sessionId;
-  const sessionStartTs = useMemo(() => parseSessionStartTs(runningSessionId), [runningSessionId]);
+  const sessionStartTs = useMemo(() => runningSinceMs ?? parseSessionStartTs(runningSessionId), [runningSessionId, runningSinceMs]);
   const uptimeText = (wsSessionState === "RUNNING" || status.sessionState === "RUNNING") && sessionStartTs != null ? formatElapsed(nowMs - sessionStartTs) : null;
 
   const klineTfMin = Number(draftKlineTfMin || 1);

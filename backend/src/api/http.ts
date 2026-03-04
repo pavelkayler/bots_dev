@@ -33,7 +33,7 @@ import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 import { readDatasetTarget, writeDatasetTarget, normalizeDatasetTarget } from "../dataset/datasetTargetStore.js";
 import { cancelReceiveDataJob, getReceiveDataJob, startReceiveDataJob } from "../dataset/receiveDataStore.js";
 import { deleteDatasetHistory, incrementDatasetHistoryLoops, listDatasetHistories, readDatasetHistory } from "../dataset/datasetHistoryStore.js";
-import { broadcastOptimizerRowsAppend, setOptimizerSnapshotProvider } from "./wsHub.js";
+import { awaitAllStreamsConnected, broadcastOptimizerRowsAppend, setOptimizerSnapshotProvider } from "./wsHub.js";
 
 type OptimizerJob = {
   status: "running" | "paused" | "done" | "error" | "cancelled";
@@ -151,6 +151,7 @@ const lastCheckpointWriteMs = new Map<string, number>();
 const lastSnapshotWriteMs = new Map<string, number>();
 let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
 let shutdownHandler: (() => Promise<void> | void) | null = null;
+let sessionStartAbortController: AbortController | null = null;
 const tapeBoundsCache = new Map<string, { signature: string; startTs: number | null; endTs: number | null }>();
 
 function toBaseTapeId(tapeId: string): string {
@@ -1204,10 +1205,37 @@ export function registerHttpRoutes(app: FastifyInstance) {
       return { error: "universe_not_selected", message: "Select a Universe and click Apply before starting." };
     }
 
-    return await runtime.start();
+    if (sessionStartAbortController) sessionStartAbortController.abort();
+    const abortController = new AbortController();
+    sessionStartAbortController = abortController;
+
+    try {
+      const status = await runtime.start({
+        waitForReady: async () => {
+          await awaitAllStreamsConnected({ timeoutMs: 20_000, signal: abortController.signal });
+        },
+      });
+
+      if (status.sessionState !== "RUNNING") {
+        reply.code(503);
+        return { error: "streams_not_ready", message: "Failed to connect all required streams before start timeout." };
+      }
+
+      return status;
+    } finally {
+      if (sessionStartAbortController === abortController) {
+        sessionStartAbortController = null;
+      }
+    }
   });
 
-  app.post("/api/session/stop", async () => runtime.stop());
+  app.post("/api/session/stop", async () => {
+    if (sessionStartAbortController) {
+      sessionStartAbortController.abort();
+      sessionStartAbortController = null;
+    }
+    return await runtime.stop();
+  });
   app.post("/api/session/pause", async () => runtime.pause());
   app.post("/api/session/resume", async () => runtime.resume());
 
