@@ -994,7 +994,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
           if (cadenceState.prevWindowClose == null || cadenceState.prevWindowOivClose == null) {
             if (Number.isFinite(markPrice) && markPrice > 0) cadenceState.prevWindowClose = markPrice;
-            if (Number.isFinite(openInterestValue) && openInterestValue > 0) cadenceState.prevWindowOivClose = openInterestValue;
+            if (Number.isFinite(openInterestValue) && openInterestValue >= 0) cadenceState.prevWindowOivClose = openInterestValue;
           } else {
             const priceMovePct = pctChange(markPrice, cadenceState.prevWindowClose);
             const oivMovePct = openInterestValue > 0 ? pctChange(openInterestValue, cadenceState.prevWindowOivClose) : null;
