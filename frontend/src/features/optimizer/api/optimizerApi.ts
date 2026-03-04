@@ -17,6 +17,7 @@ export type OptimizationResult = {
   closesTp: number;
   closesSl: number;
   closesForce: number;
+  directionMode?: "both" | "long" | "short";
   params: {
     priceThresholdPct: number;
     oivThresholdPct: number;

@@ -1471,9 +1471,9 @@ app.get("/api/config", async () => {
     }
 
     for (const symbol of allSymbols) {
-      if (!fs.existsSync(resolveDatasetCachePath(symbol, interval))) {
+      if (!fs.existsSync(resolveDatasetCachePath(symbol, interval)) || !fs.existsSync(resolveDatasetCachePath(symbol, "1"))) {
         reply.code(400);
-        return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+        return { error: "dataset_cache_missing", message: "Dataset cache is missing (required: selected interval + 1m). Run Receive Data again." };
       }
     }
 
@@ -1512,7 +1512,7 @@ app.get("/api/config", async () => {
       reply.code(400);
       return { error: "invalid_direction_mode" };
     }
-    if (optTfMin !== undefined && (!Number.isFinite(optTfMin) || optTfMin < 1 || optTfMin > 240)) {
+    if (optTfMin !== undefined && (!Number.isFinite(optTfMin) || optTfMin < 5 || optTfMin > 240)) {
       reply.code(400);
       return { error: "invalid_opt_tf_min" };
     }
@@ -1750,9 +1750,9 @@ app.get("/api/config", async () => {
     }
 
     for (const symbol of allSymbols) {
-      if (!fs.existsSync(resolveDatasetCachePath(symbol, interval))) {
+      if (!fs.existsSync(resolveDatasetCachePath(symbol, interval)) || !fs.existsSync(resolveDatasetCachePath(symbol, "1"))) {
         reply.code(400);
-        return { error: "dataset_cache_missing", message: "Dataset cache is missing. Run Receive Data first." };
+        return { error: "dataset_cache_missing", message: "Dataset cache is missing (required: selected interval + 1m). Run Receive Data again." };
       }
     }
 
@@ -1783,6 +1783,10 @@ let sim: OptimizerSimulationParams;
       ...(body?.precision ? { precision: body.precision } : {}),
       sim,
     };
+    if (payload.optTfMin !== undefined && (!Number.isFinite(payload.optTfMin) || payload.optTfMin < 5 || payload.optTfMin > 240)) {
+      reply.code(400);
+      return { error: "invalid_opt_tf_min" };
+    }
     const runsCount = Math.max(1, Math.floor(Number(body?.runsCount ?? 1)));
     const isInfinite = Boolean(body?.infinite);
 

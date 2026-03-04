@@ -55,6 +55,7 @@ export type OptimizerResult = {
   closesTp: number;
   closesSl: number;
   closesForce: number;
+  directionMode: "both" | "long" | "short";
   params: RandomizedParams;
 };
 
@@ -453,6 +454,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   let sampleSymbolCandleCount = 0;
   let sampleSymbolOiSamplesUsed = 0;
   let sampleSymbolFundingSamplesUsed = 0;
+  let sampleIntervalForDebug = "1";
   let debugPlacedOrders = 0;
   let debugFilledOrders = 0;
   let debugClosedTrades = 0;
@@ -462,7 +464,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       : [args.cacheDataset!];
 
     const datasetInterval = String((datasets[0] as any)?.interval ?? args.optTfMin ?? "1");
-    const intervalMin = intervalToMinutes(datasetInterval);
+    const baseInterval = "1";
 
     // Build per-symbol time windows (can be multiple ranges combined)
     const symbolWindows = new Map<string, Array<{ startMs: number; endMs: number }>>();
@@ -496,7 +498,12 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
     for (const [symbol, windows] of symbolWindows) {
       if (!sampleSymbolForDebug) sampleSymbolForDebug = symbol;
-      const fp = resolveReadCachePath(symbol, datasetInterval);
+      const baseFp = resolveReadCachePath(symbol, baseInterval);
+      const datasetFp = resolveReadCachePath(symbol, datasetInterval);
+      const fp = fs.existsSync(baseFp) ? baseFp : datasetFp;
+      const replayInterval = fs.existsSync(baseFp) ? baseInterval : datasetInterval;
+      const replayIntervalMin = intervalToMinutes(replayInterval);
+      if (symbol === sampleSymbolForDebug) sampleIntervalForDebug = replayInterval;
       const raw = await fs.promises.readFile(fp, "utf8");
       const events: TapeEvent[] = [];
       let firstTsMs: number | null = null;
@@ -539,31 +546,40 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         const oiBase = Number(row.oi);
         if (Number.isFinite(oiBase) && oiBase > 0) candleWithOiCount += 1;
         const openInterestValue = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : 0;
-        const fundingRateRaw = Number(row.fundingRate);
-        if (Number.isFinite(fundingRateRaw)) candleWithFundingCount += 1;
-        const fundingRate = Number.isFinite(fundingRateRaw) ? fundingRateRaw : 0;
-        const tsClose = candleStart + intervalMin * 60_000;
-        const tickerPayload = { openInterest: openInterestValue, openInterestValue, fundingRate };
-        const openPrice = Number.isFinite(open) && open > 0 ? open : close;
-        const highPrice = Number.isFinite(high) && high > 0 ? high : close;
-        const lowPrice = Number.isFinite(low) && low > 0 ? low : close;
-        const hasRange = highPrice > lowPrice;
-
-        if (!hasRange) {
-          events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
+        const tsClose = candleStart + replayIntervalMin * 60_000;
+        if (replayInterval === "1") {
+          events.push({
+            type: "ticker",
+            ts: tsClose,
+            symbol,
+            payload: { markPrice: close, openInterest: openInterestValue, openInterestValue, fundingRate: 0 },
+          });
         } else {
-          events.push({ type: "ticker", ts: candleStart, symbol, payload: { markPrice: openPrice, ...tickerPayload } });
-          if (close >= openPrice) {
-            events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
-            events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
-          } else {
-            events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
-            events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
-          }
-          events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
-        }
+          const fundingRateRaw = Number(row.fundingRate);
+          if (Number.isFinite(fundingRateRaw)) candleWithFundingCount += 1;
+          const fundingRate = Number.isFinite(fundingRateRaw) ? fundingRateRaw : 0;
+          const tickerPayload = { openInterest: openInterestValue, openInterestValue, fundingRate };
+          const openPrice = Number.isFinite(open) && open > 0 ? open : close;
+          const highPrice = Number.isFinite(high) && high > 0 ? high : close;
+          const lowPrice = Number.isFinite(low) && low > 0 ? low : close;
+          const hasRange = highPrice > lowPrice;
 
-        events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
+          if (!hasRange) {
+            events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
+          } else {
+            events.push({ type: "ticker", ts: candleStart, symbol, payload: { markPrice: openPrice, ...tickerPayload } });
+            if (close >= openPrice) {
+              events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
+              events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
+            } else {
+              events.push({ type: "ticker", ts: candleStart + 1, symbol, payload: { markPrice: highPrice, ...tickerPayload } });
+              events.push({ type: "ticker", ts: candleStart + 2, symbol, payload: { markPrice: lowPrice, ...tickerPayload } });
+            }
+            events.push({ type: "ticker", ts: tsClose, symbol, payload: { markPrice: close, ...tickerPayload } });
+          }
+
+          events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
+        }
         if (firstTsMs == null || candleStart < firstTsMs) firstTsMs = candleStart;
         if (lastTsMs == null || tsClose > lastTsMs) lastTsMs = tsClose;
         candleCount += 1;
@@ -578,16 +594,16 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       if (DEBUG_DATASET_TF && tapes.length === 0) {
         const firstTs = events.length ? events[0]?.ts ?? null : null;
         const lastTs = events.length ? events[events.length - 1]?.ts ?? null : null;
-        console.log("[optimizer-dataset-tf]", { symbol, interval: datasetInterval, tfMin: intervalMin, firstTs, lastTs, candleCount });
+        console.log("[optimizer-dataset-tf]", { symbol, interval: replayInterval, tfMin: replayIntervalMin, firstTs, lastTs, candleCount });
       }
-      tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: intervalMin }, events, firstTsMs, lastTsMs });
+      tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: replayIntervalMin }, events, firstTsMs, lastTsMs });
     }
     hooks?.onLoadProgress?.(100, 100);
     if (DEBUG_OPT_MARKETDATA) {
       const oiPct = sampleSymbolCandleCount > 0 ? (sampleSymbolOiSamplesUsed / Math.max(1, sampleSymbolCandleCount)) * 100 : 0;
       const fundingPct = sampleSymbolCandleCount > 0 ? (sampleSymbolFundingSamplesUsed / Math.max(1, sampleSymbolCandleCount)) * 100 : 0;
       console.log("[optimizer-marketdata]", {
-        interval: datasetInterval,
+        interval: sampleIntervalForDebug,
         sampleSymbol: sampleSymbolForDebug || null,
         candlesRead: sampleSymbolCandleCount,
         oiSamplesUsed: sampleSymbolOiSamplesUsed,
@@ -950,6 +966,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       closesTp,
       closesSl,
       closesForce,
+      directionMode: args.directionMode ?? "both",
       params,
     };
     if (blacklistState && candidateResult.netPnl < 0 && !blacklistState.negativeSet.has(paramSig)) {
