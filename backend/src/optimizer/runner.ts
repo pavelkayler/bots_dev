@@ -59,8 +59,10 @@ export type OptimizerResult = {
   closesForce: number;
   longsCount: number;
   longsPnl: number;
+  longsWinRatePct: number;
   shortsCount: number;
   shortsPnl: number;
+  shortsWinRatePct: number;
   directionMode: "both" | "long" | "short";
   params: RandomizedParams;
 };
@@ -78,8 +80,10 @@ export type OptimizerMetricSortKey =
   | "ordersExpired"
   | "longsCount"
   | "longsPnl"
+  | "longsWinRatePct"
   | "shortsCount"
-  | "shortsPnl";
+  | "shortsPnl"
+  | "shortsWinRatePct";
 export type OptimizerPrecision = Record<OptimizerParamKey, number>;
 export type OptimizerSortKey = OptimizerMetricSortKey | OptimizerParamKey;
 export type OptimizerSortDir = "asc" | "desc";
@@ -800,8 +804,10 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     let closesForce = 0;
     let longsCount = 0;
     let longsPnl = 0;
+    let longsWins = 0;
     let shortsCount = 0;
     let shortsPnl = 0;
+    let shortsWins = 0;
     const tradeEvents: any[] = [];
 
     const closes: CloseSnapshot[] = [];
@@ -858,10 +864,12 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             if (side === "LONG") {
               longsCount += 1;
               longsPnl += realizedPnl;
+              if (realizedPnl > 0) longsWins += 1;
             }
             if (side === "SHORT") {
               shortsCount += 1;
               shortsPnl += realizedPnl;
+              if (realizedPnl > 0) shortsWins += 1;
             }
             closes.push({ ts: Number(ev.ts) || 0, realizedPnl });
             tradeEvents.push({ type: ev.type, ts: Number(ev.ts) || 0, payload: ev?.payload ?? {} });
@@ -873,10 +881,12 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             if (side === "LONG") {
               longsCount += 1;
               longsPnl += realizedPnl;
+              if (realizedPnl > 0) longsWins += 1;
             }
             if (side === "SHORT") {
               shortsCount += 1;
               shortsPnl += realizedPnl;
+              if (realizedPnl > 0) shortsWins += 1;
             }
             closes.push({ ts: Number(ev.ts) || 0, realizedPnl });
             tradeEvents.push({ type: ev.type, ts: Number(ev.ts) || 0, payload: ev?.payload ?? {} });
@@ -1029,6 +1039,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
 
     const winRatePct = tradesTotal > 0 ? (winsTotal / tradesTotal) * 100 : 0;
+    const longsWinRatePct = longsCount > 0 ? (longsWins / longsCount) * 100 : 0;
+    const shortsWinRatePct = shortsCount > 0 ? (shortsWins / shortsCount) * 100 : 0;
     const expectancy = tradesTotal > 0 ? netPnlTotal / tradesTotal : 0;
     const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? 1_000_000_000 : 0) : grossProfit / Math.abs(grossLoss);
 
@@ -1052,8 +1064,10 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       closesForce,
       longsCount,
       longsPnl,
+      longsWinRatePct,
       shortsCount,
       shortsPnl,
+      shortsWinRatePct,
       directionMode: args.directionMode ?? "both",
       params,
     };

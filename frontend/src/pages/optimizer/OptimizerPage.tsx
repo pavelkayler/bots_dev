@@ -230,6 +230,10 @@ function makeResultSignature(row: OptimizerResultRow): string {
 
 function readOptimizerSortValue(row: OptimizerResultRow, key: OptimizerSortKeyExtended): number | string {
   switch (key) {
+    case "pnlPerTrade": {
+      const trades = Number(row.trades) || 0;
+      return trades > 0 ? (Number(row.netPnl) || 0) / trades : 0;
+    }
     case "priceTh":
       return Number(row.params.priceThresholdPct) || 0;
     case "oivTh":
@@ -289,9 +293,9 @@ function saveJson(key: string, value: unknown) {
 }
 
 const OPTIMIZER_SORT_KEYS: OptimizerSortKeyExtended[] = [
-  "netPnl", "trades", "winRatePct", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs",
+  "pnlPerTrade", "netPnl", "trades", "winRatePct", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs",
   "expectancy", "profitFactor", "maxDrawdownUsdt", "ordersPlaced", "ordersFilled", "ordersExpired",
-  "longsCount", "longsPnl", "shortsCount", "shortsPnl", "direction",
+  "longsCount", "longsPnl", "longsWinRatePct", "shortsCount", "shortsPnl", "shortsWinRatePct", "direction",
 ];
 
 const n = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -322,6 +326,8 @@ function normalizeOptimizerRow<T extends OptimizationResult>(row: T): T {
     shortsCount: n(rowAny?.shortsCount) ?? 0,
     longsPnl: n(rowAny?.longsPnl) ?? 0,
     shortsPnl: n(rowAny?.shortsPnl) ?? 0,
+    longsWinRatePct: n(rowAny?.longsWinRatePct) ?? 0,
+    shortsWinRatePct: n(rowAny?.shortsWinRatePct) ?? 0,
     params: {
       ...params,
       rearmMs: normalizedRearmMs,
@@ -355,14 +361,17 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
   if (import.meta.env.DEV && typeof rowIndex === "number" && rowIndex < 3 && localStorage.getItem("debugOptimizerRowRenders") === "1") {
     console.log("[optimizer-row-render]", { rowIndex, id: makeResultSignature(row), netPnl: row.netPnl, trades: row.trades });
   }
+  const trades = Number(row.trades) || 0;
+  const pnlPerTrade = trades > 0 ? (Number(row.netPnl) || 0) / trades : 0;
   return (
     <tr>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt(pnlPerTrade, 4)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{fmt(row.netPnl, 4)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{fmtInt(row.trades)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{`${fmt(row.winRatePct, 2)}%`}</td>
       <td style={{ whiteSpace: "nowrap" }}>{String(row.directionMode ?? "both").toLowerCase()}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{`${fmtInt(row.longsCount)} / ${fmt(row.longsPnl, 4)}`}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{`${fmtInt(row.shortsCount)} / ${fmt(row.shortsPnl, 4)}`}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{`${fmtInt(row.longsCount)} / ${fmt(row.longsPnl, 4)} / ${fmt(row.longsWinRatePct, 1)}%`}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{`${fmtInt(row.shortsCount)} / ${fmt(row.shortsPnl, 4)} / ${fmt(row.shortsWinRatePct, 1)}%`}</td>
       <td style={{ whiteSpace: "nowrap" }}>{fmtInt(row.ordersPlaced)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{fmtInt(row.ordersFilled)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{fmtInt(row.ordersExpired)}</td>
@@ -1718,7 +1727,7 @@ useEffect(() => {
       return;
     }
     if (!activeJobId) return;
-    if (["netPnl", "trades", "winRatePct", "ordersPlaced", "ordersFilled", "ordersExpired", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"].includes(nextSortKey)) {
+    if (["netPnl", "trades", "winRatePct", "ordersPlaced", "ordersFilled", "ordersExpired", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs", "longsCount", "longsPnl", "longsWinRatePct", "shortsCount", "shortsPnl", "shortsWinRatePct"].includes(nextSortKey)) {
       await fetchResults(1, nextSortKey, nextSortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
     }
   }
@@ -2256,7 +2265,8 @@ useEffect(() => {
             <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
               <thead>
                 <tr>
-                                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("pnlPerTrade")}>pnl/trades</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trades")}>trades</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("winRatePct")}>winRate</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("direction")}>direction</th>
