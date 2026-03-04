@@ -50,7 +50,8 @@ const RANGE_DEFAULTS: RangeState = {
   rearmMs: { min: "0", max: "3000" },
 };
 
-const pageSize = 50;
+const RESULTS_PAGE_SIZES = [10, 25, 50] as const;
+const DEFAULT_RESULTS_PAGE_SIZE = 25;
 const HISTORY_PAGE_SIZES = [10, 25, 50, 100] as const;
 const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
@@ -483,6 +484,7 @@ useEffect(() => {
 }, [loopAggRowsForRender]);
 
   const [page, setPage] = useState(1);
+  const [resultsPageSize, setResultsPageSize] = useState<(typeof RESULTS_PAGE_SIZES)[number]>(DEFAULT_RESULTS_PAGE_SIZE);
   const [totalRows, setTotalRows] = useState(0);
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
@@ -1181,11 +1183,12 @@ useEffect(() => {
   }, [logAppendOnlyDebug, maybeLogRowsDebug]);
 
   const fetchAllResultsForJob = useCallback(async (jobId: string) => {
-    const first = await getJobResults(jobId, { page: 1, sortKey, sortDir });
+    const fetchPageSize = 50 as const;
+    const first = await getJobResults(jobId, { page: 1, sortKey, sortDir, pageSize: fetchPageSize });
     const allRows = Array.isArray(first.results) ? [...first.results] : [];
-    const totalPages = Math.max(1, Math.ceil((first.totalRows ?? allRows.length) / Math.max(1, first.pageSize || pageSize)));
+    const totalPages = Math.max(1, Math.ceil((first.totalRows ?? allRows.length) / Math.max(1, first.pageSize || fetchPageSize)));
     for (let pageIndex = 2; pageIndex <= totalPages; pageIndex += 1) {
-      const next = await getJobResults(jobId, { page: pageIndex, sortKey, sortDir });
+      const next = await getJobResults(jobId, { page: pageIndex, sortKey, sortDir, pageSize: fetchPageSize });
       if (Array.isArray(next.results) && next.results.length > 0) {
         allRows.push(...next.results);
       }
@@ -1360,7 +1363,7 @@ useEffect(() => {
     activeJobId: string,
     options?: { keepPreviousIfEmpty?: boolean }
   ) {
-    const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir });
+    const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir, pageSize: resultsPageSize });
     const nextResults = res.results ?? [];
     if (loopActive) {
       return;
@@ -1622,6 +1625,18 @@ useEffect(() => {
     await fetchResults(nextPage, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
   }
 
+  async function onResultsPageSizeChange(e: ChangeEvent<HTMLSelectElement>) {
+    const nextSize = Number(e.currentTarget.value) as (typeof RESULTS_PAGE_SIZES)[number];
+    if (!RESULTS_PAGE_SIZES.includes(nextSize)) return;
+    setResultsPageSize(nextSize);
+    if (isLoopDisplay) {
+      setPage(1);
+      return;
+    }
+    if (!activeJobId) return;
+    await fetchResults(1, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+  }
+
   const activePrecision = (activeJobId ? jobPrecisionById[activeJobId] : undefined) ?? DEFAULT_PRECISION;
 
 
@@ -1753,10 +1768,10 @@ useEffect(() => {
   const displayedRowsCount = displayedRows.length;
   const loopDisplayRows = useMemo(() => {
     if (!isLoopDisplay) return displayedRows;
-    const start = (page - 1) * pageSize;
-    return displayedRows.slice(start, start + pageSize);
-  }, [displayedRows, isLoopDisplay, page]);
-  const totalPages = Math.max(1, Math.ceil((isLoopDisplay ? displayedRows.length : totalRows) / pageSize));
+    const start = (page - 1) * resultsPageSize;
+    return displayedRows.slice(start, start + resultsPageSize);
+  }, [displayedRows, isLoopDisplay, page, resultsPageSize]);
+  const totalPages = Math.max(1, Math.ceil((isLoopDisplay ? displayedRows.length : totalRows) / resultsPageSize));
   const jobHistoryCurrentPage = Math.floor(jobHistoryOffset / jobHistoryLimit) + 1;
   const jobHistoryTotalPages = Math.max(1, Math.ceil(jobHistoryTotal / jobHistoryLimit));
   const historyHoursByJobId = useMemo(() => {
@@ -2126,6 +2141,17 @@ useEffect(() => {
 
             {showLoopNoRowsWarning ? <div style={{ fontSize: 12, marginBottom: 8, color: "#a86d00" }}>No result rows received yet. If this persists, enable debugOptimizerRows.</div> : null}
             {!showLoopNoRowsWarning && rawRowsCount > 0 && displayedRowsCount === 0 ? <div style={{ fontSize: 12, marginBottom: 8, color: "#6c757d" }}>Rows exist but are hidden by minTrades filter.</div> : null}
+            <div className="d-flex align-items-center justify-content-between mb-2" style={{ fontSize: 12 }}>
+              <div className="d-flex align-items-center gap-2">
+                <span>Rows per page</span>
+                <Form.Select size="sm" value={resultsPageSize} onChange={(e) => void onResultsPageSizeChange(e)} style={{ width: 90 }}>
+                  {RESULTS_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+                </Form.Select>
+              </div>
+              <div>
+                Page <b>{Math.min(page, totalPages)}</b> of <b>{totalPages}</b> · Total <b>{isLoopDisplay ? displayedRows.length : totalRows}</b>
+              </div>
+            </div>
             <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
               <thead>
                 <tr>
@@ -2158,9 +2184,11 @@ useEffect(() => {
             </Table>
             {displayedRows.length ? (
               <Pagination>
+                <Pagination.First onClick={() => void onPageChange(1)} disabled={page <= 1} />
                 <Pagination.Prev onClick={() => void onPageChange(Math.max(1, page - 1))} disabled={page <= 1} />
                 <Pagination.Item active>{page}</Pagination.Item>
                 <Pagination.Next onClick={() => void onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} />
+                <Pagination.Last onClick={() => void onPageChange(totalPages)} disabled={page >= totalPages} />
               </Pagination>
             ) : null}
           </Card.Body>
@@ -2275,6 +2303,10 @@ useEffect(() => {
             </Table>
             {jobHistoryTotal > 0 ? (
               <Pagination>
+                <Pagination.First
+                  onClick={() => setJobHistoryOffset(0)}
+                  disabled={jobHistoryOffset <= 0}
+                />
                 <Pagination.Prev
                   onClick={() => setJobHistoryOffset(Math.max(0, jobHistoryOffset - jobHistoryLimit))}
                   disabled={jobHistoryOffset <= 0}
@@ -2290,6 +2322,10 @@ useEffect(() => {
                 ))}
                 <Pagination.Next
                   onClick={() => setJobHistoryOffset(Math.min((jobHistoryTotalPages - 1) * jobHistoryLimit, jobHistoryOffset + jobHistoryLimit))}
+                  disabled={jobHistoryCurrentPage >= jobHistoryTotalPages}
+                />
+                <Pagination.Last
+                  onClick={() => setJobHistoryOffset((jobHistoryTotalPages - 1) * jobHistoryLimit)}
                   disabled={jobHistoryCurrentPage >= jobHistoryTotalPages}
                 />
               </Pagination>

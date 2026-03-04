@@ -200,7 +200,7 @@ export async function getCurrentJob(): Promise<{ jobId: string | null }> {
 
 export async function getJobResults(
   jobId: string,
-  query: { page: number; sortKey: OptimizerSortKeyExtended; sortDir: OptimizerSortDir; positiveOnly?: boolean }
+  query: { page: number; sortKey: OptimizerSortKeyExtended; sortDir: OptimizerSortDir; pageSize?: 10 | 25 | 50; positiveOnly?: boolean }
 ): Promise<{
   status: "running" | "paused" | "done" | "error" | "cancelled";
   page: number;
@@ -216,6 +216,7 @@ export async function getJobResults(
     sortKey: query.sortKey,
     sortDir: query.sortDir,
   });
+  if (query.pageSize != null) params.set("pageSize", String(query.pageSize));
   if (query.positiveOnly) params.set("positiveOnly", "1");
   return await getJson(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/results?${params.toString()}`);
 }
