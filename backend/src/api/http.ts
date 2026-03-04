@@ -118,6 +118,7 @@ type OptimizerJobHistoryRecord = {
     seed: number;
     minTrades: number;
     directionMode: "both" | "long" | "short";
+    executionModel?: "closeOnly" | "conservativeOhlc";
     rememberNegatives: boolean;
     excludeNegative: boolean;
     datasetHours?: number;
@@ -277,6 +278,7 @@ function toHistoryRunPayload(runPayload: Record<string, unknown> | null): Optimi
     seed: Number((runPayload as any)?.seed) || 1,
     minTrades: Math.max(0, Math.floor(Number((runPayload as any)?.minTrades) || 0)),
     directionMode: ["both", "long", "short"].includes(String((runPayload as any)?.directionMode)) ? String((runPayload as any)?.directionMode) as "both" | "long" | "short" : "both",
+    ...(["closeOnly", "conservativeOhlc"].includes(String((runPayload as any)?.executionModel)) ? { executionModel: String((runPayload as any)?.executionModel) as "closeOnly" | "conservativeOhlc" } : {}),
     rememberNegatives: Boolean((runPayload as any)?.rememberNegatives),
     excludeNegative: Boolean((runPayload as any)?.excludeNegative),
     ...(Number.isFinite(Number((runPayload as any)?.datasetHours)) ? { datasetHours: Math.max(0, Math.floor(Number((runPayload as any)?.datasetHours))) } : {}),
@@ -313,6 +315,14 @@ function parseSimParams(raw: any): OptimizerSimulationParams {
     feeBps,
     slippageBps,
   };
+}
+
+
+function parseExecutionModel(raw: unknown): "closeOnly" | "conservativeOhlc" {
+  if (raw == null || String(raw).trim() === "") return "closeOnly";
+  const value = String(raw);
+  if (value === "closeOnly" || value === "conservativeOhlc") return value;
+  throw new Error("invalid_execution_model");
 }
 
 function appendOptimizerJobHistory(jobId: string, job: OptimizerJob) {
@@ -981,6 +991,7 @@ function buildDatasetRunKey(input: {
   optTfMin: number | undefined;
   candidates: number;
   seed: number;
+  executionModel?: "closeOnly" | "conservativeOhlc";
 }) {
   const normalizedHistoryIds = [...input.datasetHistoryIds].map((id) => String(id ?? "").trim()).filter(Boolean).sort();
   const raw = [
@@ -989,6 +1000,7 @@ function buildDatasetRunKey(input: {
     `tf=${input.optTfMin ?? 0}`,
     `c=${Math.floor(input.candidates)}`,
     `s=${Number.isFinite(input.seed) ? input.seed : 1}`,
+    `exec=${input.executionModel ?? "closeOnly"}`,
   ].join("|");
   const digest = createHash("sha256").update(raw).digest("hex").slice(0, 16);
   return `datasetHist=${digest}`;
@@ -1508,8 +1520,10 @@ app.get("/api/config", async () => {
     const excludeNegative = Boolean(body?.excludeNegative);
     const rememberNegatives = Boolean(body?.rememberNegatives);
     let sim: OptimizerSimulationParams;
+    let executionModel: "closeOnly" | "conservativeOhlc";
     try {
       sim = parseSimParams(body?.sim);
+      executionModel = parseExecutionModel(body?.executionModel);
     } catch (e: any) {
       reply.code(400);
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
@@ -1520,6 +1534,7 @@ app.get("/api/config", async () => {
       optTfMin,
       candidates: Number.isFinite(candidates) ? candidates : 0,
       seed,
+      executionModel,
     });
 
     if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
@@ -1584,6 +1599,7 @@ app.get("/api/config", async () => {
       ...(ranges ? { ranges } : {}),
       ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
       directionMode: directionMode as "both" | "long" | "short",
+      executionModel,
       optTfMin,
       minTrades,
       excludeNegative,
@@ -1774,9 +1790,11 @@ app.get("/api/config", async () => {
     // count this loop start for each selected history
     incrementDatasetHistoryLoops(datasetHistoryIds, 1);
 
-let sim: OptimizerSimulationParams;
+    let sim: OptimizerSimulationParams;
+    let executionModel: "closeOnly" | "conservativeOhlc";
     try {
       sim = parseSimParams(body?.sim);
+      executionModel = parseExecutionModel(body?.executionModel);
     } catch (e: any) {
       reply.code(400);
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
@@ -1790,6 +1808,7 @@ let sim: OptimizerSimulationParams;
       candidates: Number(body?.candidates),
       seed: Number(body?.seed ?? 1),
       directionMode: body?.directionMode == null ? "both" : String(body.directionMode) as "both" | "long" | "short",
+      executionModel,
       minTrades: body?.minTrades == null || String(body.minTrades).trim() === "" ? 1 : Math.floor(Number(body.minTrades)),
       excludeNegative: Boolean(body?.excludeNegative),
       rememberNegatives: Boolean(body?.rememberNegatives),
@@ -2161,6 +2180,9 @@ let sim: OptimizerSimulationParams;
       candidates: 1,
       seed: Number((resolvedRunPayload as any)?.seed) || 1,
       ...(candidate.directionMode ? { directionMode: candidate.directionMode } : {}),
+      ...(["closeOnly", "conservativeOhlc"].includes(String((resolvedRunPayload as any)?.executionModel))
+        ? { executionModel: String((resolvedRunPayload as any)?.executionModel) as "closeOnly" | "conservativeOhlc" }
+        : {}),
       optTfMin: Number((resolvedRunPayload as any)?.optTfMin) || 15,
       ...(Array.isArray((resolvedRunPayload as any)?.tapeFiles) ? { tapeFiles: (resolvedRunPayload as any).tapeFiles } : {}),
       ...(((resolvedRunPayload as any)?.ranges && typeof (resolvedRunPayload as any).ranges === "object") ? { ranges: (resolvedRunPayload as any).ranges as OptimizerRanges } : {}),

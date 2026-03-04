@@ -2,6 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { EventLogger } from "../logging/EventLogger.js";
 
 export type PaperSide = "LONG" | "SHORT";
+export type PaperExecutionModel = "closeOnly" | "conservativeOhlc";
+
+export type PaperTickOhlc = {
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+};
 
 export type PaperBrokerConfig = {
     enabled: boolean;
@@ -18,6 +26,7 @@ export type PaperBrokerConfig = {
 
     makerFeeRate: number;
     applyFunding: boolean;
+    executionModel?: PaperExecutionModel;
 
     rearmDelayMs: number;
     maxDailyLossUSDT: number;
@@ -116,6 +125,16 @@ function calcRoiPct(side: PaperSide, entryPrice: number, markPrice: number, leve
 function toMskDayKey(ts: number): string {
     const shifted = ts + 3 * 60 * 60 * 1000;
     return new Date(shifted).toISOString().slice(0, 10);
+}
+
+function isFiniteOhlc(ohlc?: PaperTickOhlc): ohlc is PaperTickOhlc {
+    return Boolean(
+        ohlc
+        && Number.isFinite(ohlc.open)
+        && Number.isFinite(ohlc.high)
+        && Number.isFinite(ohlc.low)
+        && Number.isFinite(ohlc.close)
+    );
 }
 
 export class PaperBroker {
@@ -337,6 +356,7 @@ export class PaperBroker {
         nowMs: number;
 
         markPrice: number;
+        ohlc?: PaperTickOhlc;
         fundingRate: number;
         nextFundingTime: number;
 
@@ -346,7 +366,10 @@ export class PaperBroker {
     }) {
         if (!this.cfg.enabled) return;
 
-        const { symbol, nowMs, markPrice, fundingRate, nextFundingTime, signal, signalReason, cooldownActive } = input;
+        const { symbol, nowMs, markPrice, ohlc, fundingRate, nextFundingTime, signal, signalReason, cooldownActive } = input;
+        const executionModel: PaperExecutionModel = this.cfg.executionModel ?? "closeOnly";
+        const safeOhlc = executionModel === "conservativeOhlc" && isFiniteOhlc(ohlc) ? ohlc : null;
+        const useConservativeOhlc = safeOhlc != null;
         this.syncRiskDay(nowMs);
 
         const st = this.map.get(symbol) ?? {
@@ -392,7 +415,17 @@ export class PaperBroker {
             let closeType: "TP" | "SL" | null = null;
             let closePrice: number | null = null;
 
-            if (p.side === "LONG") {
+            if (useConservativeOhlc) {
+                const tpHit = p.side === "LONG" ? safeOhlc.high >= p.tpPrice : safeOhlc.low <= p.tpPrice;
+                const slHit = p.side === "LONG" ? safeOhlc.low <= p.slPrice : safeOhlc.high >= p.slPrice;
+                if (slHit) {
+                    closeType = "SL";
+                    closePrice = p.slPrice;
+                } else if (tpHit) {
+                    closeType = "TP";
+                    closePrice = p.tpPrice;
+                }
+            } else if (p.side === "LONG") {
                 if (markPrice >= p.tpPrice) {
                     closeType = "TP";
                     closePrice = p.tpPrice;
@@ -478,7 +511,9 @@ export class PaperBroker {
                 return;
             }
 
-            const filled = o.side === "LONG" ? markPrice <= o.entryPrice : markPrice >= o.entryPrice;
+            const filled = useConservativeOhlc
+                ? (o.side === "LONG" ? safeOhlc.low <= o.entryPrice : safeOhlc.high >= o.entryPrice)
+                : (o.side === "LONG" ? markPrice <= o.entryPrice : markPrice >= o.entryPrice);
 
             if (filled) {
                 const notionalEntry = o.entryPrice * o.qty;
@@ -521,6 +556,56 @@ export class PaperBroker {
 
                 st.order = null;
                 st.position = pos;
+
+                if (useConservativeOhlc) {
+                    const slHit = pos.side === "LONG" ? safeOhlc.low <= pos.slPrice : safeOhlc.high >= pos.slPrice;
+                    const tpHit = pos.side === "LONG" ? safeOhlc.high >= pos.tpPrice : safeOhlc.low <= pos.tpPrice;
+                    if (slHit || tpHit) {
+                        const closeType = slHit ? "SL" : "TP";
+                        const closePrice = closeType === "SL" ? pos.slPrice : pos.tpPrice;
+                        const notionalExit = closePrice * pos.qty;
+                        const exitFee = fee(notionalExit, this.cfg.makerFeeRate);
+
+                        let pnlFromMove = 0;
+                        if (pos.side === "LONG") pnlFromMove = (closePrice - pos.entryPrice) * pos.qty;
+                        else pnlFromMove = (pos.entryPrice - closePrice) * pos.qty;
+
+                        pos.feesPaid += exitFee;
+                        pos.realizedPnl += pnlFromMove;
+                        pos.realizedPnl -= exitFee;
+                        st.totalRealizedPnl += pos.realizedPnl;
+
+                        this.logger.log({
+                            ts: nowMs,
+                            type: closeType === "TP" ? "POSITION_CLOSE_TP" : "POSITION_CLOSE_SL",
+                            symbol,
+                            payload: {
+                                side: pos.side,
+                                entryPrice: pos.entryPrice,
+                                closePrice,
+                                qty: pos.qty,
+                                pnlFromMove,
+                                fundingAccrued: pos.fundingAccrued,
+                                feesPaid: pos.feesPaid,
+                                realizedPnl: pos.realizedPnl,
+                                minRoiPct: pos.minRoiPct,
+                                maxRoiPct: pos.maxRoiPct,
+                                closedAt: nowMs
+                            }
+                        });
+
+                        this.closedTrades += 1;
+                        if (closeType === "TP") this.wins += 1;
+                        else this.losses += 1;
+                        this.netRealized += pos.realizedPnl;
+                        this.feesPaid += pos.feesPaid;
+                        this.fundingAccrued += pos.fundingAccrued;
+
+                        st.position = null;
+                        st.cooldownUntil = nowMs + this.cfg.rearmDelayMs;
+                    }
+                }
+
                 this.map.set(symbol, st);
                 return;
             }
