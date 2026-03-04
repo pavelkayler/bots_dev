@@ -136,3 +136,24 @@ Current limiter target: strict 500 requests per 5 seconds.
 - Scope (future): keep Bybit as primary provider and use CoinGlass only to fill missing 1m openInterest data and optionally 1m funding gaps.
 - Implementation note (future): add request throttling for CoinGlass and persist both providers into the same cache-row model used by optimizer replay.
 - Status: deferred until CoinGlass API access is purchased.
+
+## Receive Data QA + manifest
+
+Each Receive Data run now writes a deterministic QA manifest tied to the dataset history row id.
+
+- Manifest file path: `backend/data/cache/manifests/<historyId>.json`
+- Dataset history API (`/api/data/history`) now includes a compact `manifest` summary block so UI can show quality state without loading the full manifest.
+
+### What is validated
+Per symbol, for the selected range:
+- 1m kline expected vs present points, coverage %, missing contiguous windows, duplicate timestamps, out-of-order transitions, and SHA-256 hash.
+- 5m open-interest expected vs present points, coverage %, missing windows, duplicate timestamps, out-of-order transitions, and SHA-256 hash.
+- Funding history points present in range, min/max timestamp, missing expected 8h points, and SHA-256 hash of raw points.
+
+### Status rules
+- `ok`: every symbol has 100% 1m and 5m OI coverage, with zero duplicates and zero out-of-order points.
+- `partial`: aggregate coverage is at least 95% but not all symbols are perfect.
+- `bad`: aggregate coverage is below 95%, any symbol has below 90% on 1m or 5m OI, or duplicates/out-of-order issues are detected.
+
+### Why this matters for optimizer trust
+Optimizer replay still uses the same cache data, but now each Receive Data snapshot carries an auditable quality and integrity footprint. Operators can verify coverage and hashes before trusting loop results or comparing repeated runs over the same Universe+Range.

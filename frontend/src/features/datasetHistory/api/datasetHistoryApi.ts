@@ -1,6 +1,17 @@
 import { getApiBase } from "../../../shared/config/env";
 import { getJson } from "../../../shared/api/http";
 
+export type DatasetHistoryManifestSummary = {
+  status: "ok" | "partial" | "bad";
+  updatedAt: number;
+  coveragePct: number;
+  missing1mCandlesTotal: number;
+  missingOi5mPointsTotal: number;
+  missingFundingPointsTotal: number;
+  duplicatesTotal: number;
+  outOfOrderTotal: number;
+};
+
 export type DatasetHistoryRecord = {
   id: string;
   universeId: string;
@@ -13,6 +24,7 @@ export type DatasetHistoryRecord = {
   loopsCount: number;
   hasOi?: boolean;
   hasFunding?: boolean;
+  manifest?: DatasetHistoryManifestSummary;
 };
 
 export async function listDatasetHistories(): Promise<{ histories: DatasetHistoryRecord[] }> {

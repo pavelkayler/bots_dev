@@ -21,10 +21,24 @@ export type DatasetHistoryRecord = {
 
   // Count of optimizer LOOP starts that included this history id
   loopsCount: number;
+
+  manifest?: DatasetHistoryManifestSummary;
+};
+
+export type DatasetHistoryManifestSummary = {
+  status: "ok" | "partial" | "bad";
+  updatedAt: number;
+  coveragePct: number;
+  missing1mCandlesTotal: number;
+  missingOi5mPointsTotal: number;
+  missingFundingPointsTotal: number;
+  duplicatesTotal: number;
+  outOfOrderTotal: number;
 };
 
 const HISTORY_ROOT = path.resolve(process.cwd(), "data", "history");
 const INDEX_PATH = path.join(HISTORY_ROOT, "index.json");
+const MANIFEST_ROOT = path.resolve(process.cwd(), "data", "cache", "manifests");
 
 function ensureRoot() {
   fs.mkdirSync(HISTORY_ROOT, { recursive: true });
@@ -71,6 +85,7 @@ function readIndex(): DatasetHistoryRecord[] {
       const hasOi = Boolean(it.hasOi);
       const hasFunding = Boolean(it.hasFunding);
       const loopsCount = Math.max(0, Math.floor(Number(it.loopsCount) || 0));
+      const manifest = normalizeManifestSummary(it.manifest);
       if (!id || !universeId || !universeName) continue;
       if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(receivedAtMs)) continue;
       out.push({
@@ -87,6 +102,7 @@ function readIndex(): DatasetHistoryRecord[] {
         hasOi,
         hasFunding,
         loopsCount,
+        ...(manifest ? { manifest } : {}),
       });
     }
     out.sort((a, b) => b.receivedAtMs - a.receivedAtMs);
@@ -110,6 +126,26 @@ function rmDirBestEffort(dir: string) {
   }
 }
 
+function normalizeManifestSummary(raw: unknown): DatasetHistoryManifestSummary | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = raw as Record<string, unknown>;
+  const status = String(value.status ?? "").trim();
+  if (status !== "ok" && status !== "partial" && status !== "bad") return undefined;
+  const updatedAt = Math.max(0, Math.floor(Number(value.updatedAt) || 0));
+  const coveragePct = Number(value.coveragePct);
+  if (updatedAt <= 0 || !Number.isFinite(coveragePct)) return undefined;
+  return {
+    status,
+    updatedAt,
+    coveragePct,
+    missing1mCandlesTotal: Math.max(0, Math.floor(Number(value.missing1mCandlesTotal) || 0)),
+    missingOi5mPointsTotal: Math.max(0, Math.floor(Number(value.missingOi5mPointsTotal) || 0)),
+    missingFundingPointsTotal: Math.max(0, Math.floor(Number(value.missingFundingPointsTotal) || 0)),
+    duplicatesTotal: Math.max(0, Math.floor(Number(value.duplicatesTotal) || 0)),
+    outOfOrderTotal: Math.max(0, Math.floor(Number(value.outOfOrderTotal) || 0)),
+  };
+}
+
 export function listDatasetHistories(): DatasetHistoryRecord[] {
   return readIndex();
 }
@@ -121,13 +157,24 @@ export function readDatasetHistory(id: string): DatasetHistoryRecord {
   const raw = fs.readFileSync(fp, "utf8");
   const parsed = JSON.parse(raw) as DatasetHistoryRecord;
   if (!parsed?.id || !parsed?.universeId) throw new Error("invalid_history_file");
-  return {
-    ...parsed,
-    interval: normalizeBybitKlineInterval((parsed as any).interval),
+  const manifest = normalizeManifestSummary((parsed as any).manifest);
+  const normalized: DatasetHistoryRecord = {
+    id: String(parsed.id),
     paramsKey: String(parsed.paramsKey ?? "").trim() || `${parsed.universeId}|${parsed.startMs}|${parsed.endMs}|${normalizeBybitKlineInterval((parsed as any).interval)}`,
+    universeId: String(parsed.universeId),
+    universeName: String(parsed.universeName),
+    startMs: Number(parsed.startMs),
+    endMs: Number(parsed.endMs),
+    interval: normalizeBybitKlineInterval((parsed as any).interval),
+    receivedAtMs: Number(parsed.receivedAtMs),
+    receivedSymbols: Array.isArray(parsed.receivedSymbols) ? parsed.receivedSymbols : [],
+    receivedSymbolsCount: Math.max(0, Math.floor(Number(parsed.receivedSymbolsCount) || 0)),
     hasOi: Boolean((parsed as any).hasOi),
     hasFunding: Boolean((parsed as any).hasFunding),
+    loopsCount: Math.max(0, Math.floor(Number(parsed.loopsCount) || 0)),
+    ...(manifest ? { manifest } : {}),
   };
+  return normalized;
 }
 
 export function upsertLatestDatasetHistory(input: {
@@ -141,6 +188,7 @@ export function upsertLatestDatasetHistory(input: {
   receivedSymbols: string[];
   hasOi: boolean;
   hasFunding: boolean;
+  manifest?: DatasetHistoryManifestSummary;
 }): DatasetHistoryRecord {
   const id = safeId(input.id);
   const universeId = String(input.universeId ?? "").trim();
@@ -154,6 +202,7 @@ export function upsertLatestDatasetHistory(input: {
     : [];
   const hasOi = Boolean(input.hasOi);
   const hasFunding = Boolean(input.hasFunding);
+  const manifest = normalizeManifestSummary(input.manifest);
   if (!universeId || !universeName) throw new Error("invalid_history_input");
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(receivedAtMs)) throw new Error("invalid_history_input");
 
@@ -182,6 +231,7 @@ export function upsertLatestDatasetHistory(input: {
     hasOi,
     hasFunding,
     loopsCount: carryLoops,
+    ...(manifest ? { manifest } : {}),
   };
 
   fs.mkdirSync(recordDir(id), { recursive: true });
@@ -196,6 +246,27 @@ export function deleteDatasetHistory(id: string) {
   const items = readIndex().filter((r) => r.id !== safe);
   writeIndex(items);
   rmDirBestEffort(recordDir(safe));
+  try {
+    fs.rmSync(path.join(MANIFEST_ROOT, `${safe}.json`), { force: true });
+  } catch {
+    // ignore
+  }
+}
+
+export function setDatasetHistoryManifestSummary(id: string, summary: DatasetHistoryManifestSummary) {
+  const safe = safeId(id);
+  const normalized = normalizeManifestSummary(summary);
+  if (!normalized) throw new Error("invalid_manifest_summary");
+  const items = readIndex();
+  const idx = items.findIndex((row) => row.id === safe);
+  if (idx < 0) throw new Error("history_not_found");
+  const current = items[idx];
+  if (!current) throw new Error("history_not_found");
+  const next: DatasetHistoryRecord = { ...current, manifest: normalized };
+  items[idx] = next;
+  writeIndex(items);
+  fs.mkdirSync(recordDir(safe), { recursive: true });
+  fs.writeFileSync(metaPath(safe), `${JSON.stringify(items[idx], null, 2)}\n`, "utf8");
 }
 
 export function incrementDatasetHistoryLoops(ids: string[], delta: number) {

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   readDatasetTarget,
   writeDatasetTarget,
@@ -10,7 +10,7 @@ import {
   normalizeBybitKlineInterval,
 } from "../dataset/datasetTargetStore.js";
 import { readUniverse } from "../universe/universeStore.js";
-import { upsertLatestDatasetHistory } from "./datasetHistoryStore.js";
+import { setDatasetHistoryManifestSummary, upsertLatestDatasetHistory, type DatasetHistoryManifestSummary } from "./datasetHistoryStore.js";
 
 type ReceiveStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
@@ -126,6 +126,51 @@ const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
 const OI_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_open_interest", "5min");
 const FUNDING_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_funding_history");
 const FUNDING_STEP_MS = 8 * 60 * 60_000;
+const MANIFEST_DIR = path.resolve(process.cwd(), "data", "cache", "manifests");
+
+type QaSeriesStats = {
+  expected: number;
+  present: number;
+  coveragePct: number;
+  missing: Array<[number, number]>;
+  duplicates: number;
+  outOfOrder: number;
+  gaps: number;
+  minTs: number;
+  maxTs: number;
+  sha256: string;
+};
+
+type DatasetManifest = {
+  historyId: string;
+  universe: string;
+  range: { startMs: number; endMs: number };
+  generatedAtMs: number;
+  symbols: Record<string, {
+    kline1m: QaSeriesStats;
+    oi5m: QaSeriesStats;
+    funding: {
+      points: number;
+      minTs: number;
+      maxTs: number;
+      coverageNote: string;
+      missingPoints: number;
+      sha256: string;
+    };
+  }>;
+  summary: {
+    symbols: number;
+    kline1mCoveragePct: number;
+    oi5mCoveragePct: number;
+    status: "ok" | "partial" | "bad";
+    coveragePct: number;
+    missing1mCandlesTotal: number;
+    missingOi5mPointsTotal: number;
+    missingFundingPointsTotal: number;
+    duplicatesTotal: number;
+    outOfOrderTotal: number;
+  };
+};
 
 const jobs = new Map<string, ReceiveJobInternal>();
 
@@ -315,6 +360,246 @@ function computeMissingWindows(
   }
   if (windowStart != null) windows.push({ startMs: windowStart, endMs: prevMissing ?? windowStart });
   return windows;
+}
+
+function roundPct(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+function sha256FromParts(parts: string[]): string {
+  const hash = createHash("sha256");
+  for (const part of parts) hash.update(part);
+  return hash.digest("hex");
+}
+
+function parseJsonlRows<T>(fp: string, parseLine: (value: unknown) => T | null): T[] {
+  if (!fs.existsSync(fp)) return [];
+  const raw = fs.readFileSync(fp, "utf8");
+  const out: T[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = parseLine(JSON.parse(line));
+      if (parsed) out.push(parsed);
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+function computeSeriesQa(
+  timestamps: number[],
+  valueByTs: Map<number, string>,
+  startMs: number,
+  endMs: number,
+  stepMs: number,
+  partsForHash: (ts: number) => string
+): QaSeriesStats {
+  let duplicates = 0;
+  let outOfOrder = 0;
+  let prevTs: number | null = null;
+  const presentSet = new Set<number>();
+  let minTs = 0;
+  let maxTs = 0;
+
+  for (const ts of timestamps) {
+    if (!Number.isFinite(ts) || ts < startMs || ts > endMs) continue;
+    if (prevTs != null && ts < prevTs) outOfOrder += 1;
+    prevTs = ts;
+    if (presentSet.has(ts)) {
+      duplicates += 1;
+      continue;
+    }
+    presentSet.add(ts);
+    if (minTs === 0 || ts < minTs) minTs = ts;
+    if (maxTs === 0 || ts > maxTs) maxTs = ts;
+  }
+
+  const expected = expectedTimestampsInRange(startMs, endMs, stepMs);
+  const missingWindows = computeMissingWindows(presentSet, startMs, endMs, stepMs);
+  const present = presentSet.size;
+  const coveragePct = expected.length === 0 ? 100 : roundPct((present / expected.length) * 100);
+  const sortedTs = Array.from(presentSet).sort((a, b) => a - b);
+  const hashParts: string[] = [];
+  for (const ts of sortedTs) {
+    if (!valueByTs.has(ts)) continue;
+    hashParts.push(partsForHash(ts));
+  }
+
+  return {
+    expected: expected.length,
+    present,
+    coveragePct,
+    missing: missingWindows.map((w) => [w.startMs, w.endMs]),
+    duplicates,
+    outOfOrder,
+    gaps: missingWindows.length,
+    minTs,
+    maxTs,
+    sha256: sha256FromParts(hashParts),
+  };
+}
+
+function writeManifestFile(historyId: string, manifest: DatasetManifest) {
+  fs.mkdirSync(MANIFEST_DIR, { recursive: true });
+  fs.writeFileSync(path.join(MANIFEST_DIR, `${historyId}.json`), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+function buildDatasetManifest(input: {
+  historyId: string;
+  universeName: string;
+  startMs: number;
+  endMs: number;
+  symbols: string[];
+}): { manifest: DatasetManifest; summary: DatasetHistoryManifestSummary } {
+  const symbolStats: DatasetManifest["symbols"] = {};
+  let klineExpectedTotal = 0;
+  let klinePresentTotal = 0;
+  let oiExpectedTotal = 0;
+  let oiPresentTotal = 0;
+  let fundingExpectedTotal = 0;
+  let fundingPresentTotal = 0;
+  let duplicatesTotal = 0;
+  let outOfOrderTotal = 0;
+  let allSymbolsPerfect = true;
+  let hasSymbolBelowNinety = false;
+
+  for (const symbol of input.symbols) {
+    const klineRows = parseJsonlRows(resolveReadCachePath(symbol, "1"), (value) => {
+      if (!value || typeof value !== "object") return null;
+      const row = value as Record<string, unknown>;
+      const startMs = Number(row.startMs);
+      const close = String(row.close ?? "");
+      if (!Number.isFinite(startMs) || !close) return null;
+      return { ts: startMs, value: close };
+    });
+    const klineValueByTs = new Map<number, string>();
+    for (const row of klineRows) if (row.ts >= input.startMs && row.ts <= input.endMs) klineValueByTs.set(row.ts, row.value);
+    const klineQa = computeSeriesQa(
+      klineRows.map((r) => r.ts),
+      klineValueByTs,
+      input.startMs,
+      input.endMs,
+      60_000,
+      (ts) => `${ts}:${klineValueByTs.get(ts) ?? ""}\n`
+    );
+
+    const oiRows = parseJsonlRows(oiCachePath(symbol), (value) => {
+      if (!value || typeof value !== "object") return null;
+      const row = value as Record<string, unknown>;
+      const ts = Number(row.timestamp);
+      const oi = String(row.openInterest ?? "");
+      if (!Number.isFinite(ts) || !oi) return null;
+      return { ts, value: oi };
+    });
+    const oiValueByTs = new Map<number, string>();
+    for (const row of oiRows) if (row.ts >= input.startMs && row.ts <= input.endMs) oiValueByTs.set(row.ts, row.value);
+    const oiQa = computeSeriesQa(
+      oiRows.map((r) => r.ts),
+      oiValueByTs,
+      input.startMs,
+      input.endMs,
+      300_000,
+      (ts) => `${ts}:${oiValueByTs.get(ts) ?? ""}\n`
+    );
+
+    const fundingRows = parseJsonlRows(fundingCachePath(symbol), (value) => {
+      if (!value || typeof value !== "object") return null;
+      const row = value as Record<string, unknown>;
+      const ts = Number(row.timestamp);
+      const fundingRate = String(row.fundingRate ?? "");
+      if (!Number.isFinite(ts) || !fundingRate) return null;
+      return { ts, value: fundingRate };
+    });
+    const fundingValueByTs = new Map<number, string>();
+    let fundingMinTs = 0;
+    let fundingMaxTs = 0;
+    for (const row of fundingRows) {
+      if (row.ts < input.startMs || row.ts > input.endMs) continue;
+      fundingValueByTs.set(row.ts, row.value);
+      if (fundingMinTs === 0 || row.ts < fundingMinTs) fundingMinTs = row.ts;
+      if (fundingMaxTs === 0 || row.ts > fundingMaxTs) fundingMaxTs = row.ts;
+    }
+    const fundingExpected = expectedTimestampsInRange(input.startMs, input.endMs, FUNDING_STEP_MS).length;
+    const fundingPresent = fundingValueByTs.size;
+
+    symbolStats[symbol] = {
+      kline1m: klineQa,
+      oi5m: oiQa,
+      funding: {
+        points: fundingPresent,
+        minTs: fundingMinTs,
+        maxTs: fundingMaxTs,
+        coverageNote: "last-known held between fundingRateTimestamp points",
+        missingPoints: Math.max(0, fundingExpected - fundingPresent),
+        sha256: sha256FromParts(
+          Array.from(fundingValueByTs.keys()).sort((a, b) => a - b).map((ts) => `${ts}:${fundingValueByTs.get(ts) ?? ""}\n`)
+        ),
+      },
+    };
+
+    klineExpectedTotal += klineQa.expected;
+    klinePresentTotal += klineQa.present;
+    oiExpectedTotal += oiQa.expected;
+    oiPresentTotal += oiQa.present;
+    fundingExpectedTotal += fundingExpected;
+    fundingPresentTotal += fundingPresent;
+    duplicatesTotal += klineQa.duplicates + oiQa.duplicates;
+    outOfOrderTotal += klineQa.outOfOrder + oiQa.outOfOrder;
+
+    if (!(klineQa.coveragePct === 100 && oiQa.coveragePct === 100)) allSymbolsPerfect = false;
+    if (klineQa.coveragePct < 90 || oiQa.coveragePct < 90) hasSymbolBelowNinety = true;
+  }
+
+  const klineCoveragePct = klineExpectedTotal === 0 ? 100 : roundPct((klinePresentTotal / klineExpectedTotal) * 100);
+  const oiCoveragePct = oiExpectedTotal === 0 ? 100 : roundPct((oiPresentTotal / oiExpectedTotal) * 100);
+  const combinedExpected = klineExpectedTotal + oiExpectedTotal;
+  const combinedPresent = klinePresentTotal + oiPresentTotal;
+  const coveragePct = combinedExpected === 0 ? 100 : roundPct((combinedPresent / combinedExpected) * 100);
+
+  let status: "ok" | "partial" | "bad" = "partial";
+  if (allSymbolsPerfect && duplicatesTotal === 0 && outOfOrderTotal === 0) {
+    status = "ok";
+  } else if (coveragePct < 95 || duplicatesTotal > 0 || outOfOrderTotal > 0 || hasSymbolBelowNinety) {
+    status = "bad";
+  }
+
+  const generatedAtMs = Date.now();
+  const summary = {
+    symbols: input.symbols.length,
+    kline1mCoveragePct: klineCoveragePct,
+    oi5mCoveragePct: oiCoveragePct,
+    status,
+    coveragePct,
+    missing1mCandlesTotal: Math.max(0, klineExpectedTotal - klinePresentTotal),
+    missingOi5mPointsTotal: Math.max(0, oiExpectedTotal - oiPresentTotal),
+    missingFundingPointsTotal: Math.max(0, fundingExpectedTotal - fundingPresentTotal),
+    duplicatesTotal,
+    outOfOrderTotal,
+  };
+
+  return {
+    manifest: {
+      historyId: input.historyId,
+      universe: input.universeName,
+      range: { startMs: input.startMs, endMs: input.endMs },
+      generatedAtMs,
+      symbols: symbolStats,
+      summary,
+    },
+    summary: {
+      status: summary.status,
+      updatedAt: generatedAtMs,
+      coveragePct: summary.coveragePct,
+      missing1mCandlesTotal: summary.missing1mCandlesTotal,
+      missingOi5mPointsTotal: summary.missingOi5mPointsTotal,
+      missingFundingPointsTotal: summary.missingFundingPointsTotal,
+      duplicatesTotal: summary.duplicatesTotal,
+      outOfOrderTotal: summary.outOfOrderTotal,
+    },
+  };
 }
 
 function toReceiveError(code: string, message: string): { code: string; message: string } {
@@ -647,6 +932,15 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         hasOi: hasAnyOi,
         hasFunding: hasAnyFunding,
       });
+      const { manifest, summary } = buildDatasetManifest({
+        historyId: jobId,
+        universeName,
+        startMs: resolvedRange.startMs,
+        endMs: resolvedRange.endMs,
+        symbols: okSymbols,
+      });
+      writeManifestFile(jobId, manifest);
+      setDatasetHistoryManifestSummary(jobId, summary);
     } catch {
       // ignore
     }
