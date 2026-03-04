@@ -11,6 +11,22 @@ import { runtime } from "../runtime/runtime.js";
 import type { LogEvent } from "../logging/EventLogger.js";
 import { configStore, type RuntimeConfig } from "../runtime/configStore.js";
 
+type AwaitAllStreamsConnectedArgs = {
+  timeoutMs: number;
+  signal?: AbortSignal;
+};
+
+type AwaitStreamsProvider = (args: AwaitAllStreamsConnectedArgs) => Promise<void>;
+
+let awaitStreamsProvider: AwaitStreamsProvider | null = null;
+
+export async function awaitAllStreamsConnected(args: AwaitAllStreamsConnectedArgs): Promise<void> {
+  if (!awaitStreamsProvider) {
+    throw new Error("ws_hub_not_ready");
+  }
+  return await awaitStreamsProvider(args);
+}
+
 type SymbolRowBase = {
   symbol: string;
   markPrice: number;
@@ -50,7 +66,7 @@ type BotStats = ReturnType<typeof runtime.getBotStats> & {
 
 type ServerWsMessage =
   | { type: "hello"; serverTime: number }
-  | { type: "snapshot"; payload: { sessionState: string; sessionId: string | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number; optimizer?: OptimizerSnapshot } & StreamsState }
+  | { type: "snapshot"; payload: { sessionState: string; sessionId: string | null; runningSinceMs: number | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number; optimizer?: OptimizerSnapshot } & StreamsState }
   | { type: "tick"; payload: { serverTime: number; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number } }
   | { type: "streams_state"; payload: StreamsState }
   | { type: "events_tail"; payload: { limit: number; count: number; events: LogEvent[] } }
@@ -271,6 +287,24 @@ export function createWsHub(app: FastifyInstance) {
   let bybit: BybitWsClient | null = null;
   let connectInFlight = false;
   let reconnectTimer: NodeJS.Timeout | null = null;
+  const streamWaiters = new Set<{ resolve: () => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
+
+  function resolveStreamWaitersIfReady() {
+    if (!(streamsEnabled && bybitConnected)) return;
+    for (const waiter of streamWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve();
+    }
+    streamWaiters.clear();
+  }
+
+  function rejectStreamWaiters(message: string) {
+    for (const waiter of streamWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error(message));
+    }
+    streamWaiters.clear();
+  }
 
   // Universe tracking (auto-apply via reconnect when changed)
   let lastUniverseKey = JSON.stringify(configStore.get().universe);
@@ -453,7 +487,7 @@ export function createWsHub(app: FastifyInstance) {
       const st = runtime.getStatus();
       safeSend(ws, {
         type: "snapshot",
-        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
+        payload: { sessionState: st.sessionState, sessionId: st.sessionId, runningSinceMs: st.runningSinceMs, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
       });
       return;
     }
@@ -468,7 +502,7 @@ export function createWsHub(app: FastifyInstance) {
 
     const msg: ServerWsMessage = {
       type: "snapshot",
-      payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
+      payload: { sessionState: st.sessionState, sessionId: st.sessionId, runningSinceMs: st.runningSinceMs, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
     };
 
     for (const c of clients) safeSend(c, msg);
@@ -501,11 +535,12 @@ export function createWsHub(app: FastifyInstance) {
 
   function syncRuntimeStreamLifecycle() {
     const st = runtime.getStatus();
-    if (st.sessionState === "RUNNING") {
+    if (st.sessionState === "RUNNING" || st.sessionState === "RESUMING") {
       streamsEnabled = true;
       desiredStreams = true;
       void startUpstreamIfNeeded();
-      startTickTimer();
+      if (st.sessionState === "RUNNING") startTickTimer();
+      else stopTickTimer();
       broadcastStreamsState();
       return;
     }
@@ -556,6 +591,7 @@ export function createWsHub(app: FastifyInstance) {
         bybitConnected = true;
         app.log.info("bybit ws: open");
         broadcastStreamsState();
+        resolveStreamWaitersIfReady();
         subscribeAll();
       },
       onClose: () => {
@@ -564,11 +600,13 @@ export function createWsHub(app: FastifyInstance) {
         bybitConnected = false;
         app.log.warn("bybit ws: close");
         broadcastStreamsState();
+        rejectStreamWaiters("streams_disconnected");
         scheduleReconnect();
       },
       onError: (err) => {
         connectInFlight = false;
         app.log.error({ err }, "bybit ws: error");
+        rejectStreamWaiters("streams_connection_error");
         scheduleReconnect();
       },
       onTicker: (topic, _type, data) => {
@@ -597,6 +635,7 @@ export function createWsHub(app: FastifyInstance) {
       connectInFlight = false;
       app.log.error({ err }, "bybit ws: connect failed");
       bybit = null;
+      rejectStreamWaiters("streams_connect_failed");
       scheduleReconnect();
     }
   }
@@ -642,8 +681,50 @@ export function createWsHub(app: FastifyInstance) {
     bybit = null;
 
     bybitConnected = false;
+    rejectStreamWaiters("streams_stopped");
     broadcastStreamsState();
   }
+
+  awaitStreamsProvider = ({ timeoutMs, signal }: AwaitAllStreamsConnectedArgs) => {
+    streamsEnabled = true;
+    desiredStreams = true;
+    broadcastStreamsState();
+    void startUpstreamIfNeeded();
+
+    if (streamsEnabled && bybitConnected) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const timeout = Math.max(1_000, Math.floor(timeoutMs || 0));
+      const waiter = {
+        resolve: () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        },
+        reject: (err: Error) => {
+          signal?.removeEventListener("abort", onAbort);
+          reject(err);
+        },
+        timer: setTimeout(() => {
+          streamWaiters.delete(waiter);
+          waiter.reject(new Error("streams_connect_timeout"));
+        }, timeout),
+      };
+      const onAbort = () => {
+        streamWaiters.delete(waiter);
+        waiter.reject(new Error("start_cancelled"));
+      };
+      if (signal?.aborted) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error("start_cancelled"));
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      streamWaiters.add(waiter);
+      resolveStreamWaitersIfReady();
+    });
+  };
 
   function applySubscriptions(reason: string) {
     if (!streamsEnabled) return;
@@ -702,7 +783,7 @@ export function createWsHub(app: FastifyInstance) {
       safeSend(ws, { type: "hello", serverTime: now });
       safeSend(ws, {
         type: "snapshot",
-        payload: { sessionState: st.sessionState, sessionId: st.sessionId, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
+        payload: { sessionState: st.sessionState, sessionId: st.sessionId, runningSinceMs: st.runningSinceMs, rows, botStats: computeBotStats(rows), streamsEnabled, bybitConnected, ...getUniverseInfo(), optimizer: getOptimizerSnapshot() },
       });
       safeSend(ws, { type: "streams_state", payload: { streamsEnabled, bybitConnected } });
 
@@ -757,6 +838,7 @@ export function createWsHub(app: FastifyInstance) {
   });
 
   app.addHook("onClose", async () => {
+    awaitStreamsProvider = null;
     runtime.off("state", onRuntimeState);
     runtime.off("event", onRuntimeEvent);
 

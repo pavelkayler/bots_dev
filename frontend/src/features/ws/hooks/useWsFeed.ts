@@ -36,6 +36,7 @@ type WsFeedState = {
   lastMsg: string;
   wsSessionState: SessionState;
   wsSessionId: string | null;
+  wsRunningSinceMs: number | null;
   streams: StreamsState;
   universeSelectedId: string;
   universeSymbolsCount: number;
@@ -59,6 +60,7 @@ let state: WsFeedState = {
   lastMsg: "",
   wsSessionState: "STOPPED",
   wsSessionId: null,
+  wsRunningSinceMs: null,
   streams: { streamsEnabled: true, bybitConnected: false },
   universeSelectedId: "",
   universeSymbolsCount: 0,
@@ -86,6 +88,7 @@ function patchState(patch: Partial<WsFeedState>) {
     prev.lastServerTime !== state.lastServerTime ||
     prev.wsSessionState !== state.wsSessionState ||
     prev.wsSessionId !== state.wsSessionId ||
+    prev.wsRunningSinceMs !== state.wsRunningSinceMs ||
     prev.streams !== state.streams ||
     prev.universeSelectedId !== state.universeSelectedId ||
     prev.universeSymbolsCount !== state.universeSymbolsCount;
@@ -130,6 +133,7 @@ function connect(kind: "CONNECTING" | "RECONNECTING") {
         patchState({
           wsSessionState: msg.payload.sessionState,
           wsSessionId: msg.payload.sessionId ?? null,
+          wsRunningSinceMs: Number(msg.payload.runningSinceMs ?? 0) > 0 ? Number(msg.payload.runningSinceMs) : null,
           rows: Array.isArray(snapshotRows) ? snapshotRows : [],
           streams: {
             streamsEnabled: msg.payload.streamsEnabled,
@@ -223,6 +227,7 @@ export function useWsFeedLite() {
     lastServerTime: localState.lastServerTime,
     wsSessionState: localState.wsSessionState,
     wsSessionId: localState.wsSessionId,
+    wsRunningSinceMs: localState.wsRunningSinceMs,
     wsUrl,
     streams: localState.streams,
     universeSelectedId: localState.universeSelectedId,
@@ -267,6 +272,7 @@ export function useWsFeed() {
     lastMsg: localState.lastMsg,
     wsSessionState: localState.wsSessionState,
     wsSessionId: localState.wsSessionId,
+    wsRunningSinceMs: localState.wsRunningSinceMs,
     wsUrl,
 
     streams: localState.streams,

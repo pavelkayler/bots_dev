@@ -6,6 +6,7 @@ export type StatusResponse = {
   sessionState: SessionState;
   sessionId: string | null;
   eventsFile: string | null;
+  runningSinceMs?: number | null;
 };
 
 export type RuntimeConfig = {
@@ -161,7 +162,7 @@ export type LogEvent = {
 
 export type WsMessage =
   | { type: "hello"; serverTime: number }
-  | { type: "snapshot"; payload: { sessionState: SessionState; sessionId: string | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number; optimizer?: OptimizerWsSnapshot } & StreamsState }
+  | { type: "snapshot"; payload: { sessionState: SessionState; sessionId: string | null; runningSinceMs?: number | null; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number; optimizer?: OptimizerWsSnapshot } & StreamsState }
   | { type: "tick"; payload: { serverTime: number; rows: SymbolRow[]; botStats: BotStats; universeSelectedId: string; universeSymbolsCount: number } }
   | { type: "streams_state"; payload: StreamsState }
   | { type: "events_tail"; payload: { limit: number; count: number; events: LogEvent[] } }

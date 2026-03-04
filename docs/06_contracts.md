@@ -1,6 +1,6 @@
 # 06 Frontend ↔ Backend Contracts (REST + WS)
 
-Last update: 2026-02-25
+Last update: 2026-03-04
 
 > Note: project evolved after 2026-02-25. New/updated contracts are appended at the end of this file (2026-02-26).
 
@@ -17,7 +17,7 @@ Response:
 ### GET /api/session/status
 Response:
 ```json
-{ "sessionState": "STOPPED|RUNNING|STOPPING|PAUSING|PAUSED|RESUMING", "sessionId": "string|null", "eventsFile": "string|null" }
+{ "sessionState": "STOPPED|RUNNING|STOPPING|PAUSING|PAUSED|RESUMING", "sessionId": "string|null", "eventsFile": "string|null", "runningSinceMs": "number|null" }
 ```
 
 ### POST /api/session/start
@@ -25,7 +25,7 @@ Starts a new runtime session (creates session folder and events log).
 
 Response (success):
 ```json
-{ "sessionState": "RUNNING", "sessionId": "2026-02-24T12-31-15-592Z", "eventsFile": "..." }
+{ "sessionState": "RUNNING", "sessionId": "2026-02-24T12-31-15-592Z", "eventsFile": "...", "runningSinceMs": 1760000000000 }
 ```
 
 ### POST /api/session/stop
