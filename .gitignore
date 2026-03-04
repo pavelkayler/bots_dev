@@ -17,6 +17,15 @@ backend/data/optimizer_checkpoints/
 backend/data/optimizer_loops/
 backend/data/sessions/
 backend/data/cache/
+!backend/data/cache/
+!backend/data/cache/bybit_klines/
+!backend/data/cache/bybit_klines/**
+!backend/data/cache/bybit_open_interest/
+!backend/data/cache/bybit_open_interest/**
+!backend/data/cache/bybit_funding_history/
+!backend/data/cache/bybit_funding_history/**
+!backend/data/cache/manifests/
+!backend/data/cache/manifests/**
 backend/data/dataset_target.json
 backend/data/optimizer_job_history.json
 backend/data/history/

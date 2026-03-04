@@ -363,6 +363,80 @@ function normalizeOptimizerRow<T extends OptimizationResult>(row: T): T {
   };
 }
 
+function aggregateLoopRowsByCandidate(rows: LoopOptimizerResultRow[]): LoopOptimizerResultRow[] {
+  const byCandidate = new Map<string, LoopOptimizerResultRow & { __wins: number; __trainWins: number; __valWins: number; __longWins: number; __shortWins: number }>();
+  for (const row of rows) {
+    const normalized = normalizeOptimizerRow(row);
+    const candidateKey = typeof normalized.candidateKey === "string" && normalized.candidateKey.trim()
+      ? normalized.candidateKey.trim()
+      : makeResultSignature(normalized);
+    const wins = Math.max(0, Math.round((Number(normalized.winRatePct) || 0) * (Number(normalized.trades) || 0) / 100));
+    const trainWins = Math.max(0, Math.round((Number(normalized.trainWinRatePct) || 0) * (Number(normalized.trainTrades) || 0) / 100));
+    const valWins = Math.max(0, Math.round((Number(normalized.valWinRatePct) || 0) * (Number(normalized.valTrades) || 0) / 100));
+    const longWins = Math.max(0, Math.round((Number(normalized.longsWinRatePct) || 0) * (Number(normalized.longsCount) || 0) / 100));
+    const shortWins = Math.max(0, Math.round((Number(normalized.shortsWinRatePct) || 0) * (Number(normalized.shortsCount) || 0) / 100));
+    const existing = byCandidate.get(candidateKey);
+    if (!existing) {
+      byCandidate.set(candidateKey, {
+        ...normalized,
+        rowId: `loop:${candidateKey}`,
+        candidateKey,
+        __wins: wins,
+        __trainWins: trainWins,
+        __valWins: valWins,
+        __longWins: longWins,
+        __shortWins: shortWins,
+      });
+      continue;
+    }
+    existing.netPnl += Number(normalized.netPnl) || 0;
+    existing.trades += Number(normalized.trades) || 0;
+    existing.trainNetPnl = (Number(existing.trainNetPnl) || 0) + (Number(normalized.trainNetPnl) || 0);
+    existing.trainTrades = (Number(existing.trainTrades) || 0) + (Number(normalized.trainTrades) || 0);
+    existing.valNetPnl = (Number(existing.valNetPnl) || 0) + (Number(normalized.valNetPnl) || 0);
+    existing.valTrades = (Number(existing.valTrades) || 0) + (Number(normalized.valTrades) || 0);
+    existing.signalsOk += Number(normalized.signalsOk) || 0;
+    existing.decisionsNoRefs += Number(normalized.decisionsNoRefs) || 0;
+    existing.ordersPlaced += Number(normalized.ordersPlaced) || 0;
+    existing.ordersFilled += Number(normalized.ordersFilled) || 0;
+    existing.ordersExpired += Number(normalized.ordersExpired) || 0;
+    existing.closesTp += Number(normalized.closesTp) || 0;
+    existing.closesSl += Number(normalized.closesSl) || 0;
+    existing.closesForce += Number(normalized.closesForce) || 0;
+    existing.longsCount += Number(normalized.longsCount) || 0;
+    existing.longsPnl += Number(normalized.longsPnl) || 0;
+    existing.shortsCount += Number(normalized.shortsCount) || 0;
+    existing.shortsPnl += Number(normalized.shortsPnl) || 0;
+    existing.maxDrawdownUsdt = Math.max(Number(existing.maxDrawdownUsdt) || 0, Number(normalized.maxDrawdownUsdt) || 0);
+    existing.__wins += wins;
+    existing.__trainWins += trainWins;
+    existing.__valWins += valWins;
+    existing.__longWins += longWins;
+    existing.__shortWins += shortWins;
+    existing.__runJobId = normalized.__runJobId;
+  }
+
+  return Array.from(byCandidate.values()).map((row) => {
+    const trades = Number(row.trades) || 0;
+    const trainTrades = Number(row.trainTrades) || 0;
+    const valTrades = Number(row.valTrades) || 0;
+    const longsCount = Number(row.longsCount) || 0;
+    const shortsCount = Number(row.shortsCount) || 0;
+    const netPnl = Number(row.netPnl) || 0;
+    const valNetPnl = Number(row.valNetPnl) || 0;
+    return {
+      ...row,
+      winRatePct: trades > 0 ? (row.__wins / trades) * 100 : 0,
+      trainWinRatePct: trainTrades > 0 ? (row.__trainWins / trainTrades) * 100 : 0,
+      valWinRatePct: valTrades > 0 ? (row.__valWins / valTrades) * 100 : 0,
+      valPnlPerTrade: valTrades > 0 ? valNetPnl / valTrades : 0,
+      expectancy: trades > 0 ? netPnl / trades : 0,
+      longsWinRatePct: longsCount > 0 ? (row.__longWins / longsCount) * 100 : 0,
+      shortsWinRatePct: shortsCount > 0 ? (row.__shortWins / shortsCount) * 100 : 0,
+    };
+  });
+}
+
 type OptimizerResultRowProps = {
   row: OptimizationResult;
   activePrecision: OptimizerPrecision;
@@ -643,15 +717,16 @@ export function OptimizerPage() {
   }, [refreshDatasetHistories]);
 
 
-  const loopAggRowsForRender = useMemo(() => (
-    loopAggState.runOrder.flatMap((runId) => {
+  const loopAggRowsForRender = useMemo(() => {
+    const rows = loopAggState.runOrder.flatMap((runId) => {
       const store = loopAggState.byRunId[runId];
       if (!store) return [];
       return store.order
         .map((id) => store.rowsById.get(id))
         .filter((row): row is LoopOptimizerResultRow => row != null);
-    })
-  ), [loopAggState.version]);
+    });
+    return aggregateLoopRowsByCandidate(rows);
+  }, [loopAggState.version]);
 
 useEffect(() => {
   saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, { schemaVersion: 1, rows: loopAggRowsForRender });
@@ -1836,7 +1911,7 @@ useEffect(() => {
           slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
           entryOffsetPct: quantizeByPrecision(row.params.entryOffsetPct, activePrecision.offset),
           entryTimeoutSec: quantizeByPrecision(row.params.timeoutSec, activePrecision.timeoutSec),
-          rearmDelayMs: quantizeByPrecision(row.params.rearmMs, activePrecision.rearmMs),
+          rearmSec: quantizeByPrecision(row.params.rearmMs / 1000, activePrecision.rearmMs),
         },
       },
     };

@@ -35,7 +35,7 @@ type NumericDraft = {
   paperTpRoiPct: string;
   paperSlRoiPct: string;
   paperMakerFeeRate: string;
-  paperRearmDelayMs: string;
+  paperRearmSec: string;
   paperMaxDailyLossUSDT: string;
 };
 
@@ -54,7 +54,7 @@ function toNumericDraft(cfg: RuntimeConfig): NumericDraft {
     paperTpRoiPct: String(cfg.paper.tpRoiPct),
     paperSlRoiPct: String(cfg.paper.slRoiPct),
     paperMakerFeeRate: String(cfg.paper.makerFeeRate),
-    paperRearmDelayMs: String(cfg.paper.rearmDelayMs),
+    paperRearmSec: String(Math.round(cfg.paper.rearmDelayMs / 1000)),
     paperMaxDailyLossUSDT: String(cfg.paper.maxDailyLossUSDT),
   };
 }
@@ -100,7 +100,7 @@ function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft |
         tpRoiPct: parseNumber(numericDraft.paperTpRoiPct, "tpRoiPct"),
         slRoiPct: parseNumber(numericDraft.paperSlRoiPct, "slRoiPct"),
         makerFeeRate: parseNumber(numericDraft.paperMakerFeeRate, "makerFeeRate"),
-        rearmDelayMs: parseNumber(numericDraft.paperRearmDelayMs, "rearmDelayMs"),
+        rearmDelayMs: parseNumber(numericDraft.paperRearmSec, "rearmSec") * 1000,
         maxDailyLossUSDT: parseNumber(numericDraft.paperMaxDailyLossUSDT, "maxDailyLossUSDT"),
       },
     };
@@ -271,6 +271,11 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
           tpRoiPct: Number(patch?.paper?.tpRoiPct ?? draft.paper.tpRoiPct),
           slRoiPct: Number(patch?.paper?.slRoiPct ?? draft.paper.slRoiPct),
           entryOffsetPct: Number(patch?.paper?.entryOffsetPct ?? draft.paper.entryOffsetPct),
+          rearmDelayMs: Number(
+            patch?.paper?.rearmSec != null
+              ? Number(patch.paper.rearmSec) * 1000
+              : (patch?.paper?.rearmMs ?? patch?.paper?.rearmDelayMs ?? draft.paper.rearmDelayMs)
+          ),
           maxDailyLossUSDT: Number(patch?.paper?.maxDailyLossUSDT ?? draft.paper.maxDailyLossUSDT),
         },
       };
@@ -545,7 +550,7 @@ function buildConfigForApply(): RuntimeConfig {
                     <Row className="g-2 mt-1"><Col><Form.Label>marginUSDT</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperMarginUSDT} onChange={(e) => setNumericField("paperMarginUSDT", e.currentTarget.value)} /></Col><Col><Form.Label>leverage</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperLeverage} onChange={(e) => setNumericField("paperLeverage", e.currentTarget.value)} /></Col></Row>
                     <Row className="g-2 mt-1"><Col><Form.Label>entryOffsetPct</Form.Label><Form.Control type="number" step="0.01" value={numericDraft.paperEntryOffsetPct} onChange={(e) => setNumericField("paperEntryOffsetPct", e.currentTarget.value)} /></Col><Col><Form.Label>entryTimeoutSec</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperEntryTimeoutSec} onChange={(e) => setNumericField("paperEntryTimeoutSec", e.currentTarget.value)} /></Col></Row>
                     <Row className="g-2 mt-1"><Col><Form.Label>tpRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperTpRoiPct} onChange={(e) => setNumericField("paperTpRoiPct", e.currentTarget.value)} /></Col><Col><Form.Label>slRoiPct</Form.Label><Form.Control type="number" step="0.1" value={numericDraft.paperSlRoiPct} onChange={(e) => setNumericField("paperSlRoiPct", e.currentTarget.value)} /></Col></Row>
-                    <Row className="g-2 mt-1"><Col><Form.Label>makerFeeRate</Form.Label><Form.Control type="number" step="0.0001" value={numericDraft.paperMakerFeeRate} onChange={(e) => setNumericField("paperMakerFeeRate", e.currentTarget.value)} /></Col><Col><Form.Label>rearmDelayMs</Form.Label><Form.Control type="number" step="100" value={numericDraft.paperRearmDelayMs} onChange={(e) => setNumericField("paperRearmDelayMs", e.currentTarget.value)} /></Col></Row>
+                    <Row className="g-2 mt-1"><Col><Form.Label>makerFeeRate</Form.Label><Form.Control type="number" step="0.0001" value={numericDraft.paperMakerFeeRate} onChange={(e) => setNumericField("paperMakerFeeRate", e.currentTarget.value)} /></Col><Col><Form.Label>rearmSec</Form.Label><Form.Control type="number" step="1" value={numericDraft.paperRearmSec} onChange={(e) => setNumericField("paperRearmSec", e.currentTarget.value)} /></Col></Row>
                     <Form.Group className="mt-1"><Form.Label>maxDailyLossUSDT</Form.Label><Form.Control type="number" step="1" min={0} value={numericDraft.paperMaxDailyLossUSDT} onChange={(e) => setNumericField("paperMaxDailyLossUSDT", e.currentTarget.value)} /></Form.Group>
                     <Form.Check className="mt-2" type="switch" id="applyFunding" label="applyFunding" checked={draft.paper.applyFunding} onChange={(e) => setDraft({ ...draft, paper: { ...draft.paper, applyFunding: e.currentTarget.checked } })} />
                   </Card.Body>
