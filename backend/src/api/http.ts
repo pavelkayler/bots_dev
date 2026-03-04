@@ -1979,7 +1979,8 @@ let sim: OptimizerSimulationParams;
     }
 
     const page = Math.max(1, Math.floor(Number(query.page) || 1));
-    const pageSize = 50;
+    const requestedPageSize = Math.floor(Number(query.pageSize) || 50);
+    const pageSize = [10, 25, 50].includes(requestedPageSize) ? requestedPageSize : 50;
     const { sorted: unsafelySorted, sortKey, sortDir } = getOptimizerJobResultsSorted(job, query);
     const positiveOnly = String(query.positiveOnly ?? "") === "1";
     const sorted = positiveOnly ? unsafelySorted.filter((row) => (row?.netPnl ?? 0) > 0) : unsafelySorted;
