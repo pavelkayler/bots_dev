@@ -635,6 +635,17 @@ function parseRanges(raw: any): OptimizerRanges | undefined {
   return parsed;
 }
 
+function assertOptimizerMinimumRanges(ranges: OptimizerRanges | undefined) {
+  const timeoutRange = ranges?.timeoutSec;
+  if (timeoutRange && (!Number.isFinite(timeoutRange.min) || !Number.isFinite(timeoutRange.max) || timeoutRange.min < 61 || timeoutRange.max < 61)) {
+    throw new Error("invalid_range_timeoutSec");
+  }
+  const rearmRange = ranges?.rearmMs;
+  if (rearmRange && (!Number.isFinite(rearmRange.min) || !Number.isFinite(rearmRange.max) || rearmRange.min < 900000 || rearmRange.max < 900000)) {
+    throw new Error("invalid_range_rearmMs");
+  }
+}
+
 function parsePrecision(raw: any): Partial<OptimizerPrecision> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const keys: Array<keyof OptimizerPrecision> = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"];
@@ -1485,11 +1496,11 @@ app.get("/api/config", async () => {
     const directionMode = body?.directionMode == null ? "both" : String(body.directionMode);
     const optTfMinRaw = body?.optTfMin;
     const optTfMinParsed = optTfMinRaw == null || String(optTfMinRaw).trim() === "" ? 15 : Math.floor(Number(optTfMinRaw));
-    if (!Number.isFinite(optTfMinParsed) || optTfMinParsed !== 15) {
+    if (!Number.isInteger(optTfMinParsed) || optTfMinParsed < 15 || optTfMinParsed > 240) {
       reply.code(400);
       return { error: "invalid_opt_tf_min" };
     }
-    const optTfMin = 15;
+    const optTfMin = optTfMinParsed;
     const minTradesRaw = body?.minTrades;
     const minTrades = minTradesRaw == null || String(minTradesRaw).trim() === "" ? 1 : Math.floor(Number(minTradesRaw));
     const excludeNegative = Boolean(body?.excludeNegative);
@@ -1526,6 +1537,7 @@ app.get("/api/config", async () => {
     let precision: Partial<OptimizerPrecision> | undefined;
     try {
       ranges = parseRanges(body?.ranges);
+      assertOptimizerMinimumRanges(ranges);
       precision = parsePrecision(body?.precision);
     } catch (e: any) {
       reply.code(400);
@@ -1567,7 +1579,7 @@ app.get("/api/config", async () => {
       interval,
       candidates: totalCandidates,
       seed: Number.isFinite(seed) ? seed : 1,
-      ...(ranges ? { ranges: { ...ranges, timeoutSec: { min: 61, max: 61 }, rearmMs: { min: 900000, max: 900000 } } } : { ranges: { timeoutSec: { min: 61, max: 61 }, rearmMs: { min: 900000, max: 900000 } } }),
+      ...(ranges ? { ranges } : {}),
       ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
       directionMode: directionMode as "both" | "long" | "short",
       optTfMin,
@@ -1779,14 +1791,24 @@ let sim: OptimizerSimulationParams;
       minTrades: body?.minTrades == null || String(body.minTrades).trim() === "" ? 1 : Math.floor(Number(body.minTrades)),
       excludeNegative: Boolean(body?.excludeNegative),
       rememberNegatives: Boolean(body?.rememberNegatives),
-      optTfMin: 15,
-      ...(body?.ranges ? { ranges: { ...body.ranges, timeoutSec: { min: 61, max: 61 }, rearmMs: { min: 900000, max: 900000 } } } : { ranges: { timeoutSec: { min: 61, max: 61 }, rearmMs: { min: 900000, max: 900000 } } }),
+      optTfMin: body?.optTfMin == null || String(body.optTfMin).trim() === "" ? 15 : Math.floor(Number(body.optTfMin)),
+      ...(body?.ranges ? { ranges: body.ranges } : {}),
       ...(body?.precision ? { precision: body.precision } : {}),
       sim,
     };
-    if (body?.optTfMin != null && Math.floor(Number(body.optTfMin)) !== 15) {
+    const optTfMin = Math.floor(Number(payload.optTfMin));
+    if (!Number.isInteger(optTfMin) || optTfMin < 15 || optTfMin > 240) {
       reply.code(400);
       return { error: "invalid_opt_tf_min" };
+    }
+    payload.optTfMin = optTfMin;
+    try {
+      const parsedRanges = parseRanges(payload.ranges);
+      assertOptimizerMinimumRanges(parsedRanges);
+      if (parsedRanges) payload.ranges = parsedRanges;
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
     const runsCount = Math.max(1, Math.floor(Number(body?.runsCount ?? 1)));
     const isInfinite = Boolean(body?.infinite);

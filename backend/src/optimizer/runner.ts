@@ -99,9 +99,8 @@ type CloseSnapshot = { ts: number; realizedPnl: number };
 const MAX_TICK_INTERVAL_SAMPLES = 20_000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
 const FUNDING_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_funding_history");
-const FIXED_OPT_TF_MIN = 15;
-const FIXED_TIMEOUT_SEC = 61;
-const FIXED_REARM_MS = FIXED_OPT_TF_MIN * 60_000;
+const MIN_OPT_TF_MIN = 15;
+const MIN_TIMEOUT_SEC = 61;
 const DEBUG_DATASET_TF = process.env.DEBUG_DATASET_TF === "1";
 const DEBUG_OPT_TRADES = process.env.DEBUG_OPT_TRADES === "1";
 const DEBUG_OPT_MARKETDATA = process.env.DEBUG_OPT_MARKETDATA === "1";
@@ -706,7 +705,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
   };
   const effectiveDirection = args.directionMode ?? "both";
-  const effectiveTf = FIXED_OPT_TF_MIN;
+  const effectiveTf = Math.max(Math.floor(Number(args.optTfMin ?? MIN_OPT_TF_MIN)) || MIN_OPT_TF_MIN, MIN_OPT_TF_MIN);
   const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
   const shouldRememberNegatives = Boolean(args.rememberNegatives);
   const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;
@@ -748,7 +747,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       },
       precision
     );
-    const params = { ...randomizedParams, timeoutSec: FIXED_TIMEOUT_SEC, rearmMs: FIXED_REARM_MS };
+    const params = {
+      ...randomizedParams,
+      timeoutSec: Math.max(Number(randomizedParams.timeoutSec) || 0, MIN_TIMEOUT_SEC),
+      rearmMs: Math.max(Number(randomizedParams.rearmMs) || 0, effectiveTf * 60_000),
+    };
     const paramSig = buildParamSig(params, precision);
     if (blacklistState && blacklistState.negativeSet.has(paramSig)) {
       skippedBlacklisted += 1;
@@ -784,7 +787,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
       const durationMs = Math.max(0, (tape.lastTsMs ?? 0) - (tape.firstTsMs ?? 0));
       const durationMin = durationMs / 60_000;
-      const effectiveTfMin = FIXED_OPT_TF_MIN;
+      const effectiveTfMin = Math.max(Math.floor(Number(args.optTfMin ?? MIN_OPT_TF_MIN)) || MIN_OPT_TF_MIN, MIN_OPT_TF_MIN);
       const tfMs = effectiveTfMin * 60_000;
       effectiveTfMinByTapeId[tape.tapeId] = effectiveTfMin;
       durationMinByTapeId[tape.tapeId] = durationMin;
@@ -806,8 +809,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           tpRoiPct: params.tpRoiPct,
           slRoiPct: params.slRoiPct,
           entryOffsetPct: params.entryOffsetPct,
-          entryTimeoutSec: FIXED_TIMEOUT_SEC,
-          rearmDelayMs: FIXED_REARM_MS,
+          entryTimeoutSec: Math.max(params.timeoutSec, MIN_TIMEOUT_SEC),
+          rearmDelayMs: Math.max(params.rearmMs, effectiveTfMin * 60_000),
           applyFunding: false,
         },
       };
