@@ -559,6 +559,7 @@ export type RunOptimizationArgs = {
   };
   cacheDatasets?: Array<{ symbols: string[]; startMs: number; endMs: number; interval?: string }>;
   fixedParams?: OptimizerParams;
+  runsCount?: number;
 };
 
 export type RunOptimizationHooks = {
@@ -573,6 +574,7 @@ export type RunOptimizationHooks = {
     total: number;
     donePercent: number;
     partialResults: OptimizerResult[];
+    duplicatesSkippedTotal: number;
     skippedBlacklistedTotal: number;
     negativeSetSize: number;
   }) => void;
@@ -770,12 +772,15 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
   const results: OptimizerResult[] = [];
   const resolvedJobId = String(args.jobId ?? "").trim() || "job";
+  const runsCount = Math.max(1, Math.floor(Number(args.runsCount) || 1));
+
+  const totalCandidatesTarget = Math.max(0, Math.floor(Number(args.candidates) || 0)) * runsCount;
 
   // progress is reported in 0.01% steps (total=10000)
   const progressTotal = 10_000;
   let lastProgressDone = -1;
   const reportProgress = (candidateIndexDone: number) => {
-    const frac = args.candidates > 0 ? candidateIndexDone / args.candidates : 0;
+    const frac = totalCandidatesTarget > 0 ? candidateIndexDone / totalCandidatesTarget : 0;
     const done = Math.max(0, Math.min(progressTotal, Math.floor(frac * progressTotal)));
     if (done !== lastProgressDone) {
       lastProgressDone = done;
@@ -784,7 +789,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   };
   const reportProgressFrac = (candidateIndexBase: number, fracWithinCandidate: number) => {
     const fracCandidate = Math.max(0, Math.min(1, fracWithinCandidate));
-    const fracGlobal = args.candidates > 0 ? (candidateIndexBase + fracCandidate) / args.candidates : 0;
+    const fracGlobal = totalCandidatesTarget > 0 ? (candidateIndexBase + fracCandidate) / totalCandidatesTarget : 0;
     const done = Math.max(0, Math.min(progressTotal, Math.floor(fracGlobal * progressTotal)));
     if (done !== lastProgressDone) {
       lastProgressDone = done;
@@ -794,15 +799,17 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const effectiveDirection = args.directionMode ?? "both";
   const effectiveTf = Math.max(Math.floor(Number(args.optTfMin ?? MIN_OPT_TF_MIN)) || MIN_OPT_TF_MIN, MIN_OPT_TF_MIN);
   const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
+  const seenCandidateKeys = new Set<string>();
   const shouldRememberNegatives = Boolean(args.rememberNegatives);
   const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;
   const runIndex = shouldRememberNegatives ? blacklistState?.runIndex ?? 0 : 0;
-  const effectiveSeed = shouldRememberNegatives ? baseSeed + runIndex : baseSeed;
+  const effectiveSeedBase = shouldRememberNegatives ? baseSeed + runIndex : baseSeed;
   if (blacklistState) {
-    blacklistState.runIndex = runIndex + 1;
+    blacklistState.runIndex = runIndex + runsCount;
     flushNegativeBlacklist(blacklistState);
   }
-  const rng = buildRng(effectiveSeed);
+  let effectiveSeed = effectiveSeedBase;
+  let duplicatesSkipped = 0;
   let skippedBlacklisted = 0;
   let lastBlacklistFlushMs = Date.now();
   let addedSinceFlush = 0;
@@ -814,15 +821,19 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const effectiveTfMinByTapeId: Record<string, number> = {};
   const durationMinByTapeId: Record<string, number> = {};
 
-  let evaluated = 0;
-  let attempts = 0;
-  const attemptsCap = Math.max(args.candidates * 50, args.candidates);
-  while (evaluated < args.candidates && attempts < attemptsCap) {
-    attempts += 1;
-    if (hooks?.shouldCancel?.()) {
-      cancelled = true;
-      break;
-    }
+  let evaluatedTotal = 0;
+  for (let runOffset = 0; runOffset < runsCount; runOffset += 1) {
+    effectiveSeed = effectiveSeedBase + runOffset;
+    const rng = buildRng(effectiveSeed);
+    let evaluated = 0;
+    let attempts = 0;
+    const attemptsCap = Math.max(args.candidates * 100, args.candidates);
+    while (evaluated < args.candidates && attempts < attemptsCap) {
+      attempts += 1;
+      if (hooks?.shouldCancel?.()) {
+        cancelled = true;
+        break;
+      }
 
     const randomizedParams = args.fixedParams ?? buildCandidateParams(
       rng,
@@ -844,14 +855,19 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       rearmMs: Math.max(Number(randomizedParams.rearmMs) || 0, effectiveTf * 60_000),
     };
     const candidateKey = buildCandidateKey(params, effectiveDirection, effectiveTf, args.sim);
+    if (seenCandidateKeys.has(candidateKey)) {
+      duplicatesSkipped += 1;
+      continue;
+    }
     const effectiveExecutionModel: PaperExecutionModel = args.executionModel ?? "closeOnly";
     if (blacklistState && blacklistState.negativeSet.has(candidateKey)) {
       skippedBlacklisted += 1;
       hooks?.onBlacklistUpdate?.({ count: blacklistState?.negativeSet.size ?? 0, skipped: skippedBlacklisted });
       continue;
     }
+    seenCandidateKeys.add(candidateKey);
 
-    const candidateIndexBase = evaluated;
+    const candidateIndexBase = evaluatedTotal;
 
     let netPnlTotal = 0;
     let tradesTotal = 0;
@@ -1218,7 +1234,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
     // report progress in 0.01% steps (total=10000)
     evaluated += 1;
-    const candidateDone = evaluated;
+    evaluatedTotal += 1;
+    const candidateDone = evaluatedTotal;
     reportProgress(candidateDone);
     const done = lastProgressDone < 0 ? 0 : lastProgressDone;
     const donePercent = progressTotal > 0 ? Math.max(0, Math.min(100, Math.round((done / progressTotal) * 10_000) / 100)) : 0;
@@ -1227,6 +1244,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       total: progressTotal,
       donePercent,
       partialResults: results,
+      duplicatesSkippedTotal: duplicatesSkipped,
       skippedBlacklistedTotal: skippedBlacklisted,
       negativeSetSize: blacklistState?.negativeSet.size ?? 0,
     });
@@ -1236,6 +1254,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       lastPctLocal = donePercent;
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
+  }
+    if (cancelled) break;
   }
 
   if (blacklistState && addedSinceFlush > 0) {
