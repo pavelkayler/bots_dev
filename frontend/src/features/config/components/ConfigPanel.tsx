@@ -277,6 +277,7 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
           tpRoiPct: Number(patch?.paper?.tpRoiPct ?? draft.paper.tpRoiPct),
           slRoiPct: Number(patch?.paper?.slRoiPct ?? draft.paper.slRoiPct),
           entryOffsetPct: Number(patch?.paper?.entryOffsetPct ?? draft.paper.entryOffsetPct),
+          entryTimeoutSec: Number(patch?.paper?.entryTimeoutSec ?? draft.paper.entryTimeoutSec),
           rearmDelayMs: toNonNegativeRoundedInt(
             patch?.paper?.rearmSec != null
               ? Number(patch.paper.rearmSec)

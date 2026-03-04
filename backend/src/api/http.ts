@@ -1301,6 +1301,11 @@ app.get("/api/config", async () => {
           : 0;
         paperPatch.rearmDelayMs = safeRearmDelayMs;
       }
+      if (paperPatch.entryTimeoutSec != null) {
+        const raw = Number(paperPatch.entryTimeoutSec);
+        const safe = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 1;
+        paperPatch.entryTimeoutSec = safe;
+      }
       normalizedPatch.paper = paperPatch;
     }
     const cur = configStore.get();
