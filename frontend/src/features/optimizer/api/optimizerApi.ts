@@ -174,7 +174,7 @@ export async function runOptimizationJob(payload: {
   candidates: number;
   seed: number;
   minTrades?: number;
-  ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", { min: number; max: number }>>;
+  ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs" | "rearmSec", { min: number; max: number }>>;
   precision?: Partial<OptimizerPrecision>;
   directionMode?: "both" | "long" | "short";
   optTfMin?: number;
@@ -279,7 +279,7 @@ export async function startOptimizerLoop(payload: {
   candidates: number;
   seed: number;
   minTrades?: number;
-  ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", { min: number; max: number }>>;
+  ranges?: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs" | "rearmSec", { min: number; max: number }>>;
   precision?: Partial<OptimizerPrecision>;
   directionMode?: "both" | "long" | "short";
   optTfMin?: number;

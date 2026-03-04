@@ -37,7 +37,7 @@ type OptimizerSingleResultsState = { rowsById: Map<string, OptimizationResult>; 
 type LoopRunStore = { rowsById: Map<string, LoopOptimizerResultRow>; order: string[]; version: number };
 type LoopAggState = { runOrder: string[]; byRunId: Record<string, LoopRunStore>; version: number };
 
-type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs";
+type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmSec";
 type RangeState = Record<RangeKey, { min: string; max: string }>;
 
 const RANGE_DEFAULTS: RangeState = {
@@ -46,8 +46,8 @@ const RANGE_DEFAULTS: RangeState = {
   tp: { min: "2", max: "12" },
   sl: { min: "2", max: "12" },
   offset: { min: "0", max: "1" },
-  timeoutSec: { min: "61", max: "61" },
-  rearmMs: { min: "900000", max: "900000" },
+  timeoutSec: { min: "61", max: "120" },
+  rearmSec: { min: "900", max: "3600" },
 };
 
 const RESULTS_PAGE_SIZES = [10, 25, 50] as const;
@@ -57,6 +57,7 @@ const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
 const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
 const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
+const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
 const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
 const SIM_MARGIN_STORAGE_KEY = "bots_dev.optimizer.sim.marginPerTrade";
 const SIM_LEVERAGE_STORAGE_KEY = "bots_dev.optimizer.sim.leverage";
@@ -124,12 +125,15 @@ function formatHistoryEndedAt(tsMs: number): string {
 
 function isValidRangeState(value: unknown): value is RangeState {
   if (!value || typeof value !== "object") return false;
-  const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"];
+  const keys: Array<Exclude<RangeKey, "rearmSec">> = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec"];
   for (const key of keys) {
     const row = (value as Record<string, any>)[key];
     if (!row || typeof row !== "object") return false;
     if (typeof row.min !== "string" || typeof row.max !== "string") return false;
   }
+  const rearmRow = (value as Record<string, any>).rearmSec ?? (value as Record<string, any>).rearmMs;
+  if (!rearmRow || typeof rearmRow !== "object") return false;
+  if (typeof rearmRow.min !== "string" || typeof rearmRow.max !== "string") return false;
   return true;
 }
 
@@ -139,10 +143,21 @@ function loadSavedRanges(): RangeState {
     if (!raw) return RANGE_DEFAULTS;
     const parsed = JSON.parse(raw) as unknown;
     if (!isValidRangeState(parsed)) return RANGE_DEFAULTS;
+    const parsedAny = parsed as any;
+    const timeoutMax = Number(parsedAny?.timeoutSec?.max ?? RANGE_DEFAULTS.timeoutSec.max);
+    const rearmLegacy = parsedAny?.rearmSec ?? parsedAny?.rearmMs;
+    const rearmMax = Number(rearmLegacy?.max ?? RANGE_DEFAULTS.rearmSec.max);
     return {
-      ...parsed,
-      timeoutSec: { ...RANGE_DEFAULTS.timeoutSec },
-      rearmMs: { ...RANGE_DEFAULTS.rearmMs },
+      ...RANGE_DEFAULTS,
+      ...parsedAny,
+      timeoutSec: {
+        min: RANGE_DEFAULTS.timeoutSec.min,
+        max: String(Math.max(Number.isFinite(timeoutMax) ? timeoutMax : Number(RANGE_DEFAULTS.timeoutSec.max), Number(RANGE_DEFAULTS.timeoutSec.min))),
+      },
+      rearmSec: {
+        min: RANGE_DEFAULTS.rearmSec.min,
+        max: String(Math.max(Number.isFinite(rearmMax) ? rearmMax : Number(RANGE_DEFAULTS.rearmSec.max), Number(RANGE_DEFAULTS.rearmSec.min))),
+      },
     };
   } catch {
     return RANGE_DEFAULTS;
@@ -207,7 +222,7 @@ function makeResultSignature(row: OptimizerResultRow): string {
     `sl=${toSigValue(row.params.slRoiPct)}`,
     `offset=${toSigValue(row.params.entryOffsetPct)}`,
     `timeoutSec=${toSigValue(row.params.timeoutSec)}`,
-    `rearmMs=${toSigValue(row.params.rearmMs)}`,
+    `rearmSec=${toSigValue(row.params.rearmMs / 1000)}`,
   ].join("|");
 }
 
@@ -305,7 +320,7 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
       <td style={{ whiteSpace: "nowrap" }}>{row.params.slRoiPct.toFixed(activePrecision.sl)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.params.entryOffsetPct.toFixed(activePrecision.offset)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{(row.params.rearmMs / 1000).toFixed(activePrecision.rearmMs)}</td>
       <td style={{ whiteSpace: "nowrap" }}>
         <Button size="sm" variant="outline-secondary" onClick={() => onCopyToSettings(row)}>Copy to settings</Button>
       </td>
@@ -396,7 +411,7 @@ export function OptimizerPage() {
   const [simFeeBps, setSimFeeBps] = useState(() => localStorage.getItem(SIM_FEE_BPS_STORAGE_KEY) ?? "0");
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
-  const optTfMin = "15";
+  const [optTfMin, setOptTfMin] = useState("15");
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
   const [, setOptimizerPaused] = useState(false);
@@ -709,6 +724,13 @@ useEffect(() => {
     setSeed(loadStoredPositiveInt(SEED_STORAGE_KEY, "1", 0));
     const savedDirection = localStorage.getItem(DIRECTION_STORAGE_KEY);
     if (savedDirection === "long" || savedDirection === "short" || savedDirection === "both") setDirectionMode(savedDirection);
+    const savedOptTfRaw = localStorage.getItem(OPT_TF_STORAGE_KEY);
+    if (savedOptTfRaw != null) {
+      const normalized = Math.max(15, Math.floor(Number(savedOptTfRaw) || 15));
+      const finalTf = [15, 30, 60, 120, 240].includes(normalized) ? normalized : 15;
+      setOptTfMin(String(finalTf));
+      localStorage.setItem(OPT_TF_STORAGE_KEY, String(finalTf));
+    }
     const savedMinTrades = localStorage.getItem(MIN_TRADES_STORAGE_KEY);
     if (savedMinTrades != null) {
       const n = Math.floor(Number(savedMinTrades));
@@ -797,6 +819,10 @@ useEffect(() => {
   useEffect(() => {
     localStorage.setItem(DIRECTION_STORAGE_KEY, directionMode);
   }, [directionMode]);
+
+  useEffect(() => {
+    localStorage.setItem(OPT_TF_STORAGE_KEY, String(Math.max(15, Math.floor(Number(optTfMin) || 15))));
+  }, [optTfMin]);
 
   useEffect(() => {
     const n = Math.floor(Number(minTrades));
@@ -897,6 +923,17 @@ useEffect(() => {
   }, [loopActive, loopAggRowsForRender.length]);
 
 
+  const resetLoopResultsState = useCallback(() => {
+    logAppendOnlyDebug("reset", { reason: "reset-loop-results" });
+    setLoopAggState({ runOrder: [], byRunId: {}, version: 0 });
+    setLoopDebugTrackedRowIds([]);
+    completedLoopRunIdsRef.current = {};
+    setDone(0);
+    setTotal(0);
+    setPage(1);
+    localStorage.removeItem(LOOP_RESULTS_DRAFT_STORAGE_KEY);
+  }, [logAppendOnlyDebug]);
+
   const debugLoopStart = useCallback((stage: "before_request" | "error", data: { payloadKeys?: string[]; errorMessage?: string }) => {
     if (!import.meta.env.DEV) return;
     if (localStorage.getItem("debugOptimizerLoop") !== "1") return;
@@ -944,7 +981,7 @@ useEffect(() => {
         sl: Math.max(countDecimals(ranges.sl.min), countDecimals(ranges.sl.max)),
         offset: Math.max(countDecimals(ranges.offset.min), countDecimals(ranges.offset.max)),
         timeoutSec: Math.max(countDecimals(ranges.timeoutSec.min), countDecimals(ranges.timeoutSec.max)),
-        rearmMs: Math.max(countDecimals(ranges.rearmMs.min), countDecimals(ranges.rearmMs.max)),
+        rearmMs: Math.max(countDecimals(ranges.rearmSec.min), countDecimals(ranges.rearmSec.max)),
       };
       if (import.meta.env.DEV && localStorage.getItem("debugDatasetTf") === "1") {
         const selectedRows = datasetHistories.filter((h) => selectedHistoryIds.includes(h.id));
@@ -963,7 +1000,7 @@ useEffect(() => {
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
         directionMode,
-        optTfMin: 15,
+        optTfMin: Math.max(15, Math.floor(Number(optTfMin) || 15)),
         excludeNegative,
         rememberNegatives,
         sim: {
@@ -979,13 +1016,8 @@ useEffect(() => {
         ...(datasetCache ? { datasetCache } : {}),
       };
       debugLoopStart("before_request", { payloadKeys: Object.keys(loopPayload) });
+      resetLoopResultsState();
       await startOptimizerLoop(loopPayload);
-      logAppendOnlyDebug("reset", { reason: "start-loop" });
-      setLoopAggState({ runOrder: [], byRunId: {}, version: 0 });
-      setLoopDebugTrackedRowIds([]);
-      completedLoopRunIdsRef.current = {};
-      localStorage.removeItem(LOOP_RESULTS_DRAFT_STORAGE_KEY);
-      setDone(0);
       setTotal(100);
       const next = await getOptimizerLoopStatus();
       setLoopStatus(next);
@@ -1066,7 +1098,7 @@ useEffect(() => {
 
 
   const rangeError = useMemo(() => {
-    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"];
+    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmSec"];
     for (const key of keys) {
       const minText = ranges[key].min;
       const maxText = ranges[key].max;
@@ -1075,6 +1107,8 @@ useEffect(() => {
       if (minText.trim() && min === undefined) return `${key} min must be a valid number`;
       if (maxText.trim() && max === undefined) return `${key} max must be a valid number`;
       if (min !== undefined && max !== undefined && min > max) return `${key} min must be less than or equal to max`;
+      if (key === "timeoutSec" && min !== undefined && min < 61) return "timeoutSec min must be >= 61";
+      if (key === "rearmSec" && min !== undefined && min < 900) return "rearmSec min must be >= 900";
     }
     return null;
   }, [ranges]);
@@ -1143,12 +1177,15 @@ useEffect(() => {
   }, []);
 
   function buildRangesPayload() {
-    const payload: Partial<Record<RangeKey, { min: number; max: number }>> = {};
-    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"];
+    const payload: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", { min: number; max: number }>> = {};
+    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmSec"];
     for (const key of keys) {
       const min = parseMaybeNumber(ranges[key].min);
       const max = parseMaybeNumber(ranges[key].max);
-      if (min !== undefined && max !== undefined) {
+      if (min === undefined || max === undefined) continue;
+      if (key === "rearmSec") {
+        payload.rearmMs = { min: min * 1000, max: max * 1000 };
+      } else {
         payload[key] = { min, max };
       }
     }
@@ -2011,8 +2048,12 @@ useEffect(() => {
               <Col md={2} sm={4} xs={6}>
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
-                <Form.Select value={optTfMin} disabled>
+                <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(String(Math.max(15, Math.floor(Number(e.currentTarget.value) || 15))))}>
                   <option value="15">15</option>
+                  <option value="30">30</option>
+                  <option value="60">60</option>
+                  <option value="120">120</option>
+                  <option value="240">240</option>
                 </Form.Select>
                 </Form.Group>
               </Col>
@@ -2078,7 +2119,7 @@ useEffect(() => {
                 </tr>
               </thead>
               <tbody>
-                {(["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"] as RangeKey[]).map((key) => (
+                {(["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmSec"] as RangeKey[]).map((key) => (
                   <tr key={key}>
                     <td>{key}</td>
                     <td>
@@ -2086,7 +2127,8 @@ useEffect(() => {
                         size="sm"
                         value={ranges[key].min}
                         onChange={onRangeChange(key, "min")}
-                        disabled={key === "timeoutSec" || key === "rearmMs"}
+                        disabled={key === "timeoutSec" || key === "rearmSec"}
+                        min={key === "timeoutSec" ? 61 : key === "rearmSec" ? 900 : undefined}
                       />
                     </td>
                     <td>
@@ -2094,7 +2136,7 @@ useEffect(() => {
                         size="sm"
                         value={ranges[key].max}
                         onChange={onRangeChange(key, "max")}
-                        disabled={key === "timeoutSec" || key === "rearmMs"}
+                        min={key === "timeoutSec" ? 61 : key === "rearmSec" ? 900 : undefined}
                       />
                     </td>
                   </tr>
@@ -2144,6 +2186,9 @@ useEffect(() => {
               <Button size="sm" variant="outline-secondary" onClick={onOpenImportHistoryPicker}>
                 Import history
               </Button>
+              <Button size="sm" variant="outline-secondary" onClick={resetLoopResultsState}>
+                Reset
+              </Button>
               <input ref={historyImportInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => void onImportHistoryFile(e)} />
             </div>
             {historyTransferMessage ? <div style={{ fontSize: 12, marginBottom: 8 }}>{historyTransferMessage}</div> : null}
@@ -2180,7 +2225,7 @@ useEffect(() => {
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("sl")}>sl</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("offset")}>offset</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("timeoutSec")}>timeoutSec</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("rearmMs")}>rearmMs</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("rearmMs")}>rearmSec</th>
                   <th style={{ whiteSpace: "nowrap" }}>action</th>
                 </tr>
               </thead>
@@ -2283,14 +2328,14 @@ useEffect(() => {
                                   <thead>
                                     <tr>
                                       <th>netPnl</th><th>trades</th><th>winRate</th><th>direction</th><th>expectancy</th><th>profitFactor</th><th>maxDD</th>
-                                      <th>placed</th><th>filled</th><th>expired</th><th>priceTh</th><th>oivTh</th><th>tp</th><th>sl</th><th>offset</th><th>timeoutSec</th><th>rearmMs</th><th>action</th>
+                                      <th>placed</th><th>filled</th><th>expired</th><th>priceTh</th><th>oivTh</th><th>tp</th><th>sl</th><th>offset</th><th>timeoutSec</th><th>rearmSec</th><th>action</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {detailsRows.map((r, i) => (
                                       <tr key={`${row.jobId}-${r.netPnl}-${r.trades}-${r.params.priceThresholdPct}-${r.params.oivThresholdPct}-${i}`}>
                                         <td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{String(r.directionMode ?? "both").toLowerCase()}</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
-                                        <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{r.params.rearmMs.toFixed(activePrecision.rearmMs)}</td>
+                                        <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{(r.params.rearmMs / 1000).toFixed(activePrecision.rearmMs)}</td>
                                         <td><Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button></td>
                                       </tr>
                                     ))}
