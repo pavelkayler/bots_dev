@@ -232,6 +232,11 @@ function makeResultSignature(row: OptimizerResultRow): string {
   ].join("|");
 }
 
+function resolveRowId(row: OptimizerResultRow): string {
+  const rowId = typeof (row as any)?.rowId === "string" ? (row as any).rowId.trim() : "";
+  return rowId || makeResultSignature(row);
+}
+
 function readOptimizerSortValue(row: OptimizerResultRow, key: OptimizerSortKeyExtended): number | string {
   switch (key) {
     case "pnlPerTrade": {
@@ -339,6 +344,8 @@ function normalizeOptimizerRow<T extends OptimizationResult>(row: T): T {
   const normalizedRearmMs = n(params?.rearmMs) ?? ((n(params?.rearmSec) ?? 0) * 1000);
   return {
     ...row,
+    rowId: typeof rowAny?.rowId === "string" ? rowAny.rowId : "",
+    candidateKey: typeof rowAny?.candidateKey === "string" ? rowAny.candidateKey : undefined,
     netPnl: n(rowAny?.netPnl) ?? 0,
     expectancy: n(rowAny?.expectancy) ?? 0,
     profitFactor: n(rowAny?.profitFactor) ?? 0,
@@ -366,7 +373,7 @@ type OptimizerResultRowProps = {
 };
 
 const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecision, rowIndex, debugTrackMount, onCopyToSettings, onExportTrades }: OptimizerResultRowProps) {
-  const rowDebugIdRef = useRef(makeResultSignature(row));
+  const rowDebugIdRef = useRef(resolveRowId(row));
   const rowDebugIndexRef = useRef(typeof rowIndex === "number" ? rowIndex : -1);
 
   useEffect(() => {
@@ -380,7 +387,7 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
   }, [debugTrackMount]);
 
   if (import.meta.env.DEV && typeof rowIndex === "number" && rowIndex < 3 && localStorage.getItem("debugOptimizerRowRenders") === "1") {
-    console.log("[optimizer-row-render]", { rowIndex, id: makeResultSignature(row), netPnl: row.netPnl, trades: row.trades });
+    console.log("[optimizer-row-render]", { rowIndex, id: resolveRowId(row), netPnl: row.netPnl, trades: row.trades });
   }
   const trades = Number(row.trades) || 0;
   const pnlPerTrade = trades > 0 ? (Number(row.netPnl) || 0) / trades : 0;
@@ -454,7 +461,7 @@ const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePr
   return (
     <tbody>
       {rows.map((r, rowIndex) => {
-        const rowKeyBase = makeResultSignature(r);
+        const rowKeyBase = resolveRowId(r);
         const rowJobId = (r as any)?.__runJobId ? String((r as any).__runJobId) : "";
         const rowKey = rowJobId ? `${rowJobId}:${rowKeyBase}` : rowKeyBase;
         const debugTrackMount = isLoopDisplay && (rowIndex < 2 || debugTrackedSet.has(rowKeyBase));
@@ -530,7 +537,7 @@ export function OptimizerPage() {
     const rowsById = new Map<string, OptimizationResult>();
     const order: string[] = [];
     for (const row of normalizedRows) {
-      const rowId = makeResultSignature(row);
+      const rowId = resolveRowId(row);
       if (!rowsById.has(rowId)) order.push(rowId);
       rowsById.set(rowId, row);
     }
@@ -559,7 +566,7 @@ export function OptimizerPage() {
         byRunId[runId] = { rowsById: new Map(), order: [], version: 1 };
         runOrder.push(runId);
       }
-      const rowId = makeResultSignature(row);
+      const rowId = resolveRowId(row);
       const store = byRunId[runId];
       if (!store.rowsById.has(rowId)) store.order.push(rowId);
       store.rowsById.set(rowId, row);
@@ -733,7 +740,7 @@ useEffect(() => {
       const nextOrder = prev.order.slice();
       for (const pendingRow of pending) {
         const row = normalizeOptimizerRow(pendingRow);
-        const rowId = makeResultSignature(row);
+        const rowId = resolveRowId(row);
         const prevRow = nextRowsById.get(rowId);
         if (prevRow === row) continue;
         if (!nextRowsById.has(rowId)) {
@@ -1055,6 +1062,7 @@ useEffect(() => {
 
   const resetLoopResultsState = useCallback(() => {
     logAppendOnlyDebug("reset", { reason: "reset-loop-results" });
+    liveRowsPendingByJobIdRef.current = {};
     setLoopAggState({ runOrder: [], byRunId: {}, version: 0 });
     setLoopDebugTrackedRowIds([]);
     completedLoopRunIdsRef.current = {};
@@ -1340,12 +1348,17 @@ useEffect(() => {
       let appendedRowId: string | null = null;
       for (const incomingRow of rows) {
         const row = normalizeOptimizerRow(incomingRow);
-        const rowId = makeResultSignature(row);
-        if (rowsById.has(rowId)) continue;
-        rowsById.set(rowId, { ...row, __runJobId: jobId });
-        order.push(rowId);
-        appendedRowId = rowId;
-        changed = true;
+        const rowId = resolveRowId(row);
+        const nextRow = { ...row, __runJobId: jobId };
+        const existing = rowsById.get(rowId);
+        if (!existing) {
+          order.push(rowId);
+          appendedRowId = rowId;
+        }
+        if (existing !== nextRow) {
+          rowsById.set(rowId, nextRow);
+          changed = true;
+        }
       }
       if (!changed) return prev;
       byRunId[jobId] = { rowsById, order, version: existingStore.version + 1 };
@@ -1542,7 +1555,7 @@ useEffect(() => {
     const rowsById = new Map<string, OptimizationResult>();
     const order: string[] = [];
     for (const row of nextResults) {
-      const rowId = makeResultSignature(row);
+      const rowId = resolveRowId(row);
       if (!rowsById.has(rowId)) order.push(rowId);
       rowsById.set(rowId, row);
     }
@@ -1665,7 +1678,7 @@ useEffect(() => {
           const order: string[] = [];
           for (const rawRow of snapshotRows) {
             const row = normalizeOptimizerRow(rawRow);
-            const rowId = makeResultSignature(row);
+            const rowId = resolveRowId(row);
             if (!rowsById.has(rowId)) order.push(rowId);
             rowsById.set(rowId, row);
           }
@@ -1680,7 +1693,7 @@ useEffect(() => {
         const order = prev.order.slice();
         for (const rawRow of snapshotRows) {
           const row = normalizeOptimizerRow(rawRow);
-          const rowId = makeResultSignature(row);
+          const rowId = resolveRowId(row);
           const existing = rowsById.get(rowId);
           if (!existing) {
             order.push(rowId);
@@ -1724,7 +1737,7 @@ useEffect(() => {
         const existingRowIds = new Set(currentRunStore?.order ?? []);
         let appendedCount = 0;
         for (const row of rows) {
-          const rowId = makeResultSignature(row);
+          const rowId = resolveRowId(row);
           if (existingRowIds.has(rowId)) continue;
           existingRowIds.add(rowId);
           appendedCount += 1;

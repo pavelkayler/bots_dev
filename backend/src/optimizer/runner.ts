@@ -43,6 +43,8 @@ type RandomizedParams = {
 export type OptimizerParams = RandomizedParams;
 
 export type OptimizerResult = {
+  rowId: string;
+  candidateKey?: string;
   netPnl: number;
   trades: number;
   trainNetPnl: number;
@@ -529,6 +531,8 @@ function buildCandidateParams(
 }
 
 export type RunOptimizationArgs = {
+  jobId?: string;
+  runId?: string;
   tapeIds: string[];
   tapeFiles?: Array<{ tapeId: string; bytes: number }>;
   candidates: number;
@@ -765,6 +769,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const medianTickIntervalSec = median(globalTickIntervals);
 
   const results: OptimizerResult[] = [];
+  const resolvedJobId = String(args.jobId ?? "").trim() || "job";
+  const resolvedRunId = String(args.runId ?? "").trim() || resolvedJobId;
 
   // progress is reported in 0.01% steps (total=10000)
   const progressTotal = 10_000;
@@ -1151,6 +1157,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     debugFilledOrders += ordersFilled;
 
     const candidateResult: OptimizerResult = {
+      rowId: `${resolvedJobId}:${resolvedRunId}:${candidateKey}`,
+      candidateKey,
       netPnl: netPnlTotal,
       trades: tradesTotal,
       trainNetPnl: trainNetPnlTotal,
