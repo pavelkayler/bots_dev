@@ -17,6 +17,10 @@ export type OptimizationResult = {
   closesTp: number;
   closesSl: number;
   closesForce: number;
+  longsCount: number;
+  longsPnl: number;
+  shortsCount: number;
+  shortsPnl: number;
   directionMode?: "both" | "long" | "short";
   params: {
     priceThresholdPct: number;
@@ -151,7 +155,12 @@ export type OptimizerSortKeyExtended =
   | "maxDrawdownUsdt"
   | "ordersPlaced"
   | "ordersFilled"
-  | "ordersExpired";
+  | "ordersExpired"
+  | "longsCount"
+  | "longsPnl"
+  | "shortsCount"
+  | "shortsPnl"
+  | "direction";
 
 
 export type OptimizerHistoryExport = {

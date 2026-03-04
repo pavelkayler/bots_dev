@@ -57,6 +57,10 @@ export type OptimizerResult = {
   closesTp: number;
   closesSl: number;
   closesForce: number;
+  longsCount: number;
+  longsPnl: number;
+  shortsCount: number;
+  shortsPnl: number;
   directionMode: "both" | "long" | "short";
   params: RandomizedParams;
 };
@@ -71,7 +75,11 @@ export type OptimizerMetricSortKey =
   | "maxDrawdownUsdt"
   | "ordersPlaced"
   | "ordersFilled"
-  | "ordersExpired";
+  | "ordersExpired"
+  | "longsCount"
+  | "longsPnl"
+  | "shortsCount"
+  | "shortsPnl";
 export type OptimizerPrecision = Record<OptimizerParamKey, number>;
 export type OptimizerSortKey = OptimizerMetricSortKey | OptimizerParamKey;
 export type OptimizerSortDir = "asc" | "desc";
@@ -756,8 +764,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       timeoutSec: Math.max(Number(randomizedParams.timeoutSec) || 0, MIN_TIMEOUT_SEC),
       rearmMs: Math.max(Number(randomizedParams.rearmMs) || 0, effectiveTf * 60_000),
     };
-    const paramSig = buildParamSig(params, precision);
-    if (blacklistState && blacklistState.negativeSet.has(paramSig)) {
+    const candidateKey = buildCandidateKey(params, effectiveDirection, effectiveTf, args.sim);
+    if (blacklistState && blacklistState.negativeSet.has(candidateKey)) {
       skippedBlacklisted += 1;
       const done = i + 1;
       reportProgress(done);
@@ -778,6 +786,10 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     let closesTp = 0;
     let closesSl = 0;
     let closesForce = 0;
+    let longsCount = 0;
+    let longsPnl = 0;
+    let shortsCount = 0;
+    let shortsPnl = 0;
     const tradeEvents: any[] = [];
 
     const closes: CloseSnapshot[] = [];
@@ -829,12 +841,32 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           if (ev?.type === "ORDER_EXPIRED") ordersExpired += 1;
           if (ev?.type === "POSITION_CLOSE_TP") {
             closesTp += 1;
-            closes.push({ ts: Number(ev.ts) || 0, realizedPnl: Number(ev?.payload?.realizedPnl) || 0 });
+            const realizedPnl = Number(ev?.payload?.realizedPnl) || 0;
+            const side = String(ev?.payload?.side ?? "").toUpperCase();
+            if (side === "LONG") {
+              longsCount += 1;
+              longsPnl += realizedPnl;
+            }
+            if (side === "SHORT") {
+              shortsCount += 1;
+              shortsPnl += realizedPnl;
+            }
+            closes.push({ ts: Number(ev.ts) || 0, realizedPnl });
             tradeEvents.push({ type: ev.type, ts: Number(ev.ts) || 0, payload: ev?.payload ?? {} });
           }
           if (ev?.type === "POSITION_CLOSE_SL") {
             closesSl += 1;
-            closes.push({ ts: Number(ev.ts) || 0, realizedPnl: Number(ev?.payload?.realizedPnl) || 0 });
+            const realizedPnl = Number(ev?.payload?.realizedPnl) || 0;
+            const side = String(ev?.payload?.side ?? "").toUpperCase();
+            if (side === "LONG") {
+              longsCount += 1;
+              longsPnl += realizedPnl;
+            }
+            if (side === "SHORT") {
+              shortsCount += 1;
+              shortsPnl += realizedPnl;
+            }
+            closes.push({ ts: Number(ev.ts) || 0, realizedPnl });
             tradeEvents.push({ type: ev.type, ts: Number(ev.ts) || 0, payload: ev?.payload ?? {} });
           }
           if (ev?.type === "POSITION_FORCE_CLOSE") {
@@ -1006,6 +1038,10 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       closesTp,
       closesSl,
       closesForce,
+      longsCount,
+      longsPnl,
+      shortsCount,
+      shortsPnl,
       directionMode: args.directionMode ?? "both",
       params,
     };
@@ -1023,8 +1059,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         fundingAccrued: fundingAccruedTotal,
       },
     });
-    if (blacklistState && candidateResult.netPnl < 0 && !blacklistState.negativeSet.has(paramSig)) {
-      blacklistState.negativeSet.add(paramSig);
+    if (blacklistState && candidateResult.netPnl < 0 && !blacklistState.negativeSet.has(candidateKey)) {
+      blacklistState.negativeSet.add(candidateKey);
       addedSinceFlush += 1;
       const now = Date.now();
       if (addedSinceFlush >= 100 || now - lastBlacklistFlushMs >= 10_000) {
@@ -1227,14 +1263,27 @@ function flushNegativeBlacklist(state: NegativeBlacklistState) {
   fs.writeFileSync(blacklistPath(state.hash), JSON.stringify(payload, null, 2), "utf8");
 }
 
-function buildParamSig(params: RandomizedParams, precision: OptimizerPrecision): string {
-  return [
-    `priceTh=${params.priceThresholdPct.toFixed(precision.priceTh)}`,
-    `oivTh=${params.oivThresholdPct.toFixed(precision.oivTh)}`,
-    `tp=${params.tpRoiPct.toFixed(precision.tp)}`,
-    `sl=${params.slRoiPct.toFixed(precision.sl)}`,
-    `offset=${params.entryOffsetPct.toFixed(precision.offset)}`,
-    `timeoutSec=${Math.round(params.timeoutSec)}`,
-    `rearmMs=${Math.round(params.rearmMs)}`,
-  ].join("|");
+
+function buildCandidateKey(
+  params: RandomizedParams,
+  directionMode: "both" | "long" | "short",
+  optTfMin: number,
+  sim: OptimizerSimulationParams | undefined
+): string {
+  const normalized = {
+    directionMode,
+    optTfMin,
+    marginPerTrade: Number(sim?.marginPerTrade) || 0,
+    leverage: Number(sim?.leverage) || 0,
+    feeBps: Number(sim?.feeBps) || 0,
+    slippageBps: Number(sim?.slippageBps) || 0,
+    priceTh: Number(params.priceThresholdPct) || 0,
+    oivTh: Number(params.oivThresholdPct) || 0,
+    tp: Number(params.tpRoiPct) || 0,
+    sl: Number(params.slRoiPct) || 0,
+    offset: Number(params.entryOffsetPct) || 0,
+    timeoutSec: Number(params.timeoutSec) || 0,
+    rearmMs: Number(params.rearmMs) || 0,
+  };
+  return JSON.stringify(normalized);
 }

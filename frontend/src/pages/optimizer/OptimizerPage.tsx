@@ -227,7 +227,7 @@ function makeResultSignature(row: OptimizerResultRow): string {
   ].join("|");
 }
 
-function readOptimizerSortValue(row: OptimizerResultRow, key: OptimizerSortKeyExtended): number {
+function readOptimizerSortValue(row: OptimizerResultRow, key: OptimizerSortKeyExtended): number | string {
   switch (key) {
     case "priceTh":
       return Number(row.params.priceThresholdPct) || 0;
@@ -243,6 +243,8 @@ function readOptimizerSortValue(row: OptimizerResultRow, key: OptimizerSortKeyEx
       return Number(row.params.timeoutSec) || 0;
     case "rearmMs":
       return Number(row.params.rearmMs) || 0;
+    case "direction":
+      return String(row.directionMode ?? "both").toLowerCase();
     default:
       return Number(row[key]) || 0;
   }
@@ -251,8 +253,15 @@ function readOptimizerSortValue(row: OptimizerResultRow, key: OptimizerSortKeyEx
 function sortOptimizerRows(rows: OptimizerResultRow[], key: OptimizerSortKeyExtended, dir: OptimizerSortDir): OptimizerResultRow[] {
   const direction = dir === "asc" ? 1 : -1;
   return [...rows].sort((a, b) => {
-    const delta = (readOptimizerSortValue(a, key) - readOptimizerSortValue(b, key)) * direction;
-    if (delta !== 0) return delta;
+    const av = readOptimizerSortValue(a, key);
+    const bv = readOptimizerSortValue(b, key);
+    if (typeof av === "string" || typeof bv === "string") {
+      const textDelta = String(av).localeCompare(String(bv)) * direction;
+      if (textDelta !== 0) return textDelta;
+    } else {
+      const delta = (av - bv) * direction;
+      if (delta !== 0) return delta;
+    }
     return (Number(a.rank) - Number(b.rank)) * direction;
   });
 }
@@ -310,9 +319,8 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
       <td style={{ whiteSpace: "nowrap" }}>{row.trades}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.winRatePct.toFixed(2)}%</td>
       <td style={{ whiteSpace: "nowrap" }}>{String(row.directionMode ?? "both").toLowerCase()}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.expectancy.toFixed(4)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.profitFactor.toFixed(3)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.maxDrawdownUsdt.toFixed(4)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{`${row.longsCount} / ${row.longsPnl.toFixed(4)}`}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{`${row.shortsCount} / ${row.shortsPnl.toFixed(4)}`}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.ordersPlaced}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.ordersFilled}</td>
       <td style={{ whiteSpace: "nowrap" }}>{row.ordersExpired}</td>
@@ -324,7 +332,7 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
       <td style={{ whiteSpace: "nowrap" }}>{row.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{(row.params.rearmMs / 1000).toFixed(activePrecision.rearmMs)}</td>
       <td style={{ whiteSpace: "nowrap" }}>
-        <div className="d-flex gap-1"><Button size="sm" variant="outline-secondary" onClick={() => onCopyToSettings(row)}>Copy</Button><Button size="sm" variant="outline-secondary" onClick={() => onExportTrades(row)}>Export trades</Button></div>
+        <div className="d-flex gap-1"><Button size="sm" variant="outline-secondary" onClick={() => onCopyToSettings(row)}>Copy</Button><Button size="sm" variant="outline-secondary" onClick={() => onExportTrades(row)}>Export</Button></div>
       </td>
     </tr>
   );
@@ -1662,7 +1670,8 @@ useEffect(() => {
     };
   }, [fetchAllResultsForJob, logAppendOnlyDebug, loopAggState.byRunId, loopStatus?.loop?.lastJobId, upsertLoopRunRowsAppend]);
   async function onSort(nextSortKey: OptimizerSortKeyExtended) {
-    const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
+    const defaultDir: OptimizerSortDir = nextSortKey === "direction" ? "asc" : "desc";
+    const nextSortDir: OptimizerSortDir = sortKey === nextSortKey ? (sortDir === "desc" ? "asc" : "desc") : defaultDir;
     setSortKey(nextSortKey);
     setSortDir(nextSortDir);
     if (isLoopDisplay) {
@@ -1670,7 +1679,9 @@ useEffect(() => {
       return;
     }
     if (!activeJobId) return;
-    await fetchResults(1, nextSortKey, nextSortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+    if (["netPnl", "trades", "winRatePct", "ordersPlaced", "ordersFilled", "ordersExpired", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"].includes(nextSortKey)) {
+      await fetchResults(1, nextSortKey, nextSortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+    }
   }
 
   async function onPageChange(nextPage: number) {
@@ -1829,9 +1840,7 @@ useEffect(() => {
   const displayedRows = isLoopDisplay
     ? (hideNegativeNetPnl ? rowsForDisplay.filter((row) => row.netPnl >= 0) : rowsForDisplay)
     : rowsForDisplay;
-  const sortedDisplayedRows = useMemo(() => (
-    isLoopDisplay ? sortOptimizerRows(displayedRows, sortKey, sortDir) : displayedRows
-  ), [displayedRows, isLoopDisplay, sortDir, sortKey]);
+  const sortedDisplayedRows = useMemo(() => sortOptimizerRows(displayedRows, sortKey, sortDir), [displayedRows, sortDir, sortKey]);
   const rawRowsCount = rawRows.length;
   const displayedRowsCount = sortedDisplayedRows.length;
   const loopDisplayRows = useMemo(() => {
@@ -2215,10 +2224,9 @@ useEffect(() => {
                                     <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trades")}>trades</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("winRatePct")}>winRate</th>
-                  <th style={{ whiteSpace: "nowrap" }}>direction</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("expectancy")}>expectancy</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("profitFactor")}>profitFactor</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("maxDrawdownUsdt")}>maxDD</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("direction")}>direction</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("longsPnl")}>Longs</th>
+                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("shortsPnl")}>Shorts</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersPlaced")}>placed</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersFilled")}>filled</th>
                   <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersExpired")}>expired</th>
