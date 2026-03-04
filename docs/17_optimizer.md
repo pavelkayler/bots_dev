@@ -186,4 +186,10 @@ Result rows now include train/validation stability metrics:
 - `valNetPnl`, `valTrades`
 - `valPnlPerTrade`
 
+Operator UI now includes display-only validation filters in the results toolbar:
+- `val pnl/trade > 0`
+- `val netPnl > 0`
+
+These toggles are a quick stability lens for triage and do not change backend evaluation coverage. Candidates are still evaluated normally; filtering only affects which rows are shown in the table. A one-click preset button (`Sort: val pnl/trade`) also sets descending sort for faster validation-focused review.
+
 Ranking remains based on existing overall metrics. Overall candidate totals are computed as **train + validation** aggregates (no separate third full-range replay pass).
