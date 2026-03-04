@@ -480,6 +480,9 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     effectiveTfMinByTapeId: Record<string, number>;
     durationMinByTapeId: Record<string, number>;
     medianTickIntervalSec: number;
+    attempts?: number;
+    evaluated?: number;
+    maxAttempts?: number;
   };
   blacklist?: {
     count: number;
@@ -721,29 +724,29 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
   const shouldRememberNegatives = Boolean(args.rememberNegatives);
   const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;
-  const runIndex = shouldRememberNegatives ? blacklistState?.runIndex ?? 0 : 0;
-  const effectiveSeed = shouldRememberNegatives ? baseSeed + runIndex : baseSeed;
-  if (blacklistState) {
-    blacklistState.runIndex = runIndex + 1;
-    flushNegativeBlacklist(blacklistState);
-  }
+  const runIndex = 0;
+  const effectiveSeed = baseSeed;
   const rng = buildRng(effectiveSeed);
   let skippedBlacklisted = 0;
   let lastBlacklistFlushMs = Date.now();
   let addedSinceFlush = 0;
   let cancelled = false;
   let lastPctLocal = 0;
+  let evaluated = 0;
+  let attempts = 0;
+  const maxAttempts = Math.max(args.candidates * 50, args.candidates + 10_000);
 
   const decisionsNoRefsGlobal = { value: 0 };
   const decisionsOkGlobal = { value: 0 };
   const effectiveTfMinByTapeId: Record<string, number> = {};
   const durationMinByTapeId: Record<string, number> = {};
 
-  for (let i = 0; i < args.candidates; i += 1) {
+  while (evaluated < args.candidates && attempts < maxAttempts) {
     if (hooks?.shouldCancel?.()) {
       cancelled = true;
       break;
     }
+    attempts += 1;
 
     const randomizedParams = args.fixedParams ?? buildCandidateParams(
       rng,
@@ -767,8 +770,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     const candidateKey = buildCandidateKey(params, effectiveDirection, effectiveTf, args.sim);
     if (blacklistState && blacklistState.negativeSet.has(candidateKey)) {
       skippedBlacklisted += 1;
-      const done = i + 1;
-      reportProgress(done);
+      reportProgress(evaluated);
       continue;
     }
 
@@ -907,7 +909,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           }
           const totalEvents = tape.events.length || 1;
           const fracWithin = Math.min(1, eventCounter / totalEvents);
-          reportProgressFrac(i, fracWithin);
+          reportProgressFrac(evaluated, fracWithin);
           await new Promise<void>((resolve) => setImmediate(resolve));
         }
 
@@ -1074,8 +1076,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       hooks?.onRowsAppend?.([candidateResult]);
     }
     // report progress in 0.01% steps (total=10000)
-    const candidateDone = i + 1;
-    reportProgress(candidateDone);
+    evaluated += 1;
+    reportProgress(evaluated);
     const done = lastProgressDone < 0 ? 0 : lastProgressDone;
     const donePercent = progressTotal > 0 ? Math.max(0, Math.min(100, Math.round((done / progressTotal) * 10_000) / 100)) : 0;
     hooks?.onCheckpoint?.({ done, total: progressTotal, donePercent, partialResults: results });
@@ -1107,7 +1109,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     metaByTapeId: Object.fromEntries(tapes.map((t) => [t.tapeId, t.meta])),
     results: sortOptimizationResults(results, "netPnl", "desc"),
     cancelled,
-    ...(decisionsOkGlobal.value === 0 && decisionsNoRefsGlobal.value >= 100
+    ...((decisionsOkGlobal.value === 0 && decisionsNoRefsGlobal.value >= 100) || attempts >= maxAttempts
       ? {
           diagnostics: {
             decisionsNoRefs: decisionsNoRefsGlobal.value,
@@ -1115,6 +1117,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             effectiveTfMinByTapeId,
             durationMinByTapeId,
             medianTickIntervalSec,
+            ...(attempts >= maxAttempts ? { attempts, evaluated, maxAttempts } : {}),
           },
         }
       : {}),
@@ -1241,7 +1244,7 @@ function loadNegativeBlacklist(runKey: string): NegativeBlacklistState {
       hash,
       createdAtMs: Number(parsed.createdAtMs) || now,
       updatedAtMs: Number(parsed.updatedAtMs) || now,
-      runIndex: Math.max(0, Math.floor(Number(parsed.runIndex) || 0)),
+      runIndex: 0,
       negativeSet: new Set(Object.keys(parsed.negativeSet)),
     };
   } catch {
