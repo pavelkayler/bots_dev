@@ -932,12 +932,9 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       const paper = new PaperBroker(candidateConfig.paper, logger as any);
       let lastEventTs = 0;
 
-      const fallbackBySymbol = new Map<string, {
-        lastBucketId: number | undefined;
-        lastPriceInBucket: number | null;
-        lastOivInBucket: number | null;
-        prevCandleClose: number | null;
-        prevCandleOivClose: number | null;
+      const cadenceBySymbol = new Map<string, {
+        prevWindowClose: number | null;
+        prevWindowOivClose: number | null;
       }>();
 
       let eventCounter = 0;
@@ -970,47 +967,52 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           const row = cache.getRawRow(event.symbol);
           const markPrice = Number(row?.markPrice ?? 0);
           const openInterestValue = Number(row?.openInterestValue ?? 0);
+          const fundingRate = Number(row?.fundingRate ?? 0);
+          const isWindowClose = tfMs > 0 && ts % tfMs === 0;
 
-          const refs = candles.getRefs(event.symbol);
-          const useTrackerRefs = false;
-
-          const bucketId = Math.floor(ts / tfMs);
-          const fallbackState = fallbackBySymbol.get(event.symbol) ?? {
-            lastBucketId: undefined,
-            lastPriceInBucket: null,
-            lastOivInBucket: null,
-            prevCandleClose: null,
-            prevCandleOivClose: null,
-          };
-
-          if (fallbackState.lastBucketId === undefined) {
-            fallbackState.lastBucketId = bucketId;
-          } else if (fallbackState.lastBucketId !== bucketId) {
-            fallbackState.prevCandleClose = fallbackState.lastPriceInBucket;
-            fallbackState.prevCandleOivClose = fallbackState.lastOivInBucket;
-            fallbackState.lastBucketId = bucketId;
-            fallbackState.lastPriceInBucket = null;
-            fallbackState.lastOivInBucket = null;
+          if (!isWindowClose) {
+            paper.tick({
+              symbol: event.symbol,
+              nowMs: ts,
+              markPrice,
+              fundingRate,
+              nextFundingTime: 0,
+              signal: null,
+              signalReason: "wait_window_close",
+              cooldownActive: false,
+            });
+            continue;
           }
 
-          if (Number.isFinite(markPrice) && markPrice > 0) fallbackState.lastPriceInBucket = markPrice;
-          if (Number.isFinite(openInterestValue) && openInterestValue > 0) fallbackState.lastOivInBucket = openInterestValue;
-          fallbackBySymbol.set(event.symbol, fallbackState);
+          const cadenceState = cadenceBySymbol.get(event.symbol) ?? {
+            prevWindowClose: null,
+            prevWindowOivClose: null,
+          };
 
-          const priceRef = useTrackerRefs ? (refs.prevCandleClose ?? fallbackState.prevCandleClose) : fallbackState.prevCandleClose;
-          const oivRef = useTrackerRefs ? (refs.prevCandleOivClose ?? fallbackState.prevCandleOivClose) : fallbackState.prevCandleOivClose;
-          const priceMovePct = priceRef == null || markPrice <= 0 ? null : pctChange(markPrice, priceRef);
-          const oivMovePct = oivRef == null || openInterestValue <= 0 ? null : pctChange(openInterestValue, oivRef);
+          let signal: "LONG" | "SHORT" | null = null;
+          let signalReason = "window_seed";
 
-          const fundingRate = Number(row?.fundingRate ?? 0);
-          const decision = signalEngine.decide({
-            priceMovePct,
-            oivMovePct,
-            fundingRate,
-            cooldownActive: false,
-          });
-          if (decision.reason === "no_refs") decisionsNoRefs += 1;
-          if (decision.reason === "ok_long" || decision.reason === "ok_short") signalsOk += 1;
+          if (cadenceState.prevWindowClose == null || cadenceState.prevWindowOivClose == null) {
+            if (Number.isFinite(markPrice) && markPrice > 0) cadenceState.prevWindowClose = markPrice;
+            if (Number.isFinite(openInterestValue) && openInterestValue > 0) cadenceState.prevWindowOivClose = openInterestValue;
+          } else {
+            const priceMovePct = pctChange(markPrice, cadenceState.prevWindowClose);
+            const oivMovePct = openInterestValue > 0 ? pctChange(openInterestValue, cadenceState.prevWindowOivClose) : null;
+            const decision = signalEngine.decide({
+              priceMovePct,
+              oivMovePct,
+              fundingRate,
+              cooldownActive: false,
+            });
+            signal = decision.signal;
+            signalReason = decision.reason;
+            if (decision.reason === "no_refs") decisionsNoRefs += 1;
+            if (decision.reason === "ok_long" || decision.reason === "ok_short") signalsOk += 1;
+            cadenceState.prevWindowClose = markPrice;
+            cadenceState.prevWindowOivClose = openInterestValue;
+          }
+
+          cadenceBySymbol.set(event.symbol, cadenceState);
 
           paper.tick({
             symbol: event.symbol,
@@ -1018,8 +1020,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             markPrice,
             fundingRate,
             nextFundingTime: 0,
-            signal: decision.signal,
-            signalReason: decision.reason,
+            signal,
+            signalReason,
             cooldownActive: false,
           });
         }
