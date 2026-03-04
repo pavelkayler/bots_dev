@@ -560,6 +560,7 @@ export type RunOptimizationArgs = {
   cacheDatasets?: Array<{ symbols: string[]; startMs: number; endMs: number; interval?: string }>;
   fixedParams?: OptimizerParams;
   runsCount?: number;
+  loopIndex?: number;
 };
 
 export type RunOptimizationHooks = {
@@ -612,6 +613,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const tapeIds = tapeFiles.map((file) => file.tapeId);
   const precision = withDefaultPrecision(args.precision);
   const baseSeed = Number.isFinite(args.seed) ? args.seed : 1;
+  const loopIndex = Math.max(0, Math.floor(Number(args.loopIndex) || 0));
   const baseConfig = configStore.get();
   const ranges = args.ranges ?? {};
 
@@ -803,7 +805,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const shouldRememberNegatives = Boolean(args.rememberNegatives);
   const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;
   const runIndex = shouldRememberNegatives ? blacklistState?.runIndex ?? 0 : 0;
-  const effectiveSeedBase = shouldRememberNegatives ? baseSeed + runIndex : baseSeed;
+  const effectiveSeedBase = baseSeed + loopIndex + (shouldRememberNegatives ? runIndex : 0);
   if (blacklistState) {
     blacklistState.runIndex = runIndex + runsCount;
     flushNegativeBlacklist(blacklistState);

@@ -82,7 +82,6 @@ const POLL_MS = 1000;
 const DATASET_HISTORY_POLL_MS = 2000;
 const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
 const LIVE_ROWS_SORT_THROTTLE_MS = 200;
-const DEBUG_ROWS_LOG_MIN_INTERVAL_MS = 500;
 const LOOP_EMPTY_RESULTS_WARNING_DELAY_MS = 5000;
 
 const DATASET_INTERVAL_ORDER: Record<string, number> = {
@@ -772,12 +771,8 @@ useEffect(() => {
   const liveSingleRowsMapRef = useRef<Map<string, OptimizationResult>>(new Map());
   const liveRowsFlushTimerRef = useRef<number | null>(null);
   const liveRowsPendingByJobIdRef = useRef<Record<string, OptimizationResult[]>>({});
-  const lastDebugRowsLogAtRef = useRef(0);
-  const lastDebugLoopAppendLogAtRef = useRef(0);
   const activeJobIdRef = useRef<string | null>(null);
   const loopActiveRef = useRef(false);
-  const minTradesRef = useRef(minTrades);
-  const loopAggByRunIdRef = useRef(loopAggState.byRunId);
   const lastProcessedMsgRef = useRef<string | null>(null);
   const debugTrackedRowIdRef = useRef<string | null>(null);
   const [loopDebugTrackedRowIds, setLoopDebugTrackedRowIds] = useState<string[]>([]);
@@ -792,15 +787,6 @@ useEffect(() => {
     if (!isAppendOnlyDebug()) return;
     console.log("[optimizer-append-only]", message, payload ?? {});
   }, [isAppendOnlyDebug]);
-
-  const maybeLogRowsDebug = useCallback((jobId: string, batchSize: number, totalDisplayed: number) => {
-    if (!import.meta.env.DEV) return;
-    if (localStorage.getItem("debugOptimizerRows") !== "1") return;
-    const now = Date.now();
-    if (now - lastDebugRowsLogAtRef.current < DEBUG_ROWS_LOG_MIN_INTERVAL_MS) return;
-    lastDebugRowsLogAtRef.current = now;
-    console.log("[optimizer-rows]", { jobId, batchSize, totalDisplayed });
-  }, []);
 
   const flushLiveRowsForActiveJob = useCallback(() => {
     if (liveRowsFlushTimerRef.current != null) {
@@ -837,10 +823,9 @@ useEffect(() => {
         logAppendOnlyDebug("append", { jobId: activeId, rowId: appendedRowId, totalRows: nextOrder.length });
       }
       setTotalRows(nextOrder.length);
-      maybeLogRowsDebug(activeId, pending.length, nextOrder.length);
       return { rowsById: nextRowsById, order: nextOrder, version: nextVersion };
     });
-  }, [logAppendOnlyDebug, maybeLogRowsDebug]);
+  }, [logAppendOnlyDebug]);
 
   const queueLiveRowsAppend = useCallback((jobId: string, rows: OptimizationResult[]) => {
     if (!jobId || !rows.length) return;
@@ -1113,14 +1098,6 @@ useEffect(() => {
   useEffect(() => {
     loopActiveRef.current = loopActive;
   }, [loopActive]);
-
-  useEffect(() => {
-    minTradesRef.current = minTrades;
-  }, [minTrades]);
-
-  useEffect(() => {
-    loopAggByRunIdRef.current = loopAggState.byRunId;
-  }, [loopAggState.byRunId]);
 
   useEffect(() => {
     const prev = prevLoopJobIdRef.current;
@@ -1462,10 +1439,9 @@ useEffect(() => {
         setLoopDebugTrackedRowIds((prevIds) => [appendedRowId!, ...prevIds].slice(0, 3));
         logAppendOnlyDebug("append", { jobId, rowId: appendedRowId, source, totalRows: nextTotalRows });
       }
-      maybeLogRowsDebug(jobId, rows.length, nextTotalRows);
       return next;
     });
-  }, [logAppendOnlyDebug, maybeLogRowsDebug]);
+  }, [logAppendOnlyDebug]);
 
   const fetchAllResultsForJob = useCallback(async (jobId: string) => {
     const fetchPageSize = 50 as const;
@@ -1777,7 +1753,6 @@ useEffect(() => {
             rowsById.set(rowId, row);
           }
           setTotalRows(order.length);
-          maybeLogRowsDebug(snapshotJobId, snapshotRows.length, order.length);
           logAppendOnlyDebug("snapshot-replace", { jobId: snapshotJobId, rows: snapshotRows.length });
           return { rowsById, order, version: prev.version + 1 };
         }
@@ -1810,7 +1785,6 @@ useEffect(() => {
           logAppendOnlyDebug("append", { jobId: snapshotJobId, rowId: appendedRowId, source: "snapshot", totalRows: order.length });
         }
         setTotalRows(order.length);
-        maybeLogRowsDebug(snapshotJobId, snapshotRows.length, order.length);
         logAppendOnlyDebug("snapshot-merge", { jobId: snapshotJobId, rows: snapshotRows.length, totalRows: order.length });
         return { rowsById, order, version: prev.version + 1 };
       });
@@ -1822,37 +1796,6 @@ useEffect(() => {
     if (!jobId || rows.length === 0) return;
 
     if (lastTableSourceRef.current === "loop") {
-      if (import.meta.env.DEV && localStorage.getItem("debugOptimizerRows") === "1") {
-        const now = Date.now();
-        if (now - lastDebugLoopAppendLogAtRef.current >= DEBUG_ROWS_LOG_MIN_INTERVAL_MS) {
-          lastDebugLoopAppendLogAtRef.current = now;
-          const minTradesLimit = Math.max(0, Math.floor(Number(minTradesRef.current) || 0));
-          const displayEligibleCount = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit).length;
-          const byRunId = loopAggByRunIdRef.current;
-          const runStores = Object.values(byRunId);
-          const totalBefore = runStores.reduce((acc, store) => acc + store.order.length, 0);
-          const currentRunStore = byRunId[jobId];
-          const existingRowIds = new Set(currentRunStore?.order ?? []);
-          let appendedCount = 0;
-          for (const row of rows) {
-            const rowId = resolveRowId(row);
-            if (existingRowIds.has(rowId)) continue;
-            existingRowIds.add(rowId);
-            appendedCount += 1;
-          }
-          console.log("[optimizer-rows-append-loop]", {
-            jobId,
-            rawBatchSize: rows.length,
-            minTradesLimit,
-            displayEligibleCount,
-            appendedCount,
-            totalBefore,
-            totalAfter: totalBefore + appendedCount,
-            loopActive: loopActiveRef.current,
-            activeJobId: activeJobIdRef.current,
-          });
-        }
-      }
       upsertLoopRunRowsAppend(jobId, rows, "ws");
       return;
     }
@@ -1929,6 +1872,13 @@ useEffect(() => {
 
 
   const copyToSettings = useCallback((row: OptimizationResult) => {
+    const rowRearmSec = Number((row.params as { rearmSec?: unknown }).rearmSec);
+    const rowRearmMs = Number((row.params as { rearmMs?: unknown }).rearmMs);
+    const mappedRearmSec = Number.isFinite(rowRearmSec) && rowRearmSec >= 0 && rowRearmSec <= 60
+      ? rowRearmSec
+      : (Number.isFinite(rowRearmMs) ? Math.round(rowRearmMs / 1000) : 0);
+    const clampedRearmSec = Math.max(0, Math.min(60, Math.floor(mappedRearmSec)));
+
     const patch = {
       source: "optimizer",
       ts: Date.now(),
@@ -1945,7 +1895,7 @@ useEffect(() => {
           slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
           entryOffsetPct: quantizeByPrecision(row.params.entryOffsetPct, activePrecision.offset),
           entryTimeoutSec: quantizeByPrecision(row.params.timeoutSec, activePrecision.timeoutSec),
-          rearmSec: quantizeByPrecision(row.params.rearmMs / 1000, activePrecision.rearmMs),
+          rearmSec: clampedRearmSec,
         },
       },
     };

@@ -843,7 +843,11 @@ async function startLoopJob(app: FastifyInstance) {
     updateLoopState({ isRunning: false, isPaused: false });
     return;
   }
-  const res = await app.inject({ method: "POST", url: "/api/optimizer/run", payload: withDatasetResolved(state.runPayload as Record<string, unknown>) });
+  const payloadWithLoopSeed = {
+    ...(state.runPayload as Record<string, unknown>),
+    loopIndex: state.loopIndex,
+  };
+  const res = await app.inject({ method: "POST", url: "/api/optimizer/run", payload: withDatasetResolved(payloadWithLoopSeed) });
   if (res.statusCode !== 200) {
     updateLoopState({
       isRunning: false,
@@ -883,7 +887,7 @@ async function tickOptimizerLoop(app: FastifyInstance) {
   if (state.lastJobId) {
     const job = optimizerJobs.get(state.lastJobId);
     if (job && !isOptimizerJobTerminal(job.status)) return;
-    updateLoopState({ runIndex: state.runIndex + 1, lastJobId: null });
+    updateLoopState({ runIndex: state.runIndex + 1, loopIndex: state.loopIndex + 1, lastJobId: null });
   }
 
   const latest = optimizerLoopState;
@@ -910,7 +914,7 @@ function getLoopLastJobStatus() {
 function finalizeLoopForTerminalJob(jobId: string) {
   const state = optimizerLoopState;
   if (!state || !state.isRunning || state.lastJobId !== jobId) return;
-  updateLoopState({ runIndex: state.runIndex + 1, lastJobId: null });
+  updateLoopState({ runIndex: state.runIndex + 1, loopIndex: state.loopIndex + 1, lastJobId: null });
 }
 
 function normalizeOptionalTs(value: unknown): number | undefined {
@@ -1282,7 +1286,23 @@ app.get("/api/config", async () => {
   });
 
   app.post("/api/config", async (req, reply) => {
-    const patch = safeBody((req as any).body);
+    const patch = safeBody((req as any).body) as Record<string, unknown>;
+    const normalizedPatch: Record<string, unknown> = { ...patch };
+    const paperPatchRaw = patch?.paper;
+    if (paperPatchRaw && typeof paperPatchRaw === "object") {
+      const paperPatch = { ...(paperPatchRaw as Record<string, unknown>) };
+      if (paperPatch.rearmSec != null) {
+        delete paperPatch.rearmSec;
+      }
+      if (paperPatch.rearmDelayMs != null) {
+        const rawRearmDelayMs = Number(paperPatch.rearmDelayMs);
+        const safeRearmDelayMs = Number.isFinite(rawRearmDelayMs)
+          ? Math.max(0, Math.min(60_000, Math.floor(rawRearmDelayMs)))
+          : 0;
+        paperPatch.rearmDelayMs = safeRearmDelayMs;
+      }
+      normalizedPatch.paper = paperPatch;
+    }
     const cur = configStore.get();
 
     if (universeWouldChange(cur, patch) && runtime.isRunning()) {
@@ -1294,7 +1314,7 @@ app.get("/api/config", async () => {
     }
 
     try {
-      const config = configStore.update(patch);
+      const config = configStore.update(normalizedPatch);
 
       try {
         configStore.persist();
@@ -1304,7 +1324,7 @@ app.get("/api/config", async () => {
         return { error: "config_persist_failed", message: String(e?.message ?? e) };
       }
 
-      const uChanged = universeWouldChange(cur, patch);
+      const uChanged = universeWouldChange(cur, normalizedPatch);
 
       return {
         config,
@@ -1846,6 +1866,7 @@ app.get("/api/config", async () => {
       isInfinite,
       runsCount,
       runIndex: 0,
+      loopIndex: 0,
       createdAtMs: now,
       updatedAtMs: now,
       finishedAtMs: null,
