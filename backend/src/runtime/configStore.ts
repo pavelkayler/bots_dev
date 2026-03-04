@@ -58,7 +58,7 @@ const paperSchema = z
     leverage: z.number().finite().min(1).max(1000),
 
     entryOffsetPct: z.number().finite().min(0).max(50),
-    entryTimeoutSec: z.number().finite().min(1).max(3600),
+    entryTimeoutSec: z.number().finite().min(1),
 
     tpRoiPct: z.number().finite().min(0).max(1000),
     slRoiPct: z.number().finite().min(0).max(1000),

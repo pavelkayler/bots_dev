@@ -1879,6 +1879,17 @@ useEffect(() => {
       : (Number.isFinite(rowRearmMs) ? Math.round(rowRearmMs / 1000) : 0);
     const paperRearmSec = Math.max(0, Math.round(mappedRearmSec));
 
+    const rowTimeoutSec = Number(row.params.timeoutSec);
+    const paperPatch: Record<string, number> = {
+      tpRoiPct: quantizeByPrecision(row.params.tpRoiPct, activePrecision.tp),
+      slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
+      entryOffsetPct: quantizeByPrecision(row.params.entryOffsetPct, activePrecision.offset),
+      rearmSec: paperRearmSec,
+    };
+    if (Number.isFinite(rowTimeoutSec)) {
+      paperPatch.entryTimeoutSec = quantizeByPrecision(rowTimeoutSec, activePrecision.timeoutSec);
+    }
+
     const patch = {
       source: "optimizer",
       ts: Date.now(),
@@ -1890,13 +1901,7 @@ useEffect(() => {
           priceThresholdPct: quantizeByPrecision(row.params.priceThresholdPct, activePrecision.priceTh),
           oivThresholdPct: quantizeByPrecision(row.params.oivThresholdPct, activePrecision.oivTh),
         },
-        paper: {
-          tpRoiPct: quantizeByPrecision(row.params.tpRoiPct, activePrecision.tp),
-          slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
-          entryOffsetPct: quantizeByPrecision(row.params.entryOffsetPct, activePrecision.offset),
-          entryTimeoutSec: quantizeByPrecision(row.params.timeoutSec, activePrecision.timeoutSec),
-          rearmSec: paperRearmSec,
-        },
+        paper: paperPatch,
       },
     };
     localStorage.setItem("bots_dev.pendingConfigPatch", JSON.stringify(patch));
