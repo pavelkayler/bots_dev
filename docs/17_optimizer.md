@@ -165,3 +165,25 @@ Optimizer replay still uses the same cache data, but now each Receive Data snaps
 - Optimizer and paper share the same close-only execution model; no intrabar high/low assumptions are introduced in replay.
 - Optimizer signal generation is intentionally throttled to signal-window closes only, matching policy and avoiding unrealistically frequent 1m entries.
 - Funding gating remains the same (`requireFundingSign=true`, funding from history-aligned cache), so optimizer does not gain privileged directional information.
+
+## Stability: Train/Validation time split
+
+To reduce overfitting to a single contiguous range, each optimizer candidate is now evaluated with a deterministic time split of the selected dataset window:
+
+- **Train** segment: first 70% of the selected time range.
+- **Validation** segment: last 30% of the selected time range.
+- Split timestamp is rounded down to a full minute boundary to avoid partial-minute edge effects.
+
+Replay mechanics are unchanged for both segments:
+- close-only replay
+- decisions only on signal-window closes (`ts % tfMs === 0`)
+- `openInterestValue = oi * close`
+- funding-direction gating from funding history
+- unfinished positions excluded (`stopAll(closeOpenPositions: false)`)
+
+Result rows now include train/validation stability metrics:
+- `trainNetPnl`, `trainTrades`
+- `valNetPnl`, `valTrades`
+- `valPnlPerTrade`
+
+Ranking remains based on existing overall metrics. Overall candidate totals are computed as **train + validation** aggregates (no separate third full-range replay pass).

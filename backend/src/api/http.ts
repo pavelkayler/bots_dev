@@ -664,7 +664,7 @@ function parsePrecision(raw: any): Partial<OptimizerPrecision> | undefined {
 }
 
 function parseOptimizerSort(query: any): { sortKey: OptimizerSortKey; sortDir: OptimizerSortDir } {
-  const sortKey = ["netPnl", "trades", "winRatePct", "expectancy", "profitFactor", "maxDrawdownUsdt", "ordersPlaced", "ordersFilled", "ordersExpired", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"].includes(String(query.sortKey))
+  const sortKey = ["netPnl", "trades", "trainNetPnl", "trainTrades", "valNetPnl", "valTrades", "valPnlPerTrade", "winRatePct", "expectancy", "profitFactor", "maxDrawdownUsdt", "ordersPlaced", "ordersFilled", "ordersExpired", "longsCount", "longsPnl", "longsWinRatePct", "shortsCount", "shortsPnl", "shortsWinRatePct", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs"].includes(String(query.sortKey))
     ? (String(query.sortKey) as OptimizerSortKey)
     : "netPnl";
   const sortDir = String(query.sortDir) === "asc" ? "asc" : "desc";
