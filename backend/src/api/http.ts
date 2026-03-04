@@ -1297,7 +1297,7 @@ app.get("/api/config", async () => {
       if (paperPatch.rearmDelayMs != null) {
         const rawRearmDelayMs = Number(paperPatch.rearmDelayMs);
         const safeRearmDelayMs = Number.isFinite(rawRearmDelayMs)
-          ? Math.max(0, Math.min(60_000, Math.floor(rawRearmDelayMs)))
+          ? Math.max(0, Math.floor(rawRearmDelayMs))
           : 0;
         paperPatch.rearmDelayMs = safeRearmDelayMs;
       }
