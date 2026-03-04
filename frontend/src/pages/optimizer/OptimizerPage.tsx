@@ -773,7 +773,12 @@ useEffect(() => {
   const liveRowsFlushTimerRef = useRef<number | null>(null);
   const liveRowsPendingByJobIdRef = useRef<Record<string, OptimizationResult[]>>({});
   const lastDebugRowsLogAtRef = useRef(0);
+  const lastDebugLoopAppendLogAtRef = useRef(0);
   const activeJobIdRef = useRef<string | null>(null);
+  const loopActiveRef = useRef(false);
+  const minTradesRef = useRef(minTrades);
+  const loopAggByRunIdRef = useRef(loopAggState.byRunId);
+  const lastProcessedMsgRef = useRef<string | null>(null);
   const debugTrackedRowIdRef = useRef<string | null>(null);
   const [loopDebugTrackedRowIds, setLoopDebugTrackedRowIds] = useState<string[]>([]);
   const [showLoopNoRowsWarning, setShowLoopNoRowsWarning] = useState(false);
@@ -1104,6 +1109,18 @@ useEffect(() => {
   useEffect(() => {
     activeJobIdRef.current = activeJobId;
   }, [activeJobId]);
+
+  useEffect(() => {
+    loopActiveRef.current = loopActive;
+  }, [loopActive]);
+
+  useEffect(() => {
+    minTradesRef.current = minTrades;
+  }, [minTrades]);
+
+  useEffect(() => {
+    loopAggByRunIdRef.current = loopAggState.byRunId;
+  }, [loopAggState.byRunId]);
 
   useEffect(() => {
     const prev = prevLoopJobIdRef.current;
@@ -1736,6 +1753,8 @@ useEffect(() => {
 
   useEffect(() => {
     if (!lastMsg) return;
+    if (lastProcessedMsgRef.current === lastMsg) return;
+    lastProcessedMsgRef.current = lastMsg;
     let parsed: any = null;
     try {
       parsed = JSON.parse(lastMsg);
@@ -1804,20 +1823,35 @@ useEffect(() => {
 
     if (lastTableSourceRef.current === "loop") {
       if (import.meta.env.DEV && localStorage.getItem("debugOptimizerRows") === "1") {
-        const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
-        const displayEligibleCount = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit).length;
-        const runStores = Object.values(loopAggState.byRunId);
-        const totalBefore = runStores.reduce((acc, store) => acc + store.order.length, 0);
-        const currentRunStore = loopAggState.byRunId[jobId];
-        const existingRowIds = new Set(currentRunStore?.order ?? []);
-        let appendedCount = 0;
-        for (const row of rows) {
-          const rowId = resolveRowId(row);
-          if (existingRowIds.has(rowId)) continue;
-          existingRowIds.add(rowId);
-          appendedCount += 1;
+        const now = Date.now();
+        if (now - lastDebugLoopAppendLogAtRef.current >= DEBUG_ROWS_LOG_MIN_INTERVAL_MS) {
+          lastDebugLoopAppendLogAtRef.current = now;
+          const minTradesLimit = Math.max(0, Math.floor(Number(minTradesRef.current) || 0));
+          const displayEligibleCount = rows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit).length;
+          const byRunId = loopAggByRunIdRef.current;
+          const runStores = Object.values(byRunId);
+          const totalBefore = runStores.reduce((acc, store) => acc + store.order.length, 0);
+          const currentRunStore = byRunId[jobId];
+          const existingRowIds = new Set(currentRunStore?.order ?? []);
+          let appendedCount = 0;
+          for (const row of rows) {
+            const rowId = resolveRowId(row);
+            if (existingRowIds.has(rowId)) continue;
+            existingRowIds.add(rowId);
+            appendedCount += 1;
+          }
+          console.log("[optimizer-rows-append-loop]", {
+            jobId,
+            rawBatchSize: rows.length,
+            minTradesLimit,
+            displayEligibleCount,
+            appendedCount,
+            totalBefore,
+            totalAfter: totalBefore + appendedCount,
+            loopActive: loopActiveRef.current,
+            activeJobId: activeJobIdRef.current,
+          });
         }
-        console.log("[optimizer-rows-append-loop]", { jobId, rawBatchSize: rows.length, minTradesLimit, displayEligibleCount, appendedCount, totalBefore, totalAfter: totalBefore + appendedCount });
       }
       upsertLoopRunRowsAppend(jobId, rows, "ws");
       return;
@@ -1825,7 +1859,7 @@ useEffect(() => {
 
     if (loopActive || jobId !== activeJobId) return;
     queueLiveRowsAppend(jobId, rows);
-  }, [activeJobId, flushLiveRowsForActiveJob, lastMsg, logAppendOnlyDebug, loopActive, loopAggState.byRunId, minTrades, queueLiveRowsAppend, upsertLoopRunRowsAppend]);
+  }, [activeJobId, flushLiveRowsForActiveJob, lastMsg, logAppendOnlyDebug, loopActive, queueLiveRowsAppend, upsertLoopRunRowsAppend]);
 
   useEffect(() => {
     if (lastTableSourceRef.current !== "loop") return;
