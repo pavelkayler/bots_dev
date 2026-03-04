@@ -9,8 +9,10 @@ export type OptimizationResult = {
   trades: number;
   trainNetPnl?: number;
   trainTrades?: number;
+  trainWinRatePct?: number;
   valNetPnl?: number;
   valTrades?: number;
+  valWinRatePct?: number;
   valPnlPerTrade?: number;
   winRatePct: number;
   expectancy: number;
