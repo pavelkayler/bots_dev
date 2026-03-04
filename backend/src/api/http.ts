@@ -1512,7 +1512,7 @@ app.get("/api/config", async () => {
       reply.code(400);
       return { error: "invalid_direction_mode" };
     }
-    if (optTfMin !== undefined && (!Number.isFinite(optTfMin) || optTfMin < 5 || optTfMin > 240)) {
+    if (optTfMin !== undefined && (!Number.isFinite(optTfMin) || optTfMin < 15 || optTfMin > 240)) {
       reply.code(400);
       return { error: "invalid_opt_tf_min" };
     }
@@ -1783,7 +1783,7 @@ let sim: OptimizerSimulationParams;
       ...(body?.precision ? { precision: body.precision } : {}),
       sim,
     };
-    if (payload.optTfMin !== undefined && (!Number.isFinite(payload.optTfMin) || payload.optTfMin < 5 || payload.optTfMin > 240)) {
+    if (payload.optTfMin !== undefined && (!Number.isFinite(payload.optTfMin) || payload.optTfMin < 15 || payload.optTfMin > 240)) {
       reply.code(400);
       return { error: "invalid_opt_tf_min" };
     }

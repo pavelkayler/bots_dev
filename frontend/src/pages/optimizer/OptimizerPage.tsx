@@ -708,10 +708,14 @@ useEffect(() => {
     const savedOptTf = localStorage.getItem(OPT_TF_STORAGE_KEY);
     if (savedOptTf != null) {
       const n = Math.floor(Number(savedOptTf));
-      if (Number.isFinite(n) && n >= 5) setOptTfMin(String(n));
-      else setOptTfMin("15");
+      if (Number.isFinite(n) && n >= 15) setOptTfMin(String(n));
+      else {
+        setOptTfMin("15");
+        localStorage.setItem(OPT_TF_STORAGE_KEY, "15");
+      }
     } else {
       setOptTfMin("15");
+      localStorage.setItem(OPT_TF_STORAGE_KEY, "15");
     }
     const savedMinTrades = localStorage.getItem(MIN_TRADES_STORAGE_KEY);
     if (savedMinTrades != null) {
@@ -805,7 +809,7 @@ useEffect(() => {
   useEffect(() => {
     try {
       const n = Math.floor(Number(optTfMin));
-      if (Number.isFinite(n) && n >= 5) localStorage.setItem(OPT_TF_STORAGE_KEY, String(n));
+      if (Number.isFinite(n) && n >= 15) localStorage.setItem(OPT_TF_STORAGE_KEY, String(n));
     } catch {
       return;
     }
@@ -2025,10 +2029,11 @@ useEffect(() => {
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
                 <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(e.currentTarget.value)}>
-                  <option value="5">5</option>
                   <option value="15">15</option>
                   <option value="30">30</option>
                   <option value="60">60</option>
+                  <option value="120">120</option>
+                  <option value="240">240</option>
                 </Form.Select>
                 </Form.Group>
               </Col>
