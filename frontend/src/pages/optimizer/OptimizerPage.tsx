@@ -1879,7 +1879,7 @@ useEffect(() => {
       : (Number.isFinite(rowRearmMs) ? Math.round(rowRearmMs / 1000) : 0);
     const paperRearmSec = Math.max(0, Math.round(mappedRearmSec));
 
-    const rowTimeoutSec = Number(row.params.timeoutSec);
+    const rowTimeoutSec = Number((row as { params?: { timeoutSec?: unknown }; timeoutSec?: unknown }).params?.timeoutSec ?? (row as { timeoutSec?: unknown }).timeoutSec);
     const paperPatch: Record<string, number> = {
       tpRoiPct: quantizeByPrecision(row.params.tpRoiPct, activePrecision.tp),
       slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
@@ -1887,7 +1887,7 @@ useEffect(() => {
       rearmSec: paperRearmSec,
     };
     if (Number.isFinite(rowTimeoutSec)) {
-      paperPatch.entryTimeoutSec = quantizeByPrecision(rowTimeoutSec, activePrecision.timeoutSec);
+      paperPatch.entryTimeoutSec = rowTimeoutSec;
     }
 
     const patch = {
