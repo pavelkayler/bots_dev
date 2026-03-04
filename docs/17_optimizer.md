@@ -129,3 +129,10 @@ Data receive must respect Bybit IP limits. Progress UI should show:
 - sleep/throttle periods due to limits
 
 Current limiter target: strict 500 requests per 5 seconds.
+
+## Planned: CoinGlass provider (deferred)
+
+- Why: Bybit historical open interest has a minimum 5m granularity, while CoinGlass can provide 1m open interest (and potentially 1m funding).
+- Scope (future): keep Bybit as primary provider and use CoinGlass only to fill missing 1m openInterest data and optionally 1m funding gaps.
+- Implementation note (future): add request throttling for CoinGlass and persist both providers into the same cache-row model used by optimizer replay.
+- Status: deferred until CoinGlass API access is purchased.

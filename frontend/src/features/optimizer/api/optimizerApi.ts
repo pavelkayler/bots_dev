@@ -19,8 +19,10 @@ export type OptimizationResult = {
   closesForce: number;
   longsCount: number;
   longsPnl: number;
+  longsWinRatePct?: number;
   shortsCount: number;
   shortsPnl: number;
+  shortsWinRatePct?: number;
   directionMode?: "both" | "long" | "short";
   params: {
     priceThresholdPct: number;
@@ -143,6 +145,7 @@ export type OptimizerJobHistoryRecord = {
 
 export type OptimizerSortKeyExtended =
   | OptimizerSortKey
+  | "pnlPerTrade"
   | "priceTh"
   | "oivTh"
   | "tp"
@@ -158,8 +161,10 @@ export type OptimizerSortKeyExtended =
   | "ordersExpired"
   | "longsCount"
   | "longsPnl"
+  | "longsWinRatePct"
   | "shortsCount"
   | "shortsPnl"
+  | "shortsWinRatePct"
   | "direction";
 
 
