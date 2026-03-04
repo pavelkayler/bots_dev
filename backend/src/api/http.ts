@@ -296,10 +296,6 @@ function parseSimParams(raw: any): OptimizerSimulationParams {
   if (!Number.isFinite(feeBps) || feeBps < 0) {
     throw new Error("invalid_sim_fee_bps");
   }
-  const fundingBpsPer8h = raw?.fundingBpsPer8h == null || String(raw.fundingBpsPer8h).trim() === "" ? 0 : Number(raw.fundingBpsPer8h);
-  if (!Number.isFinite(fundingBpsPer8h)) {
-    throw new Error("invalid_sim_funding_bps_per_8h");
-  }
   const slippageBps = raw?.slippageBps == null || String(raw.slippageBps).trim() === "" ? 0 : Number(raw.slippageBps);
   if (!Number.isFinite(slippageBps) || slippageBps < 0) {
     throw new Error("invalid_sim_slippage_bps");
@@ -313,7 +309,6 @@ function parseSimParams(raw: any): OptimizerSimulationParams {
     marginPerTrade,
     leverage,
     feeBps,
-    fundingBpsPer8h,
     slippageBps,
   };
 }

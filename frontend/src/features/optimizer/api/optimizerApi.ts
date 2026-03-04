@@ -84,7 +84,6 @@ export type OptimizerSimulationParams = {
   marginPerTrade?: number;
   leverage?: number;
   feeBps?: number;
-  fundingBpsPer8h?: number;
   slippageBps?: number;
 };
 

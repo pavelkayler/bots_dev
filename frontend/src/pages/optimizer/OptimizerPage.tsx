@@ -62,7 +62,6 @@ const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
 const SIM_MARGIN_STORAGE_KEY = "bots_dev.optimizer.sim.marginPerTrade";
 const SIM_LEVERAGE_STORAGE_KEY = "bots_dev.optimizer.sim.leverage";
 const SIM_FEE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.feeBps";
-const SIM_FUNDING_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.fundingBpsPer8h";
 const SIM_SLIPPAGE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.slippageBps";
 const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
@@ -390,7 +389,6 @@ export function OptimizerPage() {
   const [simMarginPerTrade, setSimMarginPerTrade] = useState(() => localStorage.getItem(SIM_MARGIN_STORAGE_KEY) ?? "10");
   const [simLeverage, setSimLeverage] = useState(() => localStorage.getItem(SIM_LEVERAGE_STORAGE_KEY) ?? "5");
   const [simFeeBps, setSimFeeBps] = useState(() => localStorage.getItem(SIM_FEE_BPS_STORAGE_KEY) ?? "0");
-  const [simFundingBpsPer8h, setSimFundingBpsPer8h] = useState(() => localStorage.getItem(SIM_FUNDING_BPS_STORAGE_KEY) ?? "0");
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState<string>("1");
@@ -830,10 +828,6 @@ useEffect(() => {
   }, [simFeeBps]);
 
   useEffect(() => {
-    localStorage.setItem(SIM_FUNDING_BPS_STORAGE_KEY, simFundingBpsPer8h);
-  }, [simFundingBpsPer8h]);
-
-  useEffect(() => {
     localStorage.setItem(SIM_SLIPPAGE_BPS_STORAGE_KEY, simSlippageBps);
   }, [simSlippageBps]);
 
@@ -988,7 +982,6 @@ useEffect(() => {
           marginPerTrade,
           leverage,
           feeBps: Number(simFeeBps) || 0,
-          fundingBpsPer8h: Number(simFundingBpsPer8h) || 0,
           slippageBps: Number(simSlippageBps) || 0,
         },
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
@@ -2067,12 +2060,6 @@ useEffect(() => {
                       <Form.Group>
                         <Form.Label style={{ fontSize: 12 }}>feeBps</Form.Label>
                         <Form.Control value={simFeeBps} onChange={(e) => setSimFeeBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
-                      </Form.Group>
-                    </Col>
-                    <Col md={2} sm={4} xs={6}>
-                      <Form.Group>
-                        <Form.Label style={{ fontSize: 12 }}>fundingBpsPer8h</Form.Label>
-                        <Form.Control value={simFundingBpsPer8h} onChange={(e) => setSimFundingBpsPer8h(e.currentTarget.value)} type="number" step={0.01} />
                       </Form.Group>
                     </Col>
                     <Col md={2} sm={4} xs={6}>

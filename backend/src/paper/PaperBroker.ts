@@ -247,8 +247,9 @@ export class PaperBroker {
         nowMs: number;
         symbols: string[];
         getMarkPrice: (symbol: string) => number | null;
+        closeOpenPositions?: boolean;
     }) {
-        const { nowMs, symbols, getMarkPrice } = args;
+        const { nowMs, symbols, getMarkPrice, closeOpenPositions = true } = args;
 
         // отменяем все ордера и закрываем все позиции
         const allSymbols = new Set<string>([...symbols, ...this.map.keys()]);
@@ -277,47 +278,49 @@ export class PaperBroker {
             }
 
             if (st.position) {
-                const p = st.position;
-                const mark = getMarkPrice(symbol);
-                const closePrice = Number.isFinite(mark as number) ? (mark as number) : p.entryPrice;
+                if (closeOpenPositions) {
+                    const p = st.position;
+                    const mark = getMarkPrice(symbol);
+                    const closePrice = Number.isFinite(mark as number) ? (mark as number) : p.entryPrice;
 
-                const notionalExit = closePrice * p.qty;
-                const exitFee = fee(notionalExit, this.cfg.makerFeeRate);
+                    const notionalExit = closePrice * p.qty;
+                    const exitFee = fee(notionalExit, this.cfg.makerFeeRate);
 
-                let pnlFromMove = 0;
-                if (p.side === "LONG") pnlFromMove = (closePrice - p.entryPrice) * p.qty;
-                else pnlFromMove = (p.entryPrice - closePrice) * p.qty;
+                    let pnlFromMove = 0;
+                    if (p.side === "LONG") pnlFromMove = (closePrice - p.entryPrice) * p.qty;
+                    else pnlFromMove = (p.entryPrice - closePrice) * p.qty;
 
-                p.feesPaid += exitFee;
-                p.realizedPnl += pnlFromMove;
-                p.realizedPnl -= exitFee;
+                    p.feesPaid += exitFee;
+                    p.realizedPnl += pnlFromMove;
+                    p.realizedPnl -= exitFee;
 
-                st.totalRealizedPnl += p.realizedPnl;
+                    st.totalRealizedPnl += p.realizedPnl;
 
-                this.logger.log({
-                    ts: nowMs,
-                    type: "POSITION_FORCE_CLOSE",
-                    symbol,
-                    payload: {
-                        side: p.side,
-                        entryPrice: p.entryPrice,
-                        closePrice,
-                        qty: p.qty,
-                        pnlFromMove,
-                        fundingAccrued: p.fundingAccrued,
-                        feesPaid: p.feesPaid,
-                        realizedPnl: p.realizedPnl,
-                        minRoiPct: p.minRoiPct,
-                        maxRoiPct: p.maxRoiPct,
-                        closedAt: nowMs
-                    }
-                });
+                    this.logger.log({
+                        ts: nowMs,
+                        type: "POSITION_FORCE_CLOSE",
+                        symbol,
+                        payload: {
+                            side: p.side,
+                            entryPrice: p.entryPrice,
+                            closePrice,
+                            qty: p.qty,
+                            pnlFromMove,
+                            fundingAccrued: p.fundingAccrued,
+                            feesPaid: p.feesPaid,
+                            realizedPnl: p.realizedPnl,
+                            minRoiPct: p.minRoiPct,
+                            maxRoiPct: p.maxRoiPct,
+                            closedAt: nowMs
+                        }
+                    });
 
 
-                this.closedTrades += 1;
-                this.netRealized += p.realizedPnl;
-                this.feesPaid += p.feesPaid;
-                this.fundingAccrued += p.fundingAccrued;
+                    this.closedTrades += 1;
+                    this.netRealized += p.realizedPnl;
+                    this.feesPaid += p.feesPaid;
+                    this.fundingAccrued += p.fundingAccrued;
+                }
 
                 st.position = null;
             }
