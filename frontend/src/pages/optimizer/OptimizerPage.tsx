@@ -2186,9 +2186,6 @@ useEffect(() => {
               <Button size="sm" variant="outline-secondary" onClick={onOpenImportHistoryPicker}>
                 Import history
               </Button>
-              <Button size="sm" variant="outline-secondary" onClick={resetLoopResultsState}>
-                Reset
-              </Button>
               <input ref={historyImportInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => void onImportHistoryFile(e)} />
             </div>
             {historyTransferMessage ? <div style={{ fontSize: 12, marginBottom: 8 }}>{historyTransferMessage}</div> : null}
