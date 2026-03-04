@@ -1,6 +1,6 @@
 # 17 Optimizer (cached REST dataset + search)
 
-Last update: 2026-02-26
+Last update: 2026-03-04
 
 This document describes the Optimizer feature used to tune paper-trading parameters via cached historical market data and deterministic replay.
 
@@ -9,6 +9,15 @@ This document describes the Optimizer feature used to tune paper-trading paramet
 - Run random-search optimization over many parameter candidates on one or more tape files.
 - Keep backend responsive during heavy optimization (worker thread).
 - Support long runs: pause/resume/cancel, checkpoints, and looped execution.
+
+## Data and replay mechanics
+- Price source: cached 1-minute klines from `backend/data/cache/bybit_klines/`.
+- OI source: cached at a 5-minute grid (Bybit `intervalTime` minimum is 5min), then used without synthetic interpolation.
+- Funding source: `/v5/market/funding/history` point series from `backend/data/cache/bybit_funding_history/`; replay applies last-known funding value between timestamps.
+- Execution replay is close-only (no OHLC extrema), so optimizer cannot rely on synthetic intra-candle ticks.
+- `openInterestValue` uses `oi * close` only (no fabricated OI/OIV).
+- PnL applies trading fees; funding fee is not applied in pnl. Funding is used only for direction gating.
+- Unfinished positions at range end are excluded from optimizer stats.
 
 ## UI
 Route: `/optimizer`
@@ -24,7 +33,7 @@ Main sections:
 - `candidates`: how many candidates to evaluate
 - `seed`: RNG seed (base seed)
 - `directionMode`: `both | long | short`
-- `tf (opt)`: optimization timeframe override (used for replay/ref bucketing)
+- `signal window (min)` (tf(opt)): optimization signal/reference cadence window
 
 ### Filters
 - `minTrades`: require at least N closed trades per candidate (server-side)
@@ -44,7 +53,7 @@ Blacklist and seed shifting are scoped by:
 - directionMode
 - tf(opt)
 
-(runKey format is deterministic; stored in blacklist JSON.)
+(runKey format is deterministic; stored in blacklist JSON. Candidate key includes directionMode, optTfMin, sim fields, and strategy params.)
 
 ### Job model
 - Optimization runs as a job with:

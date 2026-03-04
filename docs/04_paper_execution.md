@@ -1,13 +1,14 @@
 # 04 Paper Execution (Orders, Positions, PnL)
 
-Last update: 2026-02-24
+Last update: 2026-03-04
 
 Paper broker simulates:
 - limit entry with offset and timeout
 - position sizing by margin and leverage
 - TP/SL defined by ROI% on margin
 - maker fee on entry and exit
-- optional funding application at funding boundary (best-effort)
+- optimizer replay uses close-only ticks (no OHLC synthetic extrema)
+- funding direction gating is supported for entries; funding fee is not added to optimizer pnl
 
 ## Entry
 - `entryPrice = markPrice * (1 ± entryOffsetPct)`

@@ -1,6 +1,6 @@
 # 11 Current State (what exists now) + Next Actions
 
-Last update: 2026-02-26
+Last update: 2026-03-04
 
 ## What the project is
 A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper testing and parameter iteration:
@@ -106,7 +106,9 @@ High-level:
 
 - Optimizer dataset source:
   - data comes only from Receive Data cache + Dataset Target
-  - cache directory: `backend/data/cache/bybit_klines/`
+  - price cache: `backend/data/cache/bybit_klines/` (1m candles)
+  - OI cache: 5-minute grid (Bybit supports 5min/15min/...; minimum is 5min)
+  - funding cache: `backend/data/cache/bybit_funding_history/` from `/v5/market/funding/history`, applied as last-known value between points
 
 - Optimization:
   - job-based API with **pause/resume/cancel**
@@ -114,8 +116,16 @@ High-level:
   - progress is reported in percent and displayed in UI as integer 0..100
   - incremental preview results + checkpoints to disk + recovery to paused-safe state after restart
   - optional filters: `minTrades`, `excludeNegative`, `rememberNegatives` (persistent per-runKey blacklist)
+  - remember-negatives skip is applied before simulation for matching candidate keys under the same runKey
   - effectiveSeed shifts per runKey runIndex when rememberNegatives is enabled
   - loop controller: run N times or infinite until stop
+
+- Replay/PnL mechanics:
+  - replay is close-only (no intra-candle OHLC extrema synthesis)
+  - openInterestValue uses `oi * close` only; OI/OIV is not fabricated
+  - fees are applied in pnl; funding fee is not applied in pnl (funding is direction gate only)
+  - unfinished positions at range end are excluded from optimizer stats
+  - `signal window (min)` (previously tf(opt)) controls signal/reference cadence, while execution uses close-only replay ticks
 
 - Health:
   - `/api/doctor` shows disk/writable/ports warnings (incl. low disk)

@@ -31,6 +31,7 @@ import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
 import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard";
 import { deleteDatasetHistory, listDatasetHistories, type DatasetHistoryRecord } from "../../features/datasetHistory/api/datasetHistoryApi";
 import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataReceiveApi";
+import { useInterval } from "../../shared/hooks/useInterval";
 
 type OptimizerResultRow = OptimizationResult;
 type LoopOptimizerResultRow = OptimizerResultRow & { __runJobId: string };
@@ -73,8 +74,7 @@ const LOOP_RESULTS_DRAFT_STORAGE_KEY = "optimizerLoopResultsDraft";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
-const ACTIVE_RESULTS_POLL_MS = 1000;
-const LOOP_STATUS_POLL_MS = 1000;
+const POLL_MS = 1000;
 const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
 const LIVE_ROWS_SORT_THROTTLE_MS = 200;
 const DEBUG_ROWS_LOG_MIN_INTERVAL_MS = 500;
@@ -532,29 +532,28 @@ export function OptimizerPage() {
     saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, singleRowsForRender);
   }, [singleRowsForRender]);
 
+  const syncDatasetCache = useCallback(() => {
+    setDatasetCache(localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
+  }, []);
+
   useEffect(() => {
-    const syncDatasetCache = () => setDatasetCache(localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
     syncDatasetCache();
-    const timer = window.setInterval(syncDatasetCache, 1000);
     const onStorage = (event: StorageEvent) => {
       if (event.key === DATASET_CACHE_STORAGE_KEY) syncDatasetCache();
     };
     window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener("storage", onStorage);
-      window.clearInterval(timer);
     };
-  }, []);
+  }, [syncDatasetCache]);
+
+  useInterval(syncDatasetCache, POLL_MS);
 
 
-useEffect(() => {
-  let cancelled = false;
-
-  async function refresh() {
+  const refreshDatasetHistories = useCallback(async () => {
     try {
       setHistoryBusy(true);
       const res = await listDatasetHistories();
-      if (cancelled) return;
       const items = Array.isArray(res.histories) ? res.histories : [];
       setDatasetHistories(items);
       if (import.meta.env.DEV && localStorage.getItem("debugDatasetTf") === "1") {
@@ -571,17 +570,17 @@ useEffect(() => {
     } catch {
       // ignore
     } finally {
-      if (!cancelled) setHistoryBusy(false);
+      setHistoryBusy(false);
     }
-  }
+  }, [selectedHistoryIds]);
 
-  void refresh();
-  const timer = window.setInterval(() => void refresh(), 4000);
-  return () => {
-    cancelled = true;
-    window.clearInterval(timer);
-  };
-}, []);
+  useEffect(() => {
+    void refreshDatasetHistories();
+  }, [refreshDatasetHistories]);
+
+  useInterval(() => {
+    void refreshDatasetHistories();
+  }, POLL_MS);
 
 
   const loopAggRowsForRender = useMemo(() => (
@@ -861,17 +860,12 @@ useEffect(() => {
   }, []);
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      void refreshJobHistory();
-    }, 8000);
-    return () => window.clearInterval(id);
-  }, [jobHistoryLimit, jobHistoryOffset, jobHistorySortDir, jobHistorySortKey]);
-
-
-
-  useEffect(() => {
     void refreshJobHistory();
   }, [jobHistoryLimit, jobHistoryOffset, jobHistorySortDir, jobHistorySortKey]);
+
+  useInterval(() => {
+    void refreshJobHistory();
+  }, POLL_MS);
 
   useEffect(() => {
     const n = Math.floor(Number(candidates));
@@ -931,11 +925,9 @@ useEffect(() => {
     localStorage.setItem(LOOP_INFINITE_STORAGE_KEY, loopInfinite ? "1" : "0");
   }, [loopInfinite]);
 
-  useEffect(() => {
-    if (jobStatus !== "running") return;
-    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [jobStatus]);
+  useInterval(() => {
+    setNowMs(Date.now());
+  }, POLL_MS, jobStatus === "running");
 
   const loopExists = Boolean(loopStatus?.loop);
   const loopPaused = Boolean(loopStatus?.loop?.isPaused);
@@ -1326,125 +1318,114 @@ useEffect(() => {
   }, [fetchAllResultsForJob, upsertLoopRunRowsAppend]);
 
 
-  useEffect(() => {
-    let mounted = true;
-    let timer: number | null = null;
+  const refreshLoopStatus = useCallback(async () => {
+    try {
+      const next = await getOptimizerLoopStatus();
 
-    const refresh = async () => {
-      try {
-        const next = await getOptimizerLoopStatus();
-        if (!mounted) return;
+      const isRunningNow = Boolean(next.loop?.isRunning);
+      if (isRunningNow) lastTableSourceRef.current = "loop";
 
-        const isRunningNow = Boolean(next.loop?.isRunning);
-        if (isRunningNow) lastTableSourceRef.current = "loop";
+      const currentLoopJobId = next.loop?.lastJobId ?? null;
+      const completedJobId = currentLoopJobId ?? lastNonNullLoopJobIdRef.current;
+      const progressSnapshot = next.progress ?? null;
 
-        const currentLoopJobId = next.loop?.lastJobId ?? null;
-        const completedJobId = currentLoopJobId ?? lastNonNullLoopJobIdRef.current;
-        const progressSnapshot = next.progress ?? null;
+      let donePercent = Math.floor(Number(progressSnapshot?.runPct ?? next.lastJobStatus?.donePercent ?? 0));
+      let runStatus = progressSnapshot?.status === "canceled" ? "cancelled" : next.lastJobStatus?.status;
 
-        let donePercent = Math.floor(Number(progressSnapshot?.runPct ?? next.lastJobStatus?.donePercent ?? 0));
-        let runStatus = progressSnapshot?.status === "canceled" ? "cancelled" : next.lastJobStatus?.status;
-
-        if (currentLoopJobId) {
-          try {
-            const statusRes = await getJobStatus(currentLoopJobId);
-            if (!mounted) return;
-            const progress = getStableProgressForJob(currentLoopJobId, statusRes as { donePct?: number; done?: number; startedAtMs?: number | null });
-            const snapshotRunPct = typeof progressSnapshot?.runPct === "number" ? progressSnapshot.runPct : null;
-            donePercent = Math.floor(Number.isFinite(snapshotRunPct) ? Math.max(snapshotRunPct as number, progress.pct) : progress.pct);
-            runStatus = statusRes.status;
-            setJobStartedAtMs((prev) => (prev === progress.startedAtMs ? prev : progress.startedAtMs));
-            setJobUpdatedAtMs((prev) => {
-              const updatedAt = statusRes.updatedAtMs ?? null;
-              return prev === updatedAt ? prev : updatedAt;
-            });
-            setJobFinishedAtMs((prev) => {
-              const finishedAt = statusRes.finishedAtMs ?? null;
-              return prev === finishedAt ? prev : finishedAt;
-            });
-            setJobStatus((prev) => (prev === statusRes.status ? prev : statusRes.status));
-          } catch {
-            // Keep using /loop/status fallback if per-job status is briefly unavailable.
-          }
-        } else {
-          // Loop can be stopped while `jobStatus` is still "running" (because we stop polling per-job status once `lastJobId` becomes null).
-          // Ensure UI transitions to a terminal job status based on the persisted loop progress snapshot.
-          const isRunningNow2 = Boolean(next.loop?.isRunning);
-          const isPausedNow2 = Boolean(next.loop?.isPaused);
-          if (!isRunningNow2 && !isPausedNow2 && progressSnapshot) {
-            const mappedStatus = progressSnapshot.status === "done"
-              ? "done"
-              : progressSnapshot.status === "canceled"
-                ? "cancelled"
-                : progressSnapshot.status === "error"
-                  ? "error"
-                  : "idle";
-            setJobStatus((prev) => (prev === mappedStatus ? prev : mappedStatus));
-            setJobFinishedAtMs((prev) => {
-              if (prev != null) return prev;
-              const fromLoop = next.loop?.finishedAtMs ?? null;
-              const fromProgress = typeof progressSnapshot.updatedAt === "number" ? progressSnapshot.updatedAt : null;
-              return fromLoop ?? fromProgress;
-            });
-            setJobUpdatedAtMs((prev) => {
-              const updatedAt = next.loop?.updatedAtMs ?? null;
-              return prev === updatedAt ? prev : updatedAt;
-            });
-            const lastId = lastNonNullLoopJobIdRef.current;
-            if (lastId) {
-              const startedAt = startedAtByJobIdRef.current[lastId] ?? null;
-              if (startedAt != null) setJobStartedAtMs((prev) => (prev == null ? startedAt : prev));
-            }
+      if (currentLoopJobId) {
+        try {
+          const statusRes = await getJobStatus(currentLoopJobId);
+          const progress = getStableProgressForJob(currentLoopJobId, statusRes as { donePct?: number; done?: number; startedAtMs?: number | null });
+          const snapshotRunPct = typeof progressSnapshot?.runPct === "number" ? progressSnapshot.runPct : null;
+          donePercent = Math.floor(Number.isFinite(snapshotRunPct) ? Math.max(snapshotRunPct as number, progress.pct) : progress.pct);
+          runStatus = statusRes.status;
+          setJobStartedAtMs((prev) => (prev === progress.startedAtMs ? prev : progress.startedAtMs));
+          setJobUpdatedAtMs((prev) => {
+            const updatedAt = statusRes.updatedAtMs ?? null;
+            return prev === updatedAt ? prev : updatedAt;
+          });
+          setJobFinishedAtMs((prev) => {
+            const finishedAt = statusRes.finishedAtMs ?? null;
+            return prev === finishedAt ? prev : finishedAt;
+          });
+          setJobStatus((prev) => (prev === statusRes.status ? prev : statusRes.status));
+        } catch {
+          // Keep using /loop/status fallback if per-job status is briefly unavailable.
+        }
+      } else {
+        // Loop can be stopped while `jobStatus` is still "running" (because we stop polling per-job status once `lastJobId` becomes null).
+        // Ensure UI transitions to a terminal job status based on the persisted loop progress snapshot.
+        const isRunningNow2 = Boolean(next.loop?.isRunning);
+        const isPausedNow2 = Boolean(next.loop?.isPaused);
+        if (!isRunningNow2 && !isPausedNow2 && progressSnapshot) {
+          const mappedStatus = progressSnapshot.status === "done"
+            ? "done"
+            : progressSnapshot.status === "canceled"
+              ? "cancelled"
+              : progressSnapshot.status === "error"
+                ? "error"
+                : "idle";
+          setJobStatus((prev) => (prev === mappedStatus ? prev : mappedStatus));
+          setJobFinishedAtMs((prev) => {
+            if (prev != null) return prev;
+            const fromLoop = next.loop?.finishedAtMs ?? null;
+            const fromProgress = typeof progressSnapshot.updatedAt === "number" ? progressSnapshot.updatedAt : null;
+            return fromLoop ?? fromProgress;
+          });
+          setJobUpdatedAtMs((prev) => {
+            const updatedAt = next.loop?.updatedAtMs ?? null;
+            return prev === updatedAt ? prev : updatedAt;
+          });
+          const lastId = lastNonNullLoopJobIdRef.current;
+          if (lastId) {
+            const startedAt = startedAtByJobIdRef.current[lastId] ?? null;
+            if (startedAt != null) setJobStartedAtMs((prev) => (prev == null ? startedAt : prev));
           }
         }
-
-        const didCompleteRun = prevLoopRunningRef.current && (
-          donePercent === 100 ||
-          runStatus === "done" ||
-          progressSnapshot?.status === "done"
-        );
-
-        setLoopStatus(next);
-        maybeLogProgress(progressSnapshot);
-        setNowMs(Date.now());
-        setTotal(100);
-        setDone((prev) => {
-          if (progressSnapshot) return Math.floor(clamp(progressSnapshot.runPct, 0, 100));
-          if (donePercent === 100) return 100;
-          if (!isRunningNow && !next.loop?.isPaused) return prev;
-          return donePercent;
-        });
-
-        const isPausedNow = Boolean(next.loop?.isPaused);
-        if (isPausedNow) {
-          if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
-        } else {
-          pauseFreezeAtMsRef.current = null;
-        }
-        setLoopJobId(next.loop?.lastJobId ?? null);
-
-        if (didCompleteRun && completedJobId) {
-          void appendCompletedRunByJobId(completedJobId);
-        }
-
-        prevLoopRunningRef.current = isRunningNow;
-      } catch {
-        return;
       }
-    };
 
-    void refresh();
-    if (loopStatus?.loop) {
-      timer = window.setInterval(() => {
-        void refresh();
-      }, LOOP_STATUS_POLL_MS);
+      const didCompleteRun = prevLoopRunningRef.current && (
+        donePercent === 100 ||
+        runStatus === "done" ||
+        progressSnapshot?.status === "done"
+      );
+
+      setLoopStatus(next);
+      maybeLogProgress(progressSnapshot);
+      setNowMs(Date.now());
+      setTotal(100);
+      setDone((prev) => {
+        if (progressSnapshot) return Math.floor(clamp(progressSnapshot.runPct, 0, 100));
+        if (donePercent === 100) return 100;
+        if (!isRunningNow && !next.loop?.isPaused) return prev;
+        return donePercent;
+      });
+
+      const isPausedNow = Boolean(next.loop?.isPaused);
+      if (isPausedNow) {
+        if (pauseFreezeAtMsRef.current == null) pauseFreezeAtMsRef.current = Date.now();
+      } else {
+        pauseFreezeAtMsRef.current = null;
+      }
+      setLoopJobId(next.loop?.lastJobId ?? null);
+
+      if (didCompleteRun && completedJobId) {
+        void appendCompletedRunByJobId(completedJobId);
+      }
+
+      prevLoopRunningRef.current = isRunningNow;
+    } catch {
+      return;
     }
+  }, [appendCompletedRunByJobId, getStableProgressForJob, maybeLogProgress]);
 
-    return () => {
-      mounted = false;
-      if (timer != null) window.clearInterval(timer);
-    };
-  }, [appendCompletedRunByJobId, getStableProgressForJob, loopStatus?.loop?.loopId]);
+  useEffect(() => {
+    void refreshLoopStatus();
+  }, [refreshLoopStatus]);
+
+  useInterval(() => {
+    void refreshLoopStatus();
+  }, POLL_MS, loopExists);
 
 
 
@@ -1538,74 +1519,62 @@ useEffect(() => {
     };
   }, [activeJobId, clearSingleJobState, isNoCurrentJobError, logAppendOnlyDebug, loopActive, sortDir, sortKey]);
 
-  useEffect(() => {
+  const pollSingleJobStatus = useCallback(async () => {
     if (loopActive || !singleJobId || !jobActive) return;
-    let alive = true;
-    const timer = window.setInterval(async () => {
-      try {
-        const reqJobId = singleJobId;
-        const now = Date.now();
-        if (lastStatusFetchRef.current.jobId === reqJobId && now - lastStatusFetchRef.current.ts < 1000) return;
-        lastStatusFetchRef.current = { jobId: reqJobId, ts: now };
-        const res = await getJobStatus(reqJobId);
-        if (loopActive || singleJobId !== reqJobId) return;
-        if (!alive) return;
-        const progress = getStableProgressForJob(reqJobId, res as { donePct?: number; done?: number; startedAtMs?: number | null });
-        setDone((prev) => (prev === progress.pct ? prev : progress.pct));
-        setTotal((prev) => (prev === res.total ? prev : res.total));
-        setJobStartedAtMs((prev) => {
-          const next = progress.startedAtMs;
-          return prev === next ? prev : next;
-        });
-        setJobUpdatedAtMs((prev) => {
-          const next = res.updatedAtMs ?? null;
-          return prev === next ? prev : next;
-        });
-        setJobFinishedAtMs((prev) => {
-          const next = res.finishedAtMs ?? null;
-          return prev === next ? prev : next;
-        });
-        setJobStatus((prev) => (prev === res.status ? prev : res.status));
-        setNowMs(Date.now());
-        setOptimizerPaused((prev) => {
-          const next = res.status === "paused";
-          return prev === next ? prev : next;
-        });
-        if (res.status !== "running" && res.status !== "paused") {
-          await fetchResults(page, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
-        }
-        if (loopActive || singleJobId !== reqJobId) return;
-        if (!alive) return;
-        if (res.status === "error") {
-          setError(res.message ?? "Optimization job failed.");
-        }
-        if (res.status === "done" || res.status === "cancelled") {
-          window.clearInterval(timer);
-          if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
-          await fetchResults(1, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
-          await refreshJobHistory();
-          if (loopActive || singleJobId !== reqJobId) return;
-          if (!alive) return;
-        }
-        if (res.status === "error") {
-          await refreshJobHistory();
-        }
-      } catch (e: any) {
-        if (isNoCurrentJobError(e)) {
-          setSingleJobId(null);
-          setJobStatus("idle");
-          setOptimizerPaused(false);
-          return;
-        }
-        setError(String(e?.message ?? e));
+    try {
+      const reqJobId = singleJobId;
+      const now = Date.now();
+      if (lastStatusFetchRef.current.jobId === reqJobId && now - lastStatusFetchRef.current.ts < POLL_MS) return;
+      lastStatusFetchRef.current = { jobId: reqJobId, ts: now };
+      const res = await getJobStatus(reqJobId);
+      if (loopActive || singleJobId !== reqJobId) return;
+      const progress = getStableProgressForJob(reqJobId, res as { donePct?: number; done?: number; startedAtMs?: number | null });
+      setDone((prev) => (prev === progress.pct ? prev : progress.pct));
+      setTotal((prev) => (prev === res.total ? prev : res.total));
+      setJobStartedAtMs((prev) => {
+        const next = progress.startedAtMs;
+        return prev === next ? prev : next;
+      });
+      setJobUpdatedAtMs((prev) => {
+        const next = res.updatedAtMs ?? null;
+        return prev === next ? prev : next;
+      });
+      setJobFinishedAtMs((prev) => {
+        const next = res.finishedAtMs ?? null;
+        return prev === next ? prev : next;
+      });
+      setJobStatus((prev) => (prev === res.status ? prev : res.status));
+      setNowMs(Date.now());
+      setOptimizerPaused((prev) => {
+        const next = res.status === "paused";
+        return prev === next ? prev : next;
+      });
+      if (res.status !== "running" && res.status !== "paused") {
+        await fetchResults(page, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
       }
-    }, ACTIVE_RESULTS_POLL_MS);
+      if (res.status === "error") {
+        setError(res.message ?? "Optimization job failed.");
+        await refreshJobHistory();
+      }
+      if (res.status === "done" || res.status === "cancelled") {
+        if (res.status === "cancelled") setError(res.message ?? "Optimization cancelled.");
+        await fetchResults(1, sortKey, sortDir, reqJobId, { keepPreviousIfEmpty: false });
+        await refreshJobHistory();
+      }
+    } catch (e: any) {
+      if (isNoCurrentJobError(e)) {
+        setSingleJobId(null);
+        setJobStatus("idle");
+        setOptimizerPaused(false);
+        return;
+      }
+      setError(String(e?.message ?? e));
+    }
+  }, [fetchResults, getStableProgressForJob, isNoCurrentJobError, jobActive, loopActive, page, refreshJobHistory, singleJobId, sortDir, sortKey]);
 
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [clearSingleJobState, getStableProgressForJob, isNoCurrentJobError, jobActive, loopActive, page, singleJobId, sortDir, sortKey]);
+  useInterval(() => {
+    void pollSingleJobStatus();
+  }, POLL_MS, !loopActive && Boolean(singleJobId) && jobActive);
 
   useEffect(() => {
     if (!lastMsg) return;
@@ -2116,7 +2085,7 @@ useEffect(() => {
               </Col>
               <Col md={2} sm={4} xs={6}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
+                <Form.Label style={{ fontSize: 12 }}>signal window (min)</Form.Label>
                 <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(String(Math.max(15, Math.floor(Number(e.currentTarget.value) || 15))))}>
                   <option value="15">15</option>
                   <option value="30">30</option>
@@ -2124,6 +2093,7 @@ useEffect(() => {
                   <option value="120">120</option>
                   <option value="240">240</option>
                 </Form.Select>
+                <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>Execution: close-only replay (no OHLC extrema).</div>
                 </Form.Group>
               </Col>
               <Col md={2} sm={4} xs={6}>
