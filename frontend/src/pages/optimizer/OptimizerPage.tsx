@@ -287,6 +287,47 @@ function saveJson(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
+const OPTIMIZER_SORT_KEYS: OptimizerSortKeyExtended[] = [
+  "netPnl", "trades", "winRatePct", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs",
+  "expectancy", "profitFactor", "maxDrawdownUsdt", "ordersPlaced", "ordersFilled", "ordersExpired",
+  "longsCount", "longsPnl", "shortsCount", "shortsPnl", "direction",
+];
+
+const n = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const fmt = (v: unknown, digits: number): string => {
+  const x = n(v);
+  return x === undefined ? `0.${"0".repeat(digits)}` : x.toFixed(digits);
+};
+const fmtInt = (v: unknown): string => {
+  const x = n(v);
+  return x === undefined ? "0" : String(Math.trunc(x));
+};
+
+function isOptimizerSortKeyExtended(value: unknown): value is OptimizerSortKeyExtended {
+  return typeof value === "string" && OPTIMIZER_SORT_KEYS.includes(value as OptimizerSortKeyExtended);
+}
+
+function normalizeOptimizerRow<T extends OptimizationResult>(row: T): T {
+  const rowAny = row as any;
+  const params = (rowAny?.params && typeof rowAny.params === "object") ? rowAny.params : {};
+  const normalizedRearmMs = n(params?.rearmMs) ?? ((n(params?.rearmSec) ?? 0) * 1000);
+  return {
+    ...row,
+    netPnl: n(rowAny?.netPnl) ?? 0,
+    expectancy: n(rowAny?.expectancy) ?? 0,
+    profitFactor: n(rowAny?.profitFactor) ?? 0,
+    winRatePct: n(rowAny?.winRatePct) ?? 0,
+    longsCount: n(rowAny?.longsCount) ?? 0,
+    shortsCount: n(rowAny?.shortsCount) ?? 0,
+    longsPnl: n(rowAny?.longsPnl) ?? 0,
+    shortsPnl: n(rowAny?.shortsPnl) ?? 0,
+    params: {
+      ...params,
+      rearmMs: normalizedRearmMs,
+    },
+  };
+}
+
 type OptimizerResultRowProps = {
   row: OptimizationResult;
   activePrecision: OptimizerPrecision;
@@ -315,22 +356,22 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
   }
   return (
     <tr>
-      <td style={{ whiteSpace: "nowrap" }}>{row.netPnl.toFixed(4)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.trades}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.winRatePct.toFixed(2)}%</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt(row.netPnl, 4)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmtInt(row.trades)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{`${fmt(row.winRatePct, 2)}%`}</td>
       <td style={{ whiteSpace: "nowrap" }}>{String(row.directionMode ?? "both").toLowerCase()}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{`${row.longsCount} / ${row.longsPnl.toFixed(4)}`}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{`${row.shortsCount} / ${row.shortsPnl.toFixed(4)}`}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.ordersPlaced}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.ordersFilled}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.ordersExpired}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.params.tpRoiPct.toFixed(activePrecision.tp)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.params.slRoiPct.toFixed(activePrecision.sl)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.params.entryOffsetPct.toFixed(activePrecision.offset)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{row.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
-      <td style={{ whiteSpace: "nowrap" }}>{(row.params.rearmMs / 1000).toFixed(activePrecision.rearmMs)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{`${fmtInt(row.longsCount)} / ${fmt(row.longsPnl, 4)}`}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{`${fmtInt(row.shortsCount)} / ${fmt(row.shortsPnl, 4)}`}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmtInt(row.ordersPlaced)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmtInt(row.ordersFilled)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmtInt(row.ordersExpired)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt((row as any)?.params?.priceThresholdPct, activePrecision.priceTh)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt((row as any)?.params?.oivThresholdPct, activePrecision.oivTh)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt((row as any)?.params?.tpRoiPct, activePrecision.tp)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt((row as any)?.params?.slRoiPct, activePrecision.sl)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt((row as any)?.params?.entryOffsetPct, activePrecision.offset)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt((row as any)?.params?.timeoutSec, activePrecision.timeoutSec)}</td>
+      <td style={{ whiteSpace: "nowrap" }}>{fmt(n((row as any)?.params?.rearmMs) === undefined ? undefined : (((row as any).params.rearmMs) / 1000), activePrecision.rearmMs)}</td>
       <td style={{ whiteSpace: "nowrap" }}>
         <div className="d-flex gap-1"><Button size="sm" variant="outline-secondary" onClick={() => onCopyToSettings(row)}>Copy</Button><Button size="sm" variant="outline-secondary" onClick={() => onExportTrades(row)}>Export</Button></div>
       </td>
@@ -440,9 +481,10 @@ export function OptimizerPage() {
 
   const [singleResultsState, setSingleResultsState] = useState<OptimizerSingleResultsState>(() => {
     const storedRows = safeJsonParse<OptimizationResult[]>(localStorage.getItem(TOP_RESULTS_SINGLE_STORAGE_KEY)) ?? [];
+    const normalizedRows = storedRows.map((row) => normalizeOptimizerRow(row));
     const rowsById = new Map<string, OptimizationResult>();
     const order: string[] = [];
-    for (const row of storedRows) {
+    for (const row of normalizedRows) {
       const rowId = makeResultSignature(row);
       if (!rowsById.has(rowId)) order.push(rowId);
       rowsById.set(rowId, row);
@@ -450,10 +492,22 @@ export function OptimizerPage() {
     return { rowsById, order, version: 1 };
   });
   const [loopAggState, setLoopAggState] = useState<LoopAggState>(() => {
-    const storedRows = safeJsonParse<LoopOptimizerResultRow[]>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY)) ?? [];
+    const storedDraft = safeJsonParse<unknown>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY));
+    const draftRows = Array.isArray(storedDraft)
+      ? storedDraft
+      : (Array.isArray((storedDraft as any)?.rows) ? (storedDraft as any).rows : []);
+    const normalizedRows = draftRows.map((row: unknown) => normalizeOptimizerRow(row as LoopOptimizerResultRow));
+    const hasSchemaVersion = typeof (storedDraft as any)?.schemaVersion === "number";
+    const sortDirRaw = (storedDraft as any)?.sortDir;
+    const sortKeyRaw = (storedDraft as any)?.sortKey;
+    const sortDirNormalized: OptimizerSortDir = sortDirRaw === "asc" || sortDirRaw === "desc" ? sortDirRaw : "desc";
+    const sortKeyNormalized: OptimizerSortKeyExtended = isOptimizerSortKeyExtended(sortKeyRaw) ? sortKeyRaw : "netPnl";
+    if (!hasSchemaVersion || !Array.isArray(storedDraft) || sortDirRaw !== sortDirNormalized || sortKeyRaw !== sortKeyNormalized) {
+      saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, { schemaVersion: 1, rows: normalizedRows, sortKey: sortKeyNormalized, sortDir: sortDirNormalized });
+    }
     const runOrder: string[] = [];
     const byRunId: Record<string, LoopRunStore> = {};
-    for (const row of storedRows) {
+    for (const row of normalizedRows) {
       const runId = String(row.__runJobId ?? "");
       if (!runId) continue;
       if (!byRunId[runId]) {
@@ -541,7 +595,7 @@ useEffect(() => {
   ), [loopAggState.version]);
 
 useEffect(() => {
-  saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, loopAggRowsForRender);
+  saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, { schemaVersion: 1, rows: loopAggRowsForRender });
 }, [loopAggRowsForRender]);
 
   const [page, setPage] = useState(1);
@@ -623,7 +677,8 @@ useEffect(() => {
       let appendedRowId: string | null = null;
       const nextRowsById = new Map(prev.rowsById);
       const nextOrder = prev.order.slice();
-      for (const row of pending) {
+      for (const pendingRow of pending) {
+        const row = normalizeOptimizerRow(pendingRow);
         const rowId = makeResultSignature(row);
         const prevRow = nextRowsById.get(rowId);
         if (prevRow === row) continue;
@@ -649,7 +704,8 @@ useEffect(() => {
   const queueLiveRowsAppend = useCallback((jobId: string, rows: OptimizationResult[]) => {
     if (!jobId || !rows.length) return;
     const current = liveRowsPendingByJobIdRef.current[jobId] ?? [];
-    liveRowsPendingByJobIdRef.current[jobId] = current.concat(rows);
+    const normalizedRows = rows.map((row) => normalizeOptimizerRow(row));
+    liveRowsPendingByJobIdRef.current[jobId] = current.concat(normalizedRows);
     if (jobId !== activeJobIdRef.current) return;
     if (liveRowsFlushTimerRef.current != null) return;
     liveRowsFlushTimerRef.current = window.setTimeout(flushLiveRowsForActiveJob, LIVE_ROWS_SORT_THROTTLE_MS);
@@ -1220,7 +1276,8 @@ useEffect(() => {
       const rowsById = new Map(existingStore.rowsById);
       const order = existingStore.order.slice();
       let appendedRowId: string | null = null;
-      for (const row of rows) {
+      for (const incomingRow of rows) {
+        const row = normalizeOptimizerRow(incomingRow);
         const rowId = makeResultSignature(row);
         if (rowsById.has(rowId)) continue;
         rowsById.set(rowId, { ...row, __runJobId: jobId });
@@ -1567,7 +1624,8 @@ useEffect(() => {
         if (shouldReplace) {
           const rowsById = new Map<string, OptimizationResult>();
           const order: string[] = [];
-          for (const row of snapshotRows) {
+          for (const rawRow of snapshotRows) {
+            const row = normalizeOptimizerRow(rawRow);
             const rowId = makeResultSignature(row);
             if (!rowsById.has(rowId)) order.push(rowId);
             rowsById.set(rowId, row);
@@ -1581,7 +1639,8 @@ useEffect(() => {
         let appendedRowId: string | null = null;
         const rowsById = new Map(prev.rowsById);
         const order = prev.order.slice();
-        for (const row of snapshotRows) {
+        for (const rawRow of snapshotRows) {
+          const row = normalizeOptimizerRow(rawRow);
           const rowId = makeResultSignature(row);
           const existing = rowsById.get(rowId);
           if (!existing) {
