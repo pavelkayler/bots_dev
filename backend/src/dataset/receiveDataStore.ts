@@ -44,6 +44,35 @@ type BybitApiResponse = {
   };
 };
 
+type BybitOpenInterestItem = {
+  openInterest?: string;
+  timestamp?: string;
+};
+
+type BybitOpenInterestResponse = {
+  retCode?: number;
+  retMsg?: string;
+  result?: {
+    list?: BybitOpenInterestItem[];
+    nextPageCursor?: string;
+  };
+};
+
+type BybitFundingItem = {
+  fundingRate?: string;
+  fundingRateTimestamp?: string;
+};
+
+type BybitFundingHistoryResponse = {
+  retCode?: number;
+  retMsg?: string;
+  result?: {
+    list?: BybitFundingItem[];
+  };
+};
+
+type OiIntervalTime = "5min" | "15min" | "30min" | "1h" | "4h" | "1d";
+
 const BYBIT_BASE_URL = process.env.BYBIT_REST_URL ?? "https://api.bybit.com";
 const REQUEST_LIMIT = 1000;
 const WINDOW_MS = 5000;
@@ -235,6 +264,96 @@ async function fetchKlinesBatch(symbol: string, interval: BybitKlineInterval, st
   return [];
 }
 
+function mapKlineIntervalToOiInterval(interval: BybitKlineInterval): OiIntervalTime {
+  if (interval === "1" || interval === "3" || interval === "5") return "5min";
+  if (interval === "15") return "15min";
+  if (interval === "30") return "30min";
+  if (interval === "60" || interval === "120") return "1h";
+  if (interval === "240" || interval === "360" || interval === "720") return "4h";
+  return "1d";
+}
+
+async function fetchOpenInterestPage(
+  symbol: string,
+  oiIntervalTime: OiIntervalTime,
+  startMs: number,
+  endMs: number,
+  cursor?: string
+): Promise<{ list: Array<{ openInterest: string; timestamp: number }>; nextPageCursor?: string }> {
+  const url = new URL(`${BYBIT_BASE_URL.replace(/\/+$/g, "")}/v5/market/open-interest`);
+  url.searchParams.set("category", "linear");
+  url.searchParams.set("symbol", symbol);
+  url.searchParams.set("intervalTime", oiIntervalTime);
+  url.searchParams.set("startTime", String(startMs));
+  url.searchParams.set("endTime", String(endMs));
+  url.searchParams.set("limit", "200");
+  if (cursor) url.searchParams.set("cursor", cursor);
+
+  await limiter.acquire();
+  const res = await fetch(url.toString(), { method: "GET" });
+  const json = (await res.json()) as BybitOpenInterestResponse;
+  const retCode = Number(json?.retCode ?? 0);
+  if (!(res.ok && retCode === 0)) {
+    const msg = String(json?.retMsg ?? `http_${res.status}`);
+    throw new Error(`oi_fetch_failed:${symbol}:${retCode}:${msg}`);
+  }
+  const list = Array.isArray(json?.result?.list) ? json.result!.list! : [];
+  const parsed = list
+    .map((item) => ({
+      openInterest: String(item?.openInterest ?? ""),
+      timestamp: Number(item?.timestamp),
+    }))
+    .filter((item) => item.openInterest && Number.isFinite(item.timestamp));
+  const nextPageCursor = String(json?.result?.nextPageCursor ?? "").trim();
+  return {
+    list: parsed,
+    ...(nextPageCursor ? { nextPageCursor } : {}),
+  };
+}
+
+async function fetchFundingHistoryBatch(symbol: string, startMs: number, endMs: number): Promise<Array<{ fundingRate: string; fundingTs: number }>> {
+  const out: Array<{ fundingRate: string; fundingTs: number }> = [];
+  let currentEnd = endMs;
+  let pages = 0;
+
+  while (currentEnd > startMs) {
+    const url = new URL(`${BYBIT_BASE_URL.replace(/\/+$/g, "")}/v5/market/funding/history`);
+    url.searchParams.set("category", "linear");
+    url.searchParams.set("symbol", symbol);
+    url.searchParams.set("startTime", String(startMs));
+    url.searchParams.set("endTime", String(currentEnd));
+    url.searchParams.set("limit", "200");
+
+    await limiter.acquire();
+    const res = await fetch(url.toString(), { method: "GET" });
+    const json = (await res.json()) as BybitFundingHistoryResponse;
+    const retCode = Number(json?.retCode ?? 0);
+    if (!(res.ok && retCode === 0)) {
+      const msg = String(json?.retMsg ?? `http_${res.status}`);
+      throw new Error(`funding_fetch_failed:${symbol}:${retCode}:${msg}`);
+    }
+
+    const list = Array.isArray(json?.result?.list) ? json.result!.list! : [];
+    if (!list.length) break;
+
+    let oldestTs = Number.POSITIVE_INFINITY;
+    for (const item of list) {
+      const fundingTs = Number(item?.fundingRateTimestamp);
+      const fundingRate = String(item?.fundingRate ?? "");
+      if (!Number.isFinite(fundingTs) || !fundingRate) continue;
+      out.push({ fundingRate, fundingTs });
+      if (fundingTs < oldestTs) oldestTs = fundingTs;
+    }
+    if (!Number.isFinite(oldestTs)) break;
+
+    currentEnd = oldestTs - 1;
+    pages += 1;
+    if (pages % 5 === 0) await waitImmediate();
+  }
+
+  return out;
+}
+
 async function runReceiveJob(jobId: string, target: DatasetTarget) {
   const job = jobs.get(jobId);
   if (!job) return;
@@ -270,6 +389,8 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     let completedSteps = 0;
     const symbolErrors: string[] = [];
     const failedSymbols = new Set<string>();
+    let hasAnyOi = false;
+    let hasAnyFunding = false;
 
     for (const symbol of symbols) {
       if (job.cancelRequested) break;
@@ -277,15 +398,52 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
       const merged = loadSymbolCache(symbol, interval);
       setProgress(job, { currentSymbol: symbol, message: `Receiving ${symbol}` }, true);
 
+      const oiIntervalTime = mapKlineIntervalToOiInterval(interval);
+      const oiSamplesRaw: Array<{ openInterest: string; timestamp: number }> = [];
+      let oiCursor: string | undefined;
+      do {
+        const page = await fetchOpenInterestPage(symbol, oiIntervalTime, resolvedRange.startMs, resolvedRange.endMs, oiCursor);
+        oiSamplesRaw.push(...page.list);
+        oiCursor = page.nextPageCursor;
+      } while (oiCursor);
+      const oiByTs = new Map<number, string>();
+      for (const item of oiSamplesRaw) oiByTs.set(item.timestamp, item.openInterest);
+      const oiSamples = Array.from(oiByTs.entries()).map(([timestamp, openInterest]) => ({ timestamp, openInterest }))
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      const fundingSamplesRaw = await fetchFundingHistoryBatch(symbol, resolvedRange.startMs, resolvedRange.endMs);
+      const fundingByTs = new Map<number, string>();
+      for (const item of fundingSamplesRaw) fundingByTs.set(item.fundingTs, item.fundingRate);
+      const fundingSamples = Array.from(fundingByTs.entries()).map(([fundingTs, fundingRate]) => ({ fundingTs, fundingRate }))
+        .sort((a, b) => a.fundingTs - b.fundingTs);
+
+      let oiPtr = -1;
+      let fundingPtr = -1;
+      const candleMs = intervalToMs(interval);
+
       for (let cursor = resolvedRange.startMs; cursor < resolvedRange.endMs; cursor += klineBatchSpanMs) {
         if (job.cancelRequested) break;
         const batchEnd = Math.min(resolvedRange.endMs, cursor + klineBatchSpanMs - 1);
         try {
           const batch = await fetchKlinesBatch(symbol, interval, cursor, batchEnd);
-          for (const row of batch) {
+          const sortedBatch = batch
+            .map((row) => ({ row, startMs: Number(row?.[0]) }))
+            .filter((item) => Number.isFinite(item.startMs))
+            .sort((a, b) => a.startMs - b.startMs);
+
+          for (const item of sortedBatch) {
+            const row = item.row;
             const startMs = Number(row?.[0]);
             if (!Number.isFinite(startMs)) continue;
-            merged.set(startMs, {
+
+            const candleEndMs = startMs + candleMs - 1;
+            while (oiPtr + 1 < oiSamples.length && oiSamples[oiPtr + 1]!.timestamp <= candleEndMs) oiPtr += 1;
+            while (fundingPtr + 1 < fundingSamples.length && fundingSamples[fundingPtr + 1]!.fundingTs <= candleEndMs) fundingPtr += 1;
+
+            const alignedOi = oiPtr >= 0 ? oiSamples[oiPtr]! : null;
+            const alignedFunding = fundingPtr >= 0 ? fundingSamples[fundingPtr]! : null;
+
+            const cacheRow: any = {
               symbol,
               startMs,
               open: String(row?.[1] ?? ""),
@@ -294,7 +452,18 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
               close: String(row?.[4] ?? ""),
               volume: String(row?.[5] ?? ""),
               turnover: String(row?.[6] ?? ""),
-            });
+            };
+            if (alignedOi) {
+              cacheRow.oi = alignedOi.openInterest;
+              cacheRow.oiTs = alignedOi.timestamp;
+              hasAnyOi = true;
+            }
+            if (alignedFunding) {
+              cacheRow.fundingRate = alignedFunding.fundingRate;
+              cacheRow.fundingTs = alignedFunding.fundingTs;
+              hasAnyFunding = true;
+            }
+            merged.set(startMs, cacheRow);
           }
         } catch (e: any) {
           symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
@@ -339,6 +508,8 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         receivedAtMs: job.finishedAtMs ?? Date.now(),
         interval,
         receivedSymbols: okSymbols,
+        hasOi: hasAnyOi,
+        hasFunding: hasAnyFunding,
       });
     } catch {
       // ignore

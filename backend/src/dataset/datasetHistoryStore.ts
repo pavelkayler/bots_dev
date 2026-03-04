@@ -16,6 +16,8 @@ export type DatasetHistoryRecord = {
 
   receivedSymbols: string[];
   receivedSymbolsCount: number;
+  hasOi: boolean;
+  hasFunding: boolean;
 
   // Count of optimizer LOOP starts that included this history id
   loopsCount: number;
@@ -66,6 +68,8 @@ function readIndex(): DatasetHistoryRecord[] {
         ? it.receivedSymbols.filter((s: any) => typeof s === "string" && s.trim())
         : [];
       const receivedSymbolsCount = Math.max(0, Math.floor(Number(it.receivedSymbolsCount) || receivedSymbols.length));
+      const hasOi = Boolean(it.hasOi);
+      const hasFunding = Boolean(it.hasFunding);
       const loopsCount = Math.max(0, Math.floor(Number(it.loopsCount) || 0));
       if (!id || !universeId || !universeName) continue;
       if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(receivedAtMs)) continue;
@@ -80,6 +84,8 @@ function readIndex(): DatasetHistoryRecord[] {
         receivedAtMs,
         receivedSymbols,
         receivedSymbolsCount,
+        hasOi,
+        hasFunding,
         loopsCount,
       });
     }
@@ -119,6 +125,8 @@ export function readDatasetHistory(id: string): DatasetHistoryRecord {
     ...parsed,
     interval: normalizeBybitKlineInterval((parsed as any).interval),
     paramsKey: String(parsed.paramsKey ?? "").trim() || `${parsed.universeId}|${parsed.startMs}|${parsed.endMs}|${normalizeBybitKlineInterval((parsed as any).interval)}`,
+    hasOi: Boolean((parsed as any).hasOi),
+    hasFunding: Boolean((parsed as any).hasFunding),
   };
 }
 
@@ -131,6 +139,8 @@ export function upsertLatestDatasetHistory(input: {
   interval: BybitKlineInterval;
   receivedAtMs: number;
   receivedSymbols: string[];
+  hasOi: boolean;
+  hasFunding: boolean;
 }): DatasetHistoryRecord {
   const id = safeId(input.id);
   const universeId = String(input.universeId ?? "").trim();
@@ -142,6 +152,8 @@ export function upsertLatestDatasetHistory(input: {
   const receivedSymbols = Array.isArray(input.receivedSymbols)
     ? input.receivedSymbols.filter((s) => typeof s === "string" && s.trim())
     : [];
+  const hasOi = Boolean(input.hasOi);
+  const hasFunding = Boolean(input.hasFunding);
   if (!universeId || !universeName) throw new Error("invalid_history_input");
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(receivedAtMs)) throw new Error("invalid_history_input");
 
@@ -167,6 +179,8 @@ export function upsertLatestDatasetHistory(input: {
     receivedAtMs,
     receivedSymbols,
     receivedSymbolsCount: receivedSymbols.length,
+    hasOi,
+    hasFunding,
     loopsCount: carryLoops,
   };
 

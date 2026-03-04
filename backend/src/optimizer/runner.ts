@@ -101,6 +101,7 @@ const MAX_TICK_INTERVAL_SAMPLES = 20_000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
 const DEBUG_DATASET_TF = process.env.DEBUG_DATASET_TF === "1";
 const DEBUG_OPT_TRADES = process.env.DEBUG_OPT_TRADES === "1";
+const DEBUG_OPT_MARKETDATA = process.env.DEBUG_OPT_MARKETDATA === "1";
 
 const INTERVAL_TO_MINUTES: Record<string, number> = {
   "1": 1,
@@ -452,6 +453,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   const globalTickIntervals: number[] = [];
   let sampleSymbolForDebug = "";
   let sampleSymbolCandleCount = 0;
+  let sampleSymbolOiSamplesUsed = 0;
+  let sampleSymbolFundingSamplesUsed = 0;
   let debugPlacedOrders = 0;
   let debugFilledOrders = 0;
   let debugClosedTrades = 0;
@@ -501,6 +504,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       let firstTsMs: number | null = null;
       let lastTsMs: number | null = null;
       let candleCount = 0;
+      let candleWithOiCount = 0;
+      let candleWithFundingCount = 0;
 
       const inAnyWindow = (candleStartMs: number): boolean => {
         // windows are sorted/merged
@@ -522,6 +527,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           low?: string;
           turnover?: string;
           volume?: string;
+          oi?: string;
+          fundingRate?: string;
         };
         const candleStart = Number(row.startMs);
         if (!Number.isFinite(candleStart) || !inAnyWindow(candleStart)) continue;
@@ -533,13 +540,19 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         if (!Number.isFinite(close) || close <= 0) continue;
         const turnoverNum = Number(row.turnover);
         const volumeNum = Number(row.volume);
-        const openInterestValue = Number.isFinite(turnoverNum)
-          ? turnoverNum
-          : Number.isFinite(volumeNum)
-            ? volumeNum
-            : 0;
-        const candleDelta = (Number.isFinite(open) ? open : close) - close;
-        const fundingRate = candleDelta === 0 ? 0 : (candleDelta < 0 ? 1e-6 : -1e-6);
+        const oiBase = Number(row.oi);
+        if (Number.isFinite(oiBase) && oiBase > 0) candleWithOiCount += 1;
+        const openInterestValueFromOi = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : Number.NaN;
+        const openInterestValue = Number.isFinite(openInterestValueFromOi)
+          ? openInterestValueFromOi
+          : Number.isFinite(turnoverNum)
+            ? turnoverNum
+            : Number.isFinite(volumeNum)
+              ? volumeNum
+              : 0;
+        const fundingRateRaw = Number(row.fundingRate);
+        if (Number.isFinite(fundingRateRaw)) candleWithFundingCount += 1;
+        const fundingRate = Number.isFinite(fundingRateRaw) ? fundingRateRaw : 0;
         const tsClose = candleStart + intervalMin * 60_000;
         const tickerPayload = { openInterest: openInterestValue, openInterestValue, fundingRate };
         const openPrice = Number.isFinite(open) && open > 0 ? open : close;
@@ -562,7 +575,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         candleCount += 1;
       }
 
-      if (symbol === sampleSymbolForDebug) sampleSymbolCandleCount = candleCount;
+      if (symbol === sampleSymbolForDebug) {
+        sampleSymbolCandleCount = candleCount;
+        sampleSymbolOiSamplesUsed = candleWithOiCount;
+        sampleSymbolFundingSamplesUsed = candleWithFundingCount;
+      }
 
       if (DEBUG_DATASET_TF && tapes.length === 0) {
         const firstTs = events.length ? events[0]?.ts ?? null : null;
@@ -572,6 +589,19 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: intervalMin }, events, firstTsMs, lastTsMs });
     }
     hooks?.onLoadProgress?.(100, 100);
+    if (DEBUG_OPT_MARKETDATA) {
+      const oiPct = sampleSymbolCandleCount > 0 ? (sampleSymbolOiSamplesUsed / Math.max(1, sampleSymbolCandleCount)) * 100 : 0;
+      const fundingPct = sampleSymbolCandleCount > 0 ? (sampleSymbolFundingSamplesUsed / Math.max(1, sampleSymbolCandleCount)) * 100 : 0;
+      console.log("[optimizer-marketdata]", {
+        interval: datasetInterval,
+        sampleSymbol: sampleSymbolForDebug || null,
+        candlesRead: sampleSymbolCandleCount,
+        oiSamplesUsed: sampleSymbolOiSamplesUsed,
+        fundingSamplesUsed: sampleSymbolFundingSamplesUsed,
+        candlesWithOiPct: Number(oiPct.toFixed(2)),
+        candlesWithFundingPct: Number(fundingPct.toFixed(2)),
+      });
+    }
   }
   if (!(args.cacheDataset || (Array.isArray(args.cacheDatasets) && args.cacheDatasets.length))) {
   const tapePathEntries = tapeFiles.map((file) => ({ tapeId: file.tapeId, tapePath: getTapePath(file.tapeId), byteLimit: file.bytes > -1 ? file.bytes : undefined }));
@@ -733,6 +763,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           entryOffsetPct: params.entryOffsetPct,
           entryTimeoutSec: effectiveEntryTimeoutSec,
           rearmDelayMs: Math.max(0, Math.floor(params.rearmMs)),
+          applyFunding: false,
         },
       };
 
@@ -962,7 +993,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     flushNegativeBlacklist(blacklistState);
   }
 
-  if (DEBUG_OPT_TRADES) {
+  if (DEBUG_OPT_TRADES || DEBUG_OPT_MARKETDATA) {
     console.log("[optimizer-run-summary]", {
       interval: String((args.cacheDatasets?.[0]?.interval ?? args.cacheDataset?.interval ?? args.optTfMin ?? "1")),
       sampleSymbol: sampleSymbolForDebug || null,
