@@ -208,6 +208,36 @@ function makeResultSignature(row: OptimizerResultRow): string {
   ].join("|");
 }
 
+function readOptimizerSortValue(row: OptimizerResultRow, key: OptimizerSortKeyExtended): number {
+  switch (key) {
+    case "priceTh":
+      return Number(row.params.priceThresholdPct) || 0;
+    case "oivTh":
+      return Number(row.params.oivThresholdPct) || 0;
+    case "tp":
+      return Number(row.params.tpRoiPct) || 0;
+    case "sl":
+      return Number(row.params.slRoiPct) || 0;
+    case "offset":
+      return Number(row.params.entryOffsetPct) || 0;
+    case "timeoutSec":
+      return Number(row.params.timeoutSec) || 0;
+    case "rearmMs":
+      return Number(row.params.rearmMs) || 0;
+    default:
+      return Number(row[key]) || 0;
+  }
+}
+
+function sortOptimizerRows(rows: OptimizerResultRow[], key: OptimizerSortKeyExtended, dir: OptimizerSortDir): OptimizerResultRow[] {
+  const direction = dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const delta = (readOptimizerSortValue(a, key) - readOptimizerSortValue(b, key)) * direction;
+    if (delta !== 0) return delta;
+    return (Number(a.rank) - Number(b.rank)) * direction;
+  });
+}
+
 
 function loadStoredPositiveInt(key: string, fallback: string, min: number): string {
   try {
@@ -1609,10 +1639,14 @@ useEffect(() => {
     };
   }, [fetchAllResultsForJob, logAppendOnlyDebug, loopAggState.byRunId, loopStatus?.loop?.lastJobId, upsertLoopRunRowsAppend]);
   async function onSort(nextSortKey: OptimizerSortKeyExtended) {
-    if (!activeJobId) return;
     const nextSortDir: OptimizerSortDir = sortKey === nextSortKey && sortDir === "desc" ? "asc" : "desc";
     setSortKey(nextSortKey);
     setSortDir(nextSortDir);
+    if (isLoopDisplay) {
+      setPage(1);
+      return;
+    }
+    if (!activeJobId) return;
     await fetchResults(1, nextSortKey, nextSortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
   }
 
@@ -1764,14 +1798,17 @@ useEffect(() => {
   const displayedRows = isLoopDisplay
     ? (excludeNegative ? rowsForDisplay.filter((row) => row.netPnl >= 0) : rowsForDisplay)
     : rowsForDisplay;
+  const sortedDisplayedRows = useMemo(() => (
+    isLoopDisplay ? sortOptimizerRows(displayedRows, sortKey, sortDir) : displayedRows
+  ), [displayedRows, isLoopDisplay, sortDir, sortKey]);
   const rawRowsCount = rawRows.length;
-  const displayedRowsCount = displayedRows.length;
+  const displayedRowsCount = sortedDisplayedRows.length;
   const loopDisplayRows = useMemo(() => {
-    if (!isLoopDisplay) return displayedRows;
+    if (!isLoopDisplay) return sortedDisplayedRows;
     const start = (page - 1) * resultsPageSize;
-    return displayedRows.slice(start, start + resultsPageSize);
-  }, [displayedRows, isLoopDisplay, page, resultsPageSize]);
-  const totalPages = Math.max(1, Math.ceil((isLoopDisplay ? displayedRows.length : totalRows) / resultsPageSize));
+    return sortedDisplayedRows.slice(start, start + resultsPageSize);
+  }, [isLoopDisplay, page, resultsPageSize, sortedDisplayedRows]);
+  const totalPages = Math.max(1, Math.ceil((isLoopDisplay ? sortedDisplayedRows.length : totalRows) / resultsPageSize));
   const jobHistoryCurrentPage = Math.floor(jobHistoryOffset / jobHistoryLimit) + 1;
   const jobHistoryTotalPages = Math.max(1, Math.ceil(jobHistoryTotal / jobHistoryLimit));
   const historyHoursByJobId = useMemo(() => {
@@ -2149,7 +2186,7 @@ useEffect(() => {
                 </Form.Select>
               </div>
               <div>
-                Page <b>{Math.min(page, totalPages)}</b> of <b>{totalPages}</b> · Total <b>{isLoopDisplay ? displayedRows.length : totalRows}</b>
+                Page <b>{Math.min(page, totalPages)}</b> of <b>{totalPages}</b> · Total <b>{isLoopDisplay ? sortedDisplayedRows.length : totalRows}</b>
               </div>
             </div>
             <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
@@ -2182,7 +2219,7 @@ useEffect(() => {
                 onCopyToSettings={copyToSettings}
               />
             </Table>
-            {displayedRows.length ? (
+            {sortedDisplayedRows.length ? (
               <Pagination>
                 <Pagination.First onClick={() => void onPageChange(1)} disabled={page <= 1} />
                 <Pagination.Prev onClick={() => void onPageChange(Math.max(1, page - 1))} disabled={page <= 1} />
