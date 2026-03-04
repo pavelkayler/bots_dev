@@ -5,7 +5,7 @@ import readline from "node:readline";
 import { BybitMarketCache } from "../engine/BybitMarketCache.js";
 import { CandleTracker } from "../engine/CandleTracker.js";
 import { SignalEngine } from "../engine/SignalEngine.js";
-import { PaperBroker } from "../paper/PaperBroker.js";
+import { PaperBroker, type PaperStats } from "../paper/PaperBroker.js";
 import { configStore } from "../runtime/configStore.js";
 import { getTapePath, safeId } from "./tapeStore.js";
 
@@ -39,6 +39,8 @@ type RandomizedParams = {
   timeoutSec: number;
   rearmMs: number;
 };
+
+export type OptimizerParams = RandomizedParams;
 
 export type OptimizerResult = {
   netPnl: number;
@@ -444,6 +446,7 @@ export type RunOptimizationArgs = {
     interval?: string;
   };
   cacheDatasets?: Array<{ symbols: string[]; startMs: number; endMs: number; interval?: string }>;
+  fixedParams?: OptimizerParams;
 };
 
 export type RunOptimizationHooks = {
@@ -455,6 +458,7 @@ export type RunOptimizationHooks = {
   onBlacklistUpdate?: (summary: { count: number; skipped: number }) => void;
   onCheckpoint?: (summary: { done: number; total: number; donePercent: number; partialResults: OptimizerResult[] }) => void;
   onRowsAppend?: (rows: OptimizerResult[]) => void;
+  onCandidateComplete?: (summary: { params: OptimizerParams; trades: any[]; stats: PaperStats }) => void;
 };
 
 export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: RunOptimizationHooks): Promise<{
@@ -733,7 +737,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       break;
     }
 
-    const randomizedParams = buildCandidateParams(
+    const randomizedParams = args.fixedParams ?? buildCandidateParams(
       rng,
       ranges,
       {
@@ -763,6 +767,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     let netPnlTotal = 0;
     let tradesTotal = 0;
     let winsTotal = 0;
+    let feesPaidTotal = 0;
+    let fundingAccruedTotal = 0;
 
     let signalsOk = 0;
     let decisionsNoRefs = 0;
@@ -772,6 +778,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     let closesTp = 0;
     let closesSl = 0;
     let closesForce = 0;
+    const tradeEvents: any[] = [];
 
     const closes: CloseSnapshot[] = [];
 
@@ -823,10 +830,12 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           if (ev?.type === "POSITION_CLOSE_TP") {
             closesTp += 1;
             closes.push({ ts: Number(ev.ts) || 0, realizedPnl: Number(ev?.payload?.realizedPnl) || 0 });
+            tradeEvents.push({ type: ev.type, ts: Number(ev.ts) || 0, payload: ev?.payload ?? {} });
           }
           if (ev?.type === "POSITION_CLOSE_SL") {
             closesSl += 1;
             closes.push({ ts: Number(ev.ts) || 0, realizedPnl: Number(ev?.payload?.realizedPnl) || 0 });
+            tradeEvents.push({ type: ev.type, ts: Number(ev.ts) || 0, payload: ev?.payload ?? {} });
           }
           if (ev?.type === "POSITION_FORCE_CLOSE") {
             closesForce += 1;
@@ -949,6 +958,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       netPnlTotal += stats.netRealized;
       tradesTotal += stats.closedTrades;
       winsTotal += stats.wins;
+      feesPaidTotal += Number(stats.feesPaid) || 0;
+      fundingAccruedTotal += Number(stats.fundingAccrued) || 0;
       debugClosedTrades += stats.closedTrades;
     }
 
@@ -998,6 +1009,20 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       directionMode: args.directionMode ?? "both",
       params,
     };
+    hooks?.onCandidateComplete?.({
+      params,
+      trades: tradeEvents,
+      stats: {
+        openPositions: 0,
+        pendingOrders: 0,
+        closedTrades: tradesTotal,
+        wins: winsTotal,
+        losses: Math.max(0, tradesTotal - winsTotal),
+        netRealized: netPnlTotal,
+        feesPaid: feesPaidTotal,
+        fundingAccrued: fundingAccruedTotal,
+      },
+    });
     if (blacklistState && candidateResult.netPnl < 0 && !blacklistState.negativeSet.has(paramSig)) {
       blacklistState.negativeSet.add(paramSig);
       addedSinceFlush += 1;
@@ -1069,6 +1094,56 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       baseSeed,
       effectiveSeed,
       runIndex,
+    },
+  };
+}
+
+
+export async function simulateCandidateTrades(args: RunOptimizationArgs, params: OptimizerParams): Promise<{ trades: any[]; stats: PaperStats; }> {
+  let captured: { trades: any[]; stats: PaperStats } | null = null;
+  await runOptimizationCore(
+    {
+      ...args,
+      candidates: 1,
+      excludeNegative: false,
+      rememberNegatives: false,
+      fixedParams: params,
+    },
+    {
+      onCandidateComplete: (summary) => {
+        captured = {
+          trades: summary.trades
+            .filter((ev) => ev?.type === "POSITION_CLOSE_TP" || ev?.type === "POSITION_CLOSE_SL")
+            .map((ev) => ({
+              type: ev.type,
+              side: ev?.payload?.side,
+              entryPrice: ev?.payload?.entryPrice,
+              closePrice: ev?.payload?.closePrice,
+              qty: ev?.payload?.qty,
+              pnlFromMove: ev?.payload?.pnlFromMove,
+              feesPaid: ev?.payload?.feesPaid,
+              realizedPnl: ev?.payload?.realizedPnl,
+              minRoiPct: ev?.payload?.minRoiPct,
+              maxRoiPct: ev?.payload?.maxRoiPct,
+              closedAt: ev?.payload?.closedAt,
+              symbol: ev?.payload?.symbol,
+            })),
+          stats: summary.stats,
+        };
+      },
+    }
+  );
+  return captured ?? {
+    trades: [],
+    stats: {
+      openPositions: 0,
+      pendingOrders: 0,
+      closedTrades: 0,
+      wins: 0,
+      losses: 0,
+      netRealized: 0,
+      feesPaid: 0,
+      fundingAccrued: 0,
     },
   };
 }

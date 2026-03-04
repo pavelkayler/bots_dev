@@ -254,6 +254,15 @@ export function getCurrentJobExportUrl(format: "json" | "csv" = "json", sortKey?
   return `${base}/api/optimizer/jobs/current/export?${params.toString()}`;
 }
 
+
+export function getJobTradesExportUrl(jobId: string, rank: number): string {
+  const base = getApiBase();
+  const params = new URLSearchParams();
+  params.set("rank", String(Math.max(1, Math.floor(Number(rank) || 1))));
+  params.set("format", "json");
+  return `${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/trades/export?${params.toString()}`;
+}
+
 export async function cancelCurrentJob(): Promise<{ ok: true }> {
   const base = getApiBase();
   return await postJson<{ ok: true }>(`${base}/api/optimizer/jobs/current/cancel`, {});

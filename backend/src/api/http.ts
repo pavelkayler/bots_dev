@@ -17,6 +17,8 @@ import { readLoopState, recoverLoopStateOnBoot, type OptimizerLoopProgressState,
 import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 import {
   DEFAULT_OPTIMIZER_PRECISION,
+  simulateCandidateTrades,
+  type OptimizerParams,
   type OptimizerSimulationParams,
   sortOptimizationResults,
   type OptimizerPrecision,
@@ -2120,6 +2122,74 @@ let sim: OptimizerSimulationParams;
     return { ok: true, imported: incoming.length, total: deduped.length, mode };
   });
 
+
+  app.get("/api/optimizer/jobs/:jobId/trades/export", async (req, reply) => {
+    if (!isLocalRequestIp((req as any).ip)) {
+      reply.code(403);
+      return { error: "forbidden" };
+    }
+    const jobId = String((req.params as any).jobId ?? "").trim();
+    const query = (req.query ?? {}) as any;
+    const format = String(query.format ?? "json").toLowerCase();
+    if (format !== "json") {
+      reply.code(400);
+      return { error: "invalid_format" };
+    }
+    const rank = Math.max(1, Math.floor(Number(query.rank) || 0));
+    if (!Number.isFinite(rank) || rank < 1) {
+      reply.code(400);
+      return { error: "invalid_rank" };
+    }
+
+    const job = optimizerJobs.get(jobId);
+    if (!job) {
+      reply.code(404);
+      return { error: "optimizer_job_not_found" };
+    }
+
+    const resolvedRunPayload = withDatasetResolved((job.runPayload as Record<string, unknown>) ?? {});
+    const { sorted } = getOptimizerJobResultsSorted(job, query);
+    const candidate = sorted[rank - 1];
+    if (!candidate) {
+      reply.code(404);
+      return { error: "optimizer_rank_not_found" };
+    }
+
+    const params = candidate.params as OptimizerParams;
+    const runArgs = {
+      tapeIds: Array.isArray((resolvedRunPayload as any)?.tapeIds) ? (resolvedRunPayload as any).tapeIds.map((id: unknown) => String(id ?? "")).filter(Boolean) : [],
+      candidates: 1,
+      seed: Number((resolvedRunPayload as any)?.seed) || 1,
+      ...(candidate.directionMode ? { directionMode: candidate.directionMode } : {}),
+      optTfMin: Number((resolvedRunPayload as any)?.optTfMin) || 15,
+      ...(Array.isArray((resolvedRunPayload as any)?.tapeFiles) ? { tapeFiles: (resolvedRunPayload as any).tapeFiles } : {}),
+      ...(((resolvedRunPayload as any)?.ranges && typeof (resolvedRunPayload as any).ranges === "object") ? { ranges: (resolvedRunPayload as any).ranges as OptimizerRanges } : {}),
+      ...(((resolvedRunPayload as any)?.precision && typeof (resolvedRunPayload as any).precision === "object") ? { precision: (resolvedRunPayload as any).precision as Partial<OptimizerPrecision> } : {}),
+      ...(Number.isFinite(Number((resolvedRunPayload as any)?.timeRangeFromTs)) ? { timeRangeFromTs: Number((resolvedRunPayload as any)?.timeRangeFromTs) } : {}),
+      ...(Number.isFinite(Number((resolvedRunPayload as any)?.timeRangeToTs)) ? { timeRangeToTs: Number((resolvedRunPayload as any)?.timeRangeToTs) } : {}),
+      ...(((resolvedRunPayload as any)?.sim && typeof (resolvedRunPayload as any).sim === "object") ? { sim: (resolvedRunPayload as any).sim as OptimizerSimulationParams } : {}),
+      ...(((resolvedRunPayload as any)?.cacheDataset && typeof (resolvedRunPayload as any).cacheDataset === "object") ? { cacheDataset: (resolvedRunPayload as any).cacheDataset as any } : {}),
+      ...(Array.isArray((resolvedRunPayload as any)?.cacheDatasets) ? { cacheDatasets: (resolvedRunPayload as any).cacheDatasets as any } : {}),
+    };
+    const simulation = await simulateCandidateTrades(runArgs, params);
+
+    return {
+      jobId,
+      rank,
+      runPayload: job.runPayload,
+      params,
+      ...(candidate.directionMode ? { directionMode: candidate.directionMode } : {}),
+      trades: simulation.trades,
+      summary: {
+        netPnl: simulation.stats.netRealized,
+        trades: simulation.stats.closedTrades,
+        wins: simulation.stats.wins,
+        losses: simulation.stats.losses,
+        feesPaid: simulation.stats.feesPaid,
+        fundingAccrued: simulation.stats.fundingAccrued,
+      },
+    };
+  });
 
   app.get("/api/optimizer/jobs/:jobId/export", async (req, reply) => {
     const jobId = String((req.params as any).jobId ?? "");

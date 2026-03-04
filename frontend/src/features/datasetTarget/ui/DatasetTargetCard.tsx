@@ -277,7 +277,10 @@ export default function DatasetTargetCard() {
               <Form.Label style={{ fontSize: 12 }}>Universe</Form.Label>
               <Form.Select
                 value={draft.universeId ?? ""}
-                onChange={(e) => setDraft((prev) => ({ ...prev, universeId: e.currentTarget.value || null }))}
+                onChange={(e) => {
+                  const value = e?.currentTarget?.value ?? "";
+                  setDraft((prev) => ({ ...prev, universeId: value || null }));
+                }}
                 disabled={receiveRunning}
               >
                 <option value="">Not selected</option>
@@ -293,7 +296,18 @@ export default function DatasetTargetCard() {
               <Form.Label style={{ fontSize: 12 }}>Range mode</Form.Label>
               <Form.Select
                 value={draft.rangeKind}
-                onChange={(e) => setDraft((prev) => ({ ...prev, rangeKind: e.currentTarget.value === "manual" ? "manual" : "preset" }))}
+                onChange={(e) => {
+                  const value = e?.currentTarget?.value ?? "";
+                  const nextRangeKind = value === "manual" ? "manual" : "preset";
+                  setDraft((prev) => {
+                    const fallbackPreset = PRESETS.includes(prev.preset) ? prev.preset : (PRESETS[0] ?? "24h");
+                    return {
+                      ...prev,
+                      rangeKind: nextRangeKind,
+                      preset: nextRangeKind === "preset" ? fallbackPreset : prev.preset,
+                    };
+                  });
+                }}
                 disabled={receiveRunning}
               >
                 <option value="preset">Preset</option>
@@ -308,7 +322,11 @@ export default function DatasetTargetCard() {
                 <Form.Label style={{ fontSize: 12 }}>Preset</Form.Label>
                 <Form.Select
                   value={draft.preset}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, preset: e.currentTarget.value as DatasetRangePreset }))}
+                  onChange={(e) => {
+                    const value = e?.currentTarget?.value ?? "";
+                    const preset = PRESETS.includes(value as DatasetRangePreset) ? (value as DatasetRangePreset) : (PRESETS[0] ?? "24h");
+                    setDraft((prev) => ({ ...prev, preset }));
+                  }}
                   disabled={receiveRunning}
                 >
                   {PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -323,7 +341,10 @@ export default function DatasetTargetCard() {
                   <Form.Control
                     type="datetime-local"
                     value={draft.manualStart}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, manualStart: e.currentTarget.value }))}
+                    onChange={(e) => {
+                      const value = e?.currentTarget?.value ?? "";
+                      setDraft((prev) => ({ ...prev, manualStart: value }));
+                    }}
                     disabled={receiveRunning}
                   />
                 </Form.Group>
@@ -334,7 +355,10 @@ export default function DatasetTargetCard() {
                   <Form.Control
                     type="datetime-local"
                     value={draft.manualEnd}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, manualEnd: e.currentTarget.value }))}
+                    onChange={(e) => {
+                      const value = e?.currentTarget?.value ?? "";
+                      setDraft((prev) => ({ ...prev, manualEnd: value }));
+                    }}
                     disabled={receiveRunning}
                   />
                 </Form.Group>

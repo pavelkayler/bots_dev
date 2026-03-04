@@ -10,6 +10,7 @@ import {
   getStatus,
   getJobExportUrl,
   getCurrentJobExportUrl,
+  getJobTradesExportUrl,
   startOptimizerLoop,
   stopOptimizerLoop,
   pauseOptimizerLoop,
@@ -283,9 +284,10 @@ type OptimizerResultRowProps = {
   rowIndex?: number;
   debugTrackMount: boolean;
   onCopyToSettings: (row: OptimizationResult) => void;
+  onExportTrades: (row: OptimizationResult) => void;
 };
 
-const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecision, rowIndex, debugTrackMount, onCopyToSettings }: OptimizerResultRowProps) {
+const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecision, rowIndex, debugTrackMount, onCopyToSettings, onExportTrades }: OptimizerResultRowProps) {
   const rowDebugIdRef = useRef(makeResultSignature(row));
   const rowDebugIndexRef = useRef(typeof rowIndex === "number" ? rowIndex : -1);
 
@@ -322,7 +324,7 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
       <td style={{ whiteSpace: "nowrap" }}>{row.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td>
       <td style={{ whiteSpace: "nowrap" }}>{(row.params.rearmMs / 1000).toFixed(activePrecision.rearmMs)}</td>
       <td style={{ whiteSpace: "nowrap" }}>
-        <Button size="sm" variant="outline-secondary" onClick={() => onCopyToSettings(row)}>Copy to settings</Button>
+        <div className="d-flex gap-1"><Button size="sm" variant="outline-secondary" onClick={() => onCopyToSettings(row)}>Copy</Button><Button size="sm" variant="outline-secondary" onClick={() => onExportTrades(row)}>Export trades</Button></div>
       </td>
     </tr>
   );
@@ -330,6 +332,7 @@ const OptimizerResultRow = memo(function OptimizerResultRow({ row, activePrecisi
   prev.row === next.row
   && prev.rowIndex === next.rowIndex
   && prev.onCopyToSettings === next.onCopyToSettings
+  && prev.onExportTrades === next.onExportTrades
   && prev.debugTrackMount === next.debugTrackMount
   && prev.activePrecision.priceTh === next.activePrecision.priceTh
   && prev.activePrecision.oivTh === next.activePrecision.oivTh
@@ -346,9 +349,10 @@ type OptimizerResultsBodyProps = {
   isLoopDisplay: boolean;
   debugTrackedRowIds: string[];
   onCopyToSettings: (row: OptimizationResult) => void;
+  onExportTrades: (row: OptimizationResult) => void;
 };
 
-const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePrecision, isLoopDisplay, debugTrackedRowIds, onCopyToSettings }: OptimizerResultsBodyProps) {
+const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePrecision, isLoopDisplay, debugTrackedRowIds, onCopyToSettings, onExportTrades }: OptimizerResultsBodyProps) {
   useEffect(() => {
     if (!import.meta.env.DEV || localStorage.getItem("debugOptimizerRowRenders") !== "1") return;
     console.log("[optimizer-results-body-mount]");
@@ -374,6 +378,7 @@ const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePr
             rowIndex={isLoopDisplay ? undefined : rowIndex}
             debugTrackMount={debugTrackMount}
             onCopyToSettings={onCopyToSettings}
+            onExportTrades={onExportTrades}
           />
         );
       })}
@@ -412,7 +417,7 @@ export function OptimizerPage() {
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState("15");
-  const [excludeNegative, setExcludeNegative] = useState(false);
+  const [hideNegativeNetPnl, setHideNegativeNetPnl] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
   const [, setOptimizerPaused] = useState(false);
   const [jobStartedAtMs, setJobStartedAtMs] = useState<number | null>(null);
@@ -736,7 +741,7 @@ useEffect(() => {
       const n = Math.floor(Number(savedMinTrades));
       if (Number.isFinite(n) && n >= 0) setMinTrades(String(n));
     }
-    setExcludeNegative(localStorage.getItem(EXCLUDE_NEGATIVE_STORAGE_KEY) === "1");
+    setHideNegativeNetPnl(localStorage.getItem(EXCLUDE_NEGATIVE_STORAGE_KEY) === "1");
     setRememberNegatives(localStorage.getItem(REMEMBER_NEGATIVES_STORAGE_KEY) === "1");
     setLoopRunsCount(loadStoredPositiveInt(LOOP_RUNS_COUNT_STORAGE_KEY, "3", 1));
     setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
@@ -846,8 +851,8 @@ useEffect(() => {
   }, [simSlippageBps]);
 
   useEffect(() => {
-    localStorage.setItem(EXCLUDE_NEGATIVE_STORAGE_KEY, excludeNegative ? "1" : "0");
-  }, [excludeNegative]);
+    localStorage.setItem(EXCLUDE_NEGATIVE_STORAGE_KEY, hideNegativeNetPnl ? "1" : "0");
+  }, [hideNegativeNetPnl]);
 
   useEffect(() => {
     localStorage.setItem(REMEMBER_NEGATIVES_STORAGE_KEY, rememberNegatives ? "1" : "0");
@@ -1001,7 +1006,7 @@ useEffect(() => {
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
         directionMode,
         optTfMin: Math.max(15, Math.floor(Number(optTfMin) || 15)),
-        excludeNegative,
+        excludeNegative: false,
         rememberNegatives,
         sim: {
           marginPerTrade,
@@ -1717,6 +1722,14 @@ useEffect(() => {
   }, [activeJobId, activePrecision]);
 
 
+  const onExportTrades = useCallback((row: OptimizationResult) => {
+    const loopRowJobId = String((row as any)?.__runJobId ?? "");
+    const rowJobId = loopRowJobId || String(activeJobId ?? "");
+    if (!rowJobId) return;
+    window.open(getJobTradesExportUrl(rowJobId, row.rank), "_blank", "noopener,noreferrer");
+  }, [activeJobId]);
+
+
 
   async function refreshJobHistory() {
     try {
@@ -1814,7 +1827,7 @@ useEffect(() => {
   const rawRows = isLoopDisplay ? loopAggRowsForRender : singleRowsForRender;
   const rowsForDisplay = rawRows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
   const displayedRows = isLoopDisplay
-    ? (excludeNegative ? rowsForDisplay.filter((row) => row.netPnl >= 0) : rowsForDisplay)
+    ? (hideNegativeNetPnl ? rowsForDisplay.filter((row) => row.netPnl >= 0) : rowsForDisplay)
     : rowsForDisplay;
   const sortedDisplayedRows = useMemo(() => (
     isLoopDisplay ? sortOptimizerRows(displayedRows, sortKey, sortDir) : displayedRows
@@ -2035,18 +2048,6 @@ useEffect(() => {
               </Col>
               <Col md={2} sm={4} xs={6}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>marginPerTrade</Form.Label>
-                <Form.Control value={simMarginPerTrade} onChange={(e) => setSimMarginPerTrade(e.currentTarget.value)} type="number" min={0.0001} step={0.1} />
-                </Form.Group>
-              </Col>
-              <Col md={2} sm={4} xs={6}>
-                <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>leverage</Form.Label>
-                <Form.Control value={simLeverage} onChange={(e) => setSimLeverage(e.currentTarget.value)} type="number" min={1} step={0.1} />
-                </Form.Group>
-              </Col>
-              <Col md={2} sm={4} xs={6}>
-                <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
                 <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(String(Math.max(15, Math.floor(Number(e.currentTarget.value) || 15))))}>
                   <option value="15">15</option>
@@ -2066,34 +2067,38 @@ useEffect(() => {
               <Col xs={12}>
                 <div className="d-flex flex-wrap gap-3">
                   <Form.Group>
-                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={excludeNegative} disabled={loopActive} onChange={(e) => setExcludeNegative(e.currentTarget.checked)} />
-                  </Form.Group>
-                  <Form.Group>
-                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives" checked={rememberNegatives} disabled={loopActive} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
+                    <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Remember negatives" checked={rememberNegatives} onChange={(e) => setRememberNegatives(e.currentTarget.checked)} />
                   </Form.Group>
                   <Form.Group>
                     <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Loop until Stop" checked={loopInfinite} disabled={loopActive} onChange={(e) => setLoopInfinite(e.currentTarget.checked)} />
                   </Form.Group>
                 </div>
               </Col>
-              <Col xs={12}>
-                <details>
-                  <summary style={{ cursor: "pointer", fontSize: 12 }}>Advanced sim params</summary>
-                  <Row className="g-2 align-items-end mt-1">
-                    <Col md={2} sm={4} xs={6}>
-                      <Form.Group>
-                        <Form.Label style={{ fontSize: 12 }}>feeBps</Form.Label>
-                        <Form.Control value={simFeeBps} onChange={(e) => setSimFeeBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
-                      </Form.Group>
-                    </Col>
-                    <Col md={2} sm={4} xs={6}>
-                      <Form.Group>
-                        <Form.Label style={{ fontSize: 12 }}>slippageBps</Form.Label>
-                        <Form.Control value={simSlippageBps} onChange={(e) => setSimSlippageBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
-                      </Form.Group>
-                    </Col>
-                  </Row>
-                </details>
+            </Row>
+            <Row className="g-2 align-items-end mb-2">
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
+                  <Form.Label style={{ fontSize: 12 }}>marginPerTrade</Form.Label>
+                  <Form.Control value={simMarginPerTrade} onChange={(e) => setSimMarginPerTrade(e.currentTarget.value)} type="number" min={0.0001} step={0.1} />
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
+                  <Form.Label style={{ fontSize: 12 }}>leverage</Form.Label>
+                  <Form.Control value={simLeverage} onChange={(e) => setSimLeverage(e.currentTarget.value)} type="number" min={1} step={0.1} />
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
+                  <Form.Label style={{ fontSize: 12 }}>feeBps</Form.Label>
+                  <Form.Control value={simFeeBps} onChange={(e) => setSimFeeBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
+                </Form.Group>
+              </Col>
+              <Col md={2} sm={4} xs={6}>
+                <Form.Group>
+                  <Form.Label style={{ fontSize: 12 }}>slippageBps</Form.Label>
+                  <Form.Control value={simSlippageBps} onChange={(e) => setSimSlippageBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
+                </Form.Group>
               </Col>
             </Row>
             <Row className="g-2 align-items-center mb-2">
@@ -2160,7 +2165,7 @@ useEffect(() => {
                 Elapsed: <b>{formatDuration(elapsedSec)}</b>
                 {etaSec != null ? <> · ETA: <b>{formatEta(etaSec)}</b></> : null}
               </div>
-              <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{excludeNegative ? "ON" : "OFF"}</b></div>
+              <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{hideNegativeNetPnl ? "ON" : "OFF"}</b></div>
             </> : null}
 
             <div className="d-flex align-items-center gap-2 mb-2">
@@ -2198,6 +2203,7 @@ useEffect(() => {
                 <Form.Select size="sm" value={resultsPageSize} onChange={(e) => void onResultsPageSizeChange(e)} style={{ width: 90 }}>
                   {RESULTS_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
                 </Form.Select>
+                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={hideNegativeNetPnl} onChange={(e) => setHideNegativeNetPnl(e.currentTarget.checked)} />
               </div>
               <div>
                 Page <b>{Math.min(page, totalPages)}</b> of <b>{totalPages}</b> · Total <b>{isLoopDisplay ? sortedDisplayedRows.length : totalRows}</b>
@@ -2232,6 +2238,7 @@ useEffect(() => {
                 isLoopDisplay={isLoopDisplay}
                 debugTrackedRowIds={loopDebugTrackedRowIds}
                 onCopyToSettings={copyToSettings}
+                onExportTrades={onExportTrades}
               />
             </Table>
             {sortedDisplayedRows.length ? (
@@ -2333,7 +2340,7 @@ useEffect(() => {
                                       <tr key={`${row.jobId}-${r.netPnl}-${r.trades}-${r.params.priceThresholdPct}-${r.params.oivThresholdPct}-${i}`}>
                                         <td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{String(r.directionMode ?? "both").toLowerCase()}</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
                                         <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{(r.params.rearmMs / 1000).toFixed(activePrecision.rearmMs)}</td>
-                                        <td><Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy to settings</Button></td>
+                                        <td><Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy</Button></td>
                                       </tr>
                                     ))}
                                   </tbody>
