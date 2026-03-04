@@ -10,7 +10,6 @@ type DraftState = {
   universeId: string | null;
   rangeKind: "preset" | "manual";
   preset: DatasetRangePreset;
-  interval: BybitKlineInterval;
   manualStart: string;
   manualEnd: string;
 };
@@ -19,7 +18,7 @@ const STORAGE_KEY = "datasetTargetDraft";
 const RECEIVE_JOB_STORAGE_KEY = "receiveDataJobId";
 const RECEIVE_LAST_JOB_STORAGE_KEY = "receiveDataLastJob";
 const PRESETS: DatasetRangePreset[] = ["6h", "12h", "24h", "48h", "1w", "2w", "4w", "1mo"];
-const TIMEFRAMES: BybitKlineInterval[] = ["5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"];
+const COMPAT_INTERVAL: BybitKlineInterval = "15";
 
 function toDatetimeLocal(ms: number): string {
   if (!Number.isFinite(ms)) return "";
@@ -41,7 +40,6 @@ function defaultDraft(): DraftState {
     universeId: null,
     rangeKind: "preset",
     preset: "24h",
-    interval: "15",
     manualStart: toDatetimeLocal(now - 24 * 60 * 60 * 1000),
     manualEnd: toDatetimeLocal(now),
   };
@@ -55,14 +53,12 @@ function draftFromTarget(target: DatasetTarget): DraftState {
       universeId: target.universeId,
       rangeKind: "preset",
       preset: target.range.preset,
-      interval: target.interval,
     };
   }
   return {
     ...base,
     universeId: target.universeId,
     rangeKind: "manual",
-    interval: target.interval,
     manualStart: toDatetimeLocal(target.range.startMs),
     manualEnd: toDatetimeLocal(target.range.endMs),
   };
@@ -78,13 +74,9 @@ function parseStoredDraft(raw: string | null): DraftState | null {
       : "24h";
     const rangeKind = parsed.rangeKind === "manual" ? "manual" : "preset";
     const universeId = typeof parsed.universeId === "string" && parsed.universeId.trim() ? parsed.universeId : null;
-    const parsedInterval = typeof parsed.interval === "string" ? parsed.interval : "";
-    const interval = TIMEFRAMES.includes(parsedInterval as BybitKlineInterval)
-      ? (parsedInterval as BybitKlineInterval)
-      : "15";
     const manualStart = typeof parsed.manualStart === "string" ? parsed.manualStart : defaults.manualStart;
     const manualEnd = typeof parsed.manualEnd === "string" ? parsed.manualEnd : defaults.manualEnd;
-    return { universeId, rangeKind, preset, interval, manualStart, manualEnd };
+    return { universeId, rangeKind, preset, manualStart, manualEnd };
   } catch {
     return null;
   }
@@ -100,7 +92,7 @@ function buildSavePayload(draft: DraftState): SavePayload | null {
   if (draft.rangeKind === "preset") {
     return {
       universeId: draft.universeId,
-      interval: draft.interval,
+      interval: COMPAT_INTERVAL,
       range: { kind: "preset", preset: draft.preset },
     };
   }
@@ -109,7 +101,7 @@ function buildSavePayload(draft: DraftState): SavePayload | null {
   if (startMs == null || endMs == null || endMs <= startMs) return null;
   return {
     universeId: draft.universeId,
-    interval: draft.interval,
+    interval: COMPAT_INTERVAL,
     range: { kind: "manual", startMs, endMs },
   };
 }
@@ -264,12 +256,6 @@ export default function DatasetTargetCard() {
     }
   }
 
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    if (window.localStorage.getItem("debugDatasetTf") !== "1") return;
-    console.log("[dataset-target-tf]", { selectedInterval: draft.interval });
-  }, [draft.interval]);
-
   async function onCancelReceive() {
     if (!receiveJobId) return;
     try {
@@ -312,19 +298,6 @@ export default function DatasetTargetCard() {
               >
                 <option value="preset">Preset</option>
                 <option value="manual">Manual</option>
-              </Form.Select>
-            </Form.Group>
-          </Col>
-
-          <Col xl={2} lg={2} md={6} sm={6} xs={12}>
-            <Form.Group>
-              <Form.Label style={{ fontSize: 12 }}>Timeframe</Form.Label>
-              <Form.Select
-                value={draft.interval}
-                onChange={(e) => setDraft((prev) => ({ ...prev, interval: e.currentTarget.value as BybitKlineInterval }))}
-                disabled={receiveRunning}
-              >
-                {TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
               </Form.Select>
             </Form.Group>
           </Col>

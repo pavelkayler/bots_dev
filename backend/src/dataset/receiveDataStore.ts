@@ -60,6 +60,19 @@ type BybitOpenInterestResponse = {
 
 type OiIntervalTime = "5min";
 
+type BybitFundingHistoryItem = {
+  fundingRate?: string;
+  fundingRateTimestamp?: string;
+};
+
+type BybitFundingHistoryResponse = {
+  retCode?: number;
+  retMsg?: string;
+  result?: {
+    list?: BybitFundingHistoryItem[];
+  };
+};
+
 const BYBIT_BASE_URL = process.env.BYBIT_REST_URL ?? "https://api.bybit.com";
 const REQUEST_LIMIT = 1000;
 const WINDOW_MS = 5000;
@@ -111,6 +124,8 @@ const PROGRESS_THROTTLE_MS = 80;
 const MAX_RANGE_MS = 180 * 24 * 60 * 60 * 1000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
 const OI_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_open_interest", "5min");
+const FUNDING_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_funding_history");
+const FUNDING_STEP_MS = 8 * 60 * 60_000;
 
 const jobs = new Map<string, ReceiveJobInternal>();
 
@@ -227,6 +242,38 @@ function writeOiCache(symbol: string, rows: Map<number, string>) {
   const sorted = Array.from(rows.entries()).sort((a, b) => a[0] - b[0]);
   const body = sorted.map(([timestamp, openInterest]) => JSON.stringify({ timestamp, openInterest })).join("\n");
   fs.writeFileSync(oiCachePath(symbol), body ? `${body}\n` : "", "utf8");
+}
+
+
+function fundingCachePath(symbol: string): string {
+  return path.join(FUNDING_CACHE_DIR, `${symbol}.jsonl`);
+}
+
+function loadFundingCache(symbol: string): Map<number, string> {
+  const out = new Map<number, string>();
+  const fp = fundingCachePath(symbol);
+  if (!fs.existsSync(fp)) return out;
+  const raw = fs.readFileSync(fp, "utf8");
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line) as { timestamp?: number; fundingRate?: string };
+      const timestamp = Number(row?.timestamp);
+      const fundingRate = String(row?.fundingRate ?? "");
+      if (!Number.isFinite(timestamp) || !fundingRate) continue;
+      out.set(timestamp, fundingRate);
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+function writeFundingCache(symbol: string, rows: Map<number, string>) {
+  fs.mkdirSync(FUNDING_CACHE_DIR, { recursive: true });
+  const sorted = Array.from(rows.entries()).sort((a, b) => a[0] - b[0]);
+  const body = sorted.map(([timestamp, fundingRate]) => JSON.stringify({ timestamp, fundingRate })).join("\n");
+  fs.writeFileSync(fundingCachePath(symbol), body ? `${body}\n` : "", "utf8");
 }
 
 function alignToStep(ms: number, stepMs: number): number {
@@ -361,6 +408,36 @@ async function fetchOpenInterestPage(
   };
 }
 
+
+async function fetchFundingHistoryWindow(
+  symbol: string,
+  startMs: number,
+  endMs: number
+): Promise<Array<{ fundingRate: string; timestamp: number }>> {
+  const url = new URL(`${BYBIT_BASE_URL.replace(/\/+$/g, "")}/v5/market/funding/history`);
+  url.searchParams.set("category", "linear");
+  url.searchParams.set("symbol", symbol);
+  url.searchParams.set("startTime", String(startMs));
+  url.searchParams.set("endTime", String(endMs));
+  url.searchParams.set("limit", "200");
+
+  await limiter.acquire();
+  const res = await fetch(url.toString(), { method: "GET" });
+  const json = (await res.json()) as BybitFundingHistoryResponse;
+  const retCode = Number(json?.retCode ?? 0);
+  if (!(res.ok && retCode === 0)) {
+    const msg = String(json?.retMsg ?? `http_${res.status}`);
+    throw new Error(`funding_fetch_failed:${symbol}:${retCode}:${msg}`);
+  }
+  const list = Array.isArray(json?.result?.list) ? json.result!.list! : [];
+  return list
+    .map((item) => ({
+      fundingRate: String(item?.fundingRate ?? ""),
+      timestamp: Number(item?.fundingRateTimestamp),
+    }))
+    .filter((item) => item.fundingRate && Number.isFinite(item.timestamp));
+}
+
 async function runReceiveJob(jobId: string, target: DatasetTarget) {
   const job = jobs.get(jobId);
   if (!job) return;
@@ -386,55 +463,113 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     }
 
     const universe = readUniverse(target.universeId);
-    const selectedKlineInterval = normalizeBybitKlineInterval(target.interval);
     const baseKlineInterval: BybitKlineInterval = "1";
-    const intervalsToEnsure = [...new Set<BybitKlineInterval>([baseKlineInterval, selectedKlineInterval])];
     const symbols = Array.isArray(universe.symbols) ? universe.symbols.filter((s) => typeof s === "string" && s.trim()) : [];
 
-    const klineWindowsByKey = new Map<string, Array<{ startMs: number; endMs: number }>>();
-    const mergedByKey = new Map<string, Map<number, any>>();
+    const klineWindowsBySymbol = new Map<string, Array<{ startMs: number; endMs: number }>>();
+    const oiWindowsBySymbol = new Map<string, Array<{ startMs: number; endMs: number }>>();
+    const fundingWindowsBySymbol = new Map<string, Array<{ startMs: number; endMs: number }>>();
+    const mergedBySymbol = new Map<string, Map<number, any>>();
+    const oiBySymbol = new Map<string, Map<number, string>>();
+    const fundingBySymbol = new Map<string, Map<number, string>>();
+    const oiIntervalMs = 5 * 60_000;
+    const oiIntervalTime: OiIntervalTime = "5min";
+
+    let totalSteps = 0;
     for (const symbol of symbols) {
-      for (const interval of intervalsToEnsure) {
-        const merged = loadSymbolCache(symbol, interval);
-        mergedByKey.set(`${symbol}:${interval}`, merged);
-        const intervalMs = intervalToMs(interval);
-        const missingWindows = computeMissingWindows(new Set(merged.keys()), resolvedRange.startMs, resolvedRange.endMs, intervalMs);
-        const requestWindows: Array<{ startMs: number; endMs: number }> = [];
-        const chunkMs = intervalMs * REQUEST_LIMIT;
-        for (const window of missingWindows) {
-          for (let cursor = window.startMs; cursor <= window.endMs; cursor += chunkMs) {
-            const batchEndStartMs = Math.min(window.endMs, cursor + chunkMs - intervalMs);
-            requestWindows.push({ startMs: cursor, endMs: batchEndStartMs });
-          }
+      const merged = loadSymbolCache(symbol, baseKlineInterval);
+      mergedBySymbol.set(symbol, merged);
+      const klineMissingWindows = computeMissingWindows(new Set(merged.keys()), resolvedRange.startMs, resolvedRange.endMs, intervalToMs(baseKlineInterval));
+      const klineRequestWindows: Array<{ startMs: number; endMs: number }> = [];
+      const chunkMs = intervalToMs(baseKlineInterval) * REQUEST_LIMIT;
+      for (const window of klineMissingWindows) {
+        for (let cursor = window.startMs; cursor <= window.endMs; cursor += chunkMs) {
+          const batchEndStartMs = Math.min(window.endMs, cursor + chunkMs - intervalToMs(baseKlineInterval));
+          klineRequestWindows.push({ startMs: cursor, endMs: batchEndStartMs });
         }
-        klineWindowsByKey.set(`${symbol}:${interval}`, requestWindows);
       }
+      klineWindowsBySymbol.set(symbol, klineRequestWindows);
+      totalSteps += klineRequestWindows.length;
+
+      const oiMap = loadOiCache(symbol);
+      oiBySymbol.set(symbol, oiMap);
+      const oiMissingWindows = computeMissingWindows(new Set(oiMap.keys()), resolvedRange.startMs, resolvedRange.endMs, oiIntervalMs);
+      oiWindowsBySymbol.set(symbol, oiMissingWindows);
+      totalSteps += oiMissingWindows.length;
+
+      const fundingMap = loadFundingCache(symbol);
+      fundingBySymbol.set(symbol, fundingMap);
+      const fundingMissingWindows = computeMissingWindows(new Set(fundingMap.keys()), resolvedRange.startMs, resolvedRange.endMs, FUNDING_STEP_MS);
+      fundingWindowsBySymbol.set(symbol, fundingMissingWindows);
+      totalSteps += fundingMissingWindows.length;
     }
 
-    const totalKlineWindows = Array.from(klineWindowsByKey.values()).reduce((sum, arr) => sum + arr.length, 0);
-    setProgress(job, { totalSteps: totalKlineWindows, completedSteps: 0, message: "Starting receive." }, true);
+    setProgress(job, { totalSteps, completedSteps: 0, message: "Starting receive." }, true);
 
     let completedSteps = 0;
     const symbolErrors: string[] = [];
     const failedSymbols = new Set<string>();
     let hasAnyOi = false;
-    const oiIntervalMs = 5 * 60_000;
-    const oiIntervalTime: OiIntervalTime = "5min";
+    let hasAnyFunding = false;
 
     for (const symbol of symbols) {
       if (job.cancelRequested) break;
       setProgress(job, { currentSymbol: symbol, message: `Receiving ${symbol}` }, true);
 
-      const oiMap = loadOiCache(symbol);
-      const oiMissingWindows = computeMissingWindows(new Set(oiMap.keys()), resolvedRange.startMs, resolvedRange.endMs, oiIntervalMs);
+      const merged = mergedBySymbol.get(symbol) ?? loadSymbolCache(symbol, baseKlineInterval);
+      const klineWindows = klineWindowsBySymbol.get(symbol) ?? [];
+      for (const window of klineWindows) {
+        if (job.cancelRequested) break;
+        try {
+          const fetchStart = window.startMs;
+          const fetchEnd = window.endMs + intervalToMs(baseKlineInterval) - 1;
+          const batch = await fetchKlinesBatch(symbol, baseKlineInterval, fetchStart, fetchEnd);
+          const sortedBatch = batch
+            .map((row) => ({ row, startMs: Number(row?.[0]) }))
+            .filter((item) => Number.isFinite(item.startMs))
+            .sort((a, b) => a.startMs - b.startMs);
+          for (const item of sortedBatch) {
+            const row = item.row;
+            const startMs = Number(row?.[0]);
+            if (!Number.isFinite(startMs)) continue;
+            merged.set(startMs, {
+              symbol,
+              startMs,
+              open: String(row?.[1] ?? ""),
+              high: String(row?.[2] ?? ""),
+              low: String(row?.[3] ?? ""),
+              close: String(row?.[4] ?? ""),
+              volume: String(row?.[5] ?? ""),
+              turnover: String(row?.[6] ?? ""),
+            });
+          }
+        } catch (e: any) {
+          symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
+          failedSymbols.add(symbol);
+          break;
+        }
+        completedSteps += 1;
+        setProgress(job, { completedSteps, currentSymbol: symbol });
+      }
+
+      const oiMap = oiBySymbol.get(symbol) ?? loadOiCache(symbol);
+      const oiMissingWindows = oiWindowsBySymbol.get(symbol) ?? [];
       for (const window of oiMissingWindows) {
         if (job.cancelRequested) break;
-        let cursor: string | undefined;
-        do {
-          const page = await fetchOpenInterestPage(symbol, oiIntervalTime, window.startMs, window.endMs, cursor);
-          for (const item of page.list) oiMap.set(item.timestamp, item.openInterest);
-          cursor = page.nextPageCursor;
-        } while (cursor);
+        try {
+          let cursor: string | undefined;
+          do {
+            const page = await fetchOpenInterestPage(symbol, oiIntervalTime, window.startMs, window.endMs, cursor);
+            for (const item of page.list) oiMap.set(item.timestamp, item.openInterest);
+            cursor = page.nextPageCursor;
+          } while (cursor);
+        } catch (e: any) {
+          symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
+          failedSymbols.add(symbol);
+          break;
+        }
+        completedSteps += 1;
+        setProgress(job, { completedSteps, currentSymbol: symbol });
       }
       writeOiCache(symbol, oiMap);
       const oiSamples = Array.from(oiMap.entries())
@@ -442,65 +577,42 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         .sort((a, b) => a.timestamp - b.timestamp);
       if (oiSamples.length > 0) hasAnyOi = true;
 
-      for (const interval of intervalsToEnsure) {
+      const fundingMap = fundingBySymbol.get(symbol) ?? loadFundingCache(symbol);
+      const fundingMissingWindows = fundingWindowsBySymbol.get(symbol) ?? [];
+      for (const window of fundingMissingWindows) {
         if (job.cancelRequested) break;
-        const key = `${symbol}:${interval}`;
-        const merged = mergedByKey.get(key) ?? loadSymbolCache(symbol, interval);
-        const requestWindows = klineWindowsByKey.get(key) ?? [];
-        for (const window of requestWindows) {
-          if (job.cancelRequested) break;
-          try {
-            const fetchStart = window.startMs;
-            const fetchEnd = window.endMs + intervalToMs(interval) - 1;
-            const batch = await fetchKlinesBatch(symbol, interval, fetchStart, fetchEnd);
-            const sortedBatch = batch
-              .map((row) => ({ row, startMs: Number(row?.[0]) }))
-              .filter((item) => Number.isFinite(item.startMs))
-              .sort((a, b) => a.startMs - b.startMs);
-            for (const item of sortedBatch) {
-              const row = item.row;
-              const startMs = Number(row?.[0]);
-              if (!Number.isFinite(startMs)) continue;
-              merged.set(startMs, {
-                symbol,
-                startMs,
-                open: String(row?.[1] ?? ""),
-                high: String(row?.[2] ?? ""),
-                low: String(row?.[3] ?? ""),
-                close: String(row?.[4] ?? ""),
-                volume: String(row?.[5] ?? ""),
-                turnover: String(row?.[6] ?? ""),
-              });
-            }
-          } catch (e: any) {
-            symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
-            failedSymbols.add(symbol);
-            break;
-          }
-          completedSteps += 1;
-          setProgress(job, { completedSteps, currentSymbol: symbol });
+        try {
+          const points = await fetchFundingHistoryWindow(symbol, window.startMs, window.endMs);
+          for (const point of points) fundingMap.set(point.timestamp, point.fundingRate);
+        } catch (e: any) {
+          symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
+          failedSymbols.add(symbol);
+          break;
         }
-
-        const intervalMs = intervalToMs(interval);
-        const startKeys = Array.from(merged.keys()).sort((a, b) => a - b);
-        let oiPtr = -1;
-        for (const startMs of startKeys) {
-          if (startMs < resolvedRange.startMs || startMs > resolvedRange.endMs) continue;
-          const candleEndMs = startMs + intervalMs - 1;
-          while (oiPtr + 1 < oiSamples.length && oiSamples[oiPtr + 1]!.timestamp <= candleEndMs) oiPtr += 1;
-          const row = merged.get(startMs);
-          if (!row) continue;
-          if (oiPtr >= 0) {
-            const aligned = oiSamples[oiPtr]!;
-            row.oi = aligned.openInterest;
-            row.oiTs = aligned.timestamp;
-          } else {
-            delete row.oi;
-            delete row.oiTs;
-          }
-        }
-        writeSymbolCache(symbol, interval, merged);
+        completedSteps += 1;
+        setProgress(job, { completedSteps, currentSymbol: symbol });
       }
+      writeFundingCache(symbol, fundingMap);
+      if (fundingMap.size > 0) hasAnyFunding = true;
+
+      const startKeys = Array.from(merged.keys()).sort((a, b) => a - b);
+      let oiPtr = -1;
+      for (const startMs of startKeys) {
+        if (startMs < resolvedRange.startMs || startMs > resolvedRange.endMs) continue;
+        const candleEndMs = startMs + intervalToMs(baseKlineInterval) - 1;
+        while (oiPtr + 1 < oiSamples.length && oiSamples[oiPtr + 1]!.timestamp <= candleEndMs) oiPtr += 1;
+        const row = merged.get(startMs);
+        if (!row) continue;
+        if (oiPtr >= 0) {
+          const aligned = oiSamples[oiPtr]!;
+          row.oi = aligned.openInterest;
+          row.oiTs = aligned.timestamp;
+        } else {
+          delete row.oi;
+          delete row.oiTs;
+        }
+      }
+      writeSymbolCache(symbol, baseKlineInterval, merged);
       await waitImmediate();
     }
 
@@ -530,10 +642,10 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         startMs: resolvedRange.startMs,
         endMs: resolvedRange.endMs,
         receivedAtMs: job.finishedAtMs ?? Date.now(),
-        interval: selectedKlineInterval,
+        interval: baseKlineInterval,
         receivedSymbols: okSymbols,
         hasOi: hasAnyOi,
-        hasFunding: false,
+        hasFunding: hasAnyFunding,
       });
     } catch {
       // ignore
@@ -552,7 +664,7 @@ export function startReceiveDataJob(input?: Partial<DatasetTarget>) {
   const target: DatasetTarget = {
     universeId: typeof input?.universeId === "string" || input?.universeId === null ? input.universeId : persisted.universeId,
     range: input?.range ?? persisted.range,
-    interval: normalizeBybitKlineInterval((input as any)?.interval ?? persisted.interval),
+    interval: normalizeBybitKlineInterval((input as any)?.interval ?? "15"),
     updatedAtMs: Date.now(),
   };
 

@@ -46,8 +46,8 @@ const RANGE_DEFAULTS: RangeState = {
   tp: { min: "2", max: "12" },
   sl: { min: "2", max: "12" },
   offset: { min: "0", max: "1" },
-  timeoutSec: { min: "5", max: "60" },
-  rearmMs: { min: "0", max: "3000" },
+  timeoutSec: { min: "61", max: "61" },
+  rearmMs: { min: "900000", max: "900000" },
 };
 
 const RESULTS_PAGE_SIZES = [10, 25, 50] as const;
@@ -57,7 +57,6 @@ const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
 const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
 const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
-const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
 const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
 const SIM_MARGIN_STORAGE_KEY = "bots_dev.optimizer.sim.marginPerTrade";
 const SIM_LEVERAGE_STORAGE_KEY = "bots_dev.optimizer.sim.leverage";
@@ -139,7 +138,12 @@ function loadSavedRanges(): RangeState {
     const raw = localStorage.getItem(RANGES_STORAGE_KEY);
     if (!raw) return RANGE_DEFAULTS;
     const parsed = JSON.parse(raw) as unknown;
-    return isValidRangeState(parsed) ? parsed : RANGE_DEFAULTS;
+    if (!isValidRangeState(parsed)) return RANGE_DEFAULTS;
+    return {
+      ...parsed,
+      timeoutSec: { ...RANGE_DEFAULTS.timeoutSec },
+      rearmMs: { ...RANGE_DEFAULTS.rearmMs },
+    };
   } catch {
     return RANGE_DEFAULTS;
   }
@@ -392,7 +396,7 @@ export function OptimizerPage() {
   const [simFeeBps, setSimFeeBps] = useState(() => localStorage.getItem(SIM_FEE_BPS_STORAGE_KEY) ?? "0");
   const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
-  const [optTfMin, setOptTfMin] = useState<string>("15");
+  const optTfMin = "15";
   const [excludeNegative, setExcludeNegative] = useState(false);
   const [rememberNegatives, setRememberNegatives] = useState(false);
   const [, setOptimizerPaused] = useState(false);
@@ -705,18 +709,6 @@ useEffect(() => {
     setSeed(loadStoredPositiveInt(SEED_STORAGE_KEY, "1", 0));
     const savedDirection = localStorage.getItem(DIRECTION_STORAGE_KEY);
     if (savedDirection === "long" || savedDirection === "short" || savedDirection === "both") setDirectionMode(savedDirection);
-    const savedOptTf = localStorage.getItem(OPT_TF_STORAGE_KEY);
-    if (savedOptTf != null) {
-      const n = Math.floor(Number(savedOptTf));
-      if (Number.isFinite(n) && n >= 15) setOptTfMin(String(n));
-      else {
-        setOptTfMin("15");
-        localStorage.setItem(OPT_TF_STORAGE_KEY, "15");
-      }
-    } else {
-      setOptTfMin("15");
-      localStorage.setItem(OPT_TF_STORAGE_KEY, "15");
-    }
     const savedMinTrades = localStorage.getItem(MIN_TRADES_STORAGE_KEY);
     if (savedMinTrades != null) {
       const n = Math.floor(Number(savedMinTrades));
@@ -805,15 +797,6 @@ useEffect(() => {
   useEffect(() => {
     localStorage.setItem(DIRECTION_STORAGE_KEY, directionMode);
   }, [directionMode]);
-
-  useEffect(() => {
-    try {
-      const n = Math.floor(Number(optTfMin));
-      if (Number.isFinite(n) && n >= 15) localStorage.setItem(OPT_TF_STORAGE_KEY, String(n));
-    } catch {
-      return;
-    }
-  }, [optTfMin]);
 
   useEffect(() => {
     const n = Math.floor(Number(minTrades));
@@ -980,7 +963,7 @@ useEffect(() => {
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
         directionMode,
-        optTfMin: Number(optTfMin),
+        optTfMin: 15,
         excludeNegative,
         rememberNegatives,
         sim: {
@@ -2028,12 +2011,8 @@ useEffect(() => {
               <Col md={2} sm={4} xs={6}>
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>tf (opt)</Form.Label>
-                <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(e.currentTarget.value)}>
+                <Form.Select value={optTfMin} disabled>
                   <option value="15">15</option>
-                  <option value="30">30</option>
-                  <option value="60">60</option>
-                  <option value="120">120</option>
-                  <option value="240">240</option>
                 </Form.Select>
                 </Form.Group>
               </Col>
@@ -2107,6 +2086,7 @@ useEffect(() => {
                         size="sm"
                         value={ranges[key].min}
                         onChange={onRangeChange(key, "min")}
+                        disabled={key === "timeoutSec" || key === "rearmMs"}
                       />
                     </td>
                     <td>
@@ -2114,6 +2094,7 @@ useEffect(() => {
                         size="sm"
                         value={ranges[key].max}
                         onChange={onRangeChange(key, "max")}
+                        disabled={key === "timeoutSec" || key === "rearmMs"}
                       />
                     </td>
                   </tr>
