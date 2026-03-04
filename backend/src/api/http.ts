@@ -1484,7 +1484,12 @@ app.get("/api/config", async () => {
     const seed = Number(body?.seed ?? 1);
     const directionMode = body?.directionMode == null ? "both" : String(body.directionMode);
     const optTfMinRaw = body?.optTfMin;
-    const optTfMin = optTfMinRaw == null || String(optTfMinRaw).trim() === "" ? undefined : Math.floor(Number(optTfMinRaw));
+    const optTfMinParsed = optTfMinRaw == null || String(optTfMinRaw).trim() === "" ? 15 : Math.floor(Number(optTfMinRaw));
+    if (!Number.isFinite(optTfMinParsed) || optTfMinParsed !== 15) {
+      reply.code(400);
+      return { error: "invalid_opt_tf_min" };
+    }
+    const optTfMin = 15;
     const minTradesRaw = body?.minTrades;
     const minTrades = minTradesRaw == null || String(minTradesRaw).trim() === "" ? 1 : Math.floor(Number(minTradesRaw));
     const excludeNegative = Boolean(body?.excludeNegative);
@@ -1511,10 +1516,6 @@ app.get("/api/config", async () => {
     if (!["both", "long", "short"].includes(directionMode)) {
       reply.code(400);
       return { error: "invalid_direction_mode" };
-    }
-    if (optTfMin !== undefined && (!Number.isFinite(optTfMin) || optTfMin < 15 || optTfMin > 240)) {
-      reply.code(400);
-      return { error: "invalid_opt_tf_min" };
     }
     if (!Number.isFinite(minTrades) || minTrades < 0 || minTrades > 1_000_000) {
       reply.code(400);
@@ -1566,10 +1567,10 @@ app.get("/api/config", async () => {
       interval,
       candidates: totalCandidates,
       seed: Number.isFinite(seed) ? seed : 1,
-      ...(ranges ? { ranges } : {}),
+      ...(ranges ? { ranges: { ...ranges, timeoutSec: { min: 61, max: 61 }, rearmMs: { min: 900000, max: 900000 } } } : { ranges: { timeoutSec: { min: 61, max: 61 }, rearmMs: { min: 900000, max: 900000 } } }),
       ...(precision ? { precision } : { precision: DEFAULT_OPTIMIZER_PRECISION }),
       directionMode: directionMode as "both" | "long" | "short",
-      ...(optTfMin !== undefined ? { optTfMin } : {}),
+      optTfMin,
       minTrades,
       excludeNegative,
       rememberNegatives,
@@ -1778,12 +1779,12 @@ let sim: OptimizerSimulationParams;
       minTrades: body?.minTrades == null || String(body.minTrades).trim() === "" ? 1 : Math.floor(Number(body.minTrades)),
       excludeNegative: Boolean(body?.excludeNegative),
       rememberNegatives: Boolean(body?.rememberNegatives),
-      ...(body?.optTfMin == null || String(body.optTfMin).trim() === "" ? {} : { optTfMin: Math.floor(Number(body.optTfMin)) }),
-      ...(body?.ranges ? { ranges: body.ranges } : {}),
+      optTfMin: 15,
+      ...(body?.ranges ? { ranges: { ...body.ranges, timeoutSec: { min: 61, max: 61 }, rearmMs: { min: 900000, max: 900000 } } } : { ranges: { timeoutSec: { min: 61, max: 61 }, rearmMs: { min: 900000, max: 900000 } } }),
       ...(body?.precision ? { precision: body.precision } : {}),
       sim,
     };
-    if (payload.optTfMin !== undefined && (!Number.isFinite(payload.optTfMin) || payload.optTfMin < 15 || payload.optTfMin > 240)) {
+    if (body?.optTfMin != null && Math.floor(Number(body.optTfMin)) !== 15) {
       reply.code(400);
       return { error: "invalid_opt_tf_min" };
     }

@@ -98,6 +98,10 @@ type CloseSnapshot = { ts: number; realizedPnl: number };
 
 const MAX_TICK_INTERVAL_SAMPLES = 20_000;
 const CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_klines");
+const FUNDING_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_funding_history");
+const FIXED_OPT_TF_MIN = 15;
+const FIXED_TIMEOUT_SEC = 61;
+const FIXED_REARM_MS = FIXED_OPT_TF_MIN * 60_000;
 const DEBUG_DATASET_TF = process.env.DEBUG_DATASET_TF === "1";
 const DEBUG_OPT_TRADES = process.env.DEBUG_OPT_TRADES === "1";
 const DEBUG_OPT_MARKETDATA = process.env.DEBUG_OPT_MARKETDATA === "1";
@@ -136,6 +140,45 @@ function resolveReadCachePath(symbol: string, interval: string): string {
     if (fs.existsSync(legacy)) return legacy;
   }
   return scoped;
+}
+
+function loadFundingHistory(symbol: string): Array<{ ts: number; rate: number }> {
+  const fp = path.join(FUNDING_CACHE_DIR, `${symbol}.jsonl`);
+  if (!fs.existsSync(fp)) return [];
+  const out: Array<{ ts: number; rate: number }> = [];
+  const raw = fs.readFileSync(fp, "utf8");
+  for (const line of raw.split(/\r?\n/)) {
+    const text = line.trim();
+    if (!text) continue;
+    try {
+      const row = JSON.parse(text) as { timestamp?: number; fundingRate?: string };
+      const ts = Number(row?.timestamp);
+      const rate = Number(row?.fundingRate);
+      if (Number.isFinite(ts) && Number.isFinite(rate)) out.push({ ts, rate });
+    } catch {
+      continue;
+    }
+  }
+  out.sort((a, b) => a.ts - b.ts);
+  return out;
+}
+
+function fundingRateAtTs(samples: Array<{ ts: number; rate: number }>, ts: number): number {
+  if (!samples.length) return 0;
+  let lo = 0;
+  let hi = samples.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const row = samples[mid]!;
+    if (row.ts <= ts) {
+      ans = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return ans >= 0 ? samples[ans]!.rate : 0;
 }
 
 function pctChange(now: number, ref: number): number | null {
@@ -511,6 +554,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       let candleCount = 0;
       let candleWithOiCount = 0;
       let candleWithFundingCount = 0;
+      const fundingSamples = loadFundingHistory(symbol);
 
       const inAnyWindow = (candleStartMs: number): boolean => {
         // windows are sorted/merged
@@ -538,6 +582,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         if (Number.isFinite(oiBase) && oiBase > 0) candleWithOiCount += 1;
         const openInterestValue = Number.isFinite(oiBase) && oiBase > 0 ? oiBase * close : 0;
         const tsClose = candleStart + replayIntervalMin * 60_000;
+        const fundingRate = fundingRateAtTs(fundingSamples, tsClose);
+        if (fundingRate !== 0) candleWithFundingCount += 1;
 
         events.push({
           type: "ticker",
@@ -547,7 +593,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             markPrice: close,
             openInterest: openInterestValue,
             openInterestValue,
-            fundingRate: 0,
+            fundingRate,
           },
         });
         events.push({ type: "kline_confirm", ts: tsClose, symbol, payload: { close } });
@@ -660,7 +706,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
   };
   const effectiveDirection = args.directionMode ?? "both";
-  const effectiveTf = args.optTfMin ?? 0;
+  const effectiveTf = FIXED_OPT_TF_MIN;
   const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
   const shouldRememberNegatives = Boolean(args.rememberNegatives);
   const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;
@@ -688,7 +734,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       break;
     }
 
-    const params = buildCandidateParams(
+    const randomizedParams = buildCandidateParams(
       rng,
       ranges,
       {
@@ -702,6 +748,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       },
       precision
     );
+    const params = { ...randomizedParams, timeoutSec: FIXED_TIMEOUT_SEC, rearmMs: FIXED_REARM_MS };
     const paramSig = buildParamSig(params, precision);
     if (blacklistState && blacklistState.negativeSet.has(paramSig)) {
       skippedBlacklisted += 1;
@@ -731,26 +778,16 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       const signalEngine = new SignalEngine({
         priceThresholdPct: params.priceThresholdPct,
         oivThresholdPct: params.oivThresholdPct,
-        requireFundingSign: false,
+        requireFundingSign: true,
         directionMode: args.directionMode ?? "both",
       });
 
-      const tfMinRaw = Number(args.optTfMin ?? tape.meta?.klineTfMin ?? baseConfig.universe.klineTfMin);
-      const tfMinFromMeta = Number.isFinite(tfMinRaw) && tfMinRaw > 0 ? Math.floor(tfMinRaw) : baseConfig.universe.klineTfMin;
       const durationMs = Math.max(0, (tape.lastTsMs ?? 0) - (tape.firstTsMs ?? 0));
       const durationMin = durationMs / 60_000;
-      let effectiveTfMin = tfMinFromMeta;
-      if (durationMin > 0 && durationMin < tfMinFromMeta) {
-        effectiveTfMin = Math.max(1, Math.floor(durationMin));
-      }
+      const effectiveTfMin = FIXED_OPT_TF_MIN;
       const tfMs = effectiveTfMin * 60_000;
       effectiveTfMinByTapeId[tape.tapeId] = effectiveTfMin;
       durationMinByTapeId[tape.tapeId] = durationMin;
-
-      const baseTimeout = Math.max(1, Math.floor(params.timeoutSec));
-      const tickBased = Math.ceil(medianTickIntervalSec) + 1;
-      const effectiveEntryTimeoutSec = Math.max(baseTimeout, tickBased, 5);
-      const minRearmMs = effectiveTfMin * 60_000;
 
       const candidateConfig = {
         ...baseConfig,
@@ -769,8 +806,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           tpRoiPct: params.tpRoiPct,
           slRoiPct: params.slRoiPct,
           entryOffsetPct: params.entryOffsetPct,
-          entryTimeoutSec: effectiveEntryTimeoutSec,
-          rearmDelayMs: Math.max(Math.max(0, Math.floor(params.rearmMs)), minRearmMs),
+          entryTimeoutSec: FIXED_TIMEOUT_SEC,
+          rearmDelayMs: FIXED_REARM_MS,
           applyFunding: false,
         },
       };
@@ -838,7 +875,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           const openInterestValue = Number(row?.openInterestValue ?? 0);
 
           const refs = candles.getRefs(event.symbol);
-          const useTrackerRefs = args.optTfMin == null;
+          const useTrackerRefs = false;
 
           const bucketId = Math.floor(ts / tfMs);
           const fallbackState = fallbackBySymbol.get(event.symbol) ?? {
@@ -868,10 +905,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           const priceMovePct = priceRef == null || markPrice <= 0 ? null : pctChange(markPrice, priceRef);
           const oivMovePct = oivRef == null || openInterestValue <= 0 ? null : pctChange(openInterestValue, oivRef);
 
+          const fundingRate = Number(row?.fundingRate ?? 0);
           const decision = signalEngine.decide({
             priceMovePct,
             oivMovePct,
-            fundingRate: 0,
+            fundingRate,
             cooldownActive: false,
           });
           if (decision.reason === "no_refs") decisionsNoRefs += 1;
@@ -881,7 +919,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             symbol: event.symbol,
             nowMs: ts,
             markPrice,
-            fundingRate: 0,
+            fundingRate,
             nextFundingTime: 0,
             signal: decision.signal,
             signalReason: decision.reason,
