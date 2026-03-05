@@ -43,7 +43,7 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
   - Streams status (Bybit upstream)
   - Session status (RUNNING/STOPPING/STOPPED/PAUSING/PAUSED/RESUMING)
 - WS connection is stable across client-side route changes (no reconnect on navigation).
-- Live rows (1Hz) card:
+- Live rows (coalesced up to 10Hz) card:
   - Active only toggle + rows count
   - “Next candle in MM:SS” countdown (based on **draft** `klineTfMin`)
   - Refresh rows button (requests immediate tick update)
