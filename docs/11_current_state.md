@@ -168,4 +168,6 @@ Data fetch must be rate-limit aware (strict limit: 500 requests / 5 seconds) and
 - Entry IDs are deterministic per run/symbol/attempt in paper+demo paths for idempotent OPENING behavior.
 - Fill/exit decision logic is centralized in `backend/src/execution/executionRules.ts` and used by paper execution (therefore optimizer replay, which runs through paper broker, uses identical limit + TP/SL rules and worst-case conservative tie-break).
 - Backend risk limits are runtime-enforced via `riskLimits` (`maxTradesPerDay`, `maxLossPerDayUsdt`, `maxLossPerSessionUsdt`, `maxConsecutiveErrors`).
+- `maxTradesPerDay` counts actual opened entries (`ORDER_FILLED` / `POSITION_OPEN` / `DEMO_POSITION_OPEN`), not placement attempts.
 - On risk breach, runtime emits `EMERGENCY_STOP`, sets session runtime message `Emergency stop: <reason>`, and triggers the hardened STOP flow automatically.
+- Emergency-stop state is sticky for the run lifecycle: it blocks further entries/resume continuation and is cleared only on a clean new start/reset cycle.

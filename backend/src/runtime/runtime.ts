@@ -87,7 +87,7 @@ function newSessionId() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-class Runtime extends EventEmitter {
+export class Runtime extends EventEmitter {
   private sessionState: RuntimeSessionState = "STOPPED";
   private sessionId: string | null = null;
 
@@ -105,6 +105,8 @@ class Runtime extends EventEmitter {
   private stopPromise: Promise<Status> | null = null;
   private runtimeMessage: string | null = null;
   private emergencyStopInFlight = false;
+  private emergencyStopActive = false;
+  private emergencyStopReason: string | null = null;
   private riskDayKey: string | null = null;
   private riskEntriesPerDay = 0;
   private riskNetRealizedPerDay = 0;
@@ -158,6 +160,8 @@ class Runtime extends EventEmitter {
     this.riskConsecutiveErrors = 0;
     this.riskSkipEntryLogged = new Set();
     this.emergencyStopInFlight = false;
+    this.emergencyStopActive = false;
+    this.emergencyStopReason = null;
   }
 
   private syncRiskDay(nowMs: number) {
@@ -187,8 +191,11 @@ class Runtime extends EventEmitter {
   }
 
   private maybeTriggerEmergencyStop(reason: string, nowMs: number) {
+    if (this.emergencyStopActive) return;
     if (this.emergencyStopInFlight) return;
     this.emergencyStopInFlight = true;
+    this.emergencyStopActive = true;
+    this.emergencyStopReason = reason;
     this.runtimeMessage = `Emergency stop: ${reason}`;
     this.logger?.log({
       ts: nowMs,
@@ -217,13 +224,8 @@ class Runtime extends EventEmitter {
     this.syncRiskDay(nowMs);
 
     const type = String(ev?.type ?? "");
-    if (type === "ORDER_PLACED" || type === "DEMO_ORDER_PLACE") {
+    if (type === "ORDER_FILLED" || type === "POSITION_OPEN" || type === "DEMO_POSITION_OPEN") {
       this.riskEntriesPerDay += 1;
-      this.riskConsecutiveErrors = 0;
-      return;
-    }
-
-    if (type === "ORDER_FILLED" || type === "DEMO_POSITION_OPEN") {
       this.riskConsecutiveErrors = 0;
       return;
     }
@@ -253,6 +255,13 @@ class Runtime extends EventEmitter {
 
   private shouldAllowEntry(symbol: string, nowMs: number): boolean {
     this.syncRiskDay(nowMs);
+
+    if (this.emergencyStopActive) {
+      if (this.runtimeMessage == null && this.emergencyStopReason) {
+        this.runtimeMessage = `Emergency stop: ${this.emergencyStopReason}`;
+      }
+      return false;
+    }
 
     const lossBreach = this.checkLossThresholdBreach();
     if (lossBreach) {
@@ -574,6 +583,15 @@ class Runtime extends EventEmitter {
 
   resume(): Status {
     if (this.sessionState !== "PAUSED") {
+      const status = this.getStatus();
+      this.emit("state", status);
+      return status;
+    }
+
+    if (this.emergencyStopActive) {
+      if (this.emergencyStopReason) {
+        this.runtimeMessage = `Emergency stop: ${this.emergencyStopReason}`;
+      }
       const status = this.getStatus();
       this.emit("state", status);
       return status;
