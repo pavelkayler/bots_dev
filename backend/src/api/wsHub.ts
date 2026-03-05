@@ -10,6 +10,7 @@ import { SignalEngine, type SignalSide } from "../engine/SignalEngine.js";
 import { runtime } from "../runtime/runtime.js";
 import type { LogEvent } from "../logging/EventLogger.js";
 import { configStore, type RuntimeConfig } from "../runtime/configStore.js";
+import { LiveUpdateAggregator } from "./liveUpdateAggregator.js";
 
 type AwaitAllStreamsConnectedArgs = {
   timeoutMs: number;
@@ -277,7 +278,20 @@ export function createWsHub(app: FastifyInstance) {
   runtime.attachMarkPriceProvider((symbol) => cache.getMarkPrice(symbol));
 
   let wss: WebSocketServer | null = null;
-  let tickTimer: NodeJS.Timeout | null = null;
+  const liveUpdateAggregator = new LiveUpdateAggregator({
+    flushIntervalMs: 100,
+    maxKeys: 5_000,
+    onFlush: () => {
+      if (!rowsAllowed()) return;
+      const now = nowMs();
+      const rows = attachPaper(computeBaseRows(now), now);
+      const msg: ServerWsMessage = { type: "tick", payload: { serverTime: now, rows, botStats: computeBotStats(rows), ...getUniverseInfo() } };
+      for (const c of clients) safeSend(c, msg);
+    },
+    onDropKey: (key, size) => {
+      app.log.warn({ key, size }, "live update aggregator capacity reached; dropping new keys");
+    },
+  });
 
   // Bybit upstream
   let streamsEnabled = runtime.getStatus().sessionState === "RUNNING";
@@ -518,19 +532,12 @@ export function createWsHub(app: FastifyInstance) {
     for (const c of clients) safeSend(c, msg);
   }
 
-  function startTickTimer() {
-    if (tickTimer) return;
-    tickTimer = setInterval(() => {
-      const now = nowMs();
-      const rows = rowsAllowed() ? attachPaper(computeBaseRows(now), now) : [];
-      const msg: ServerWsMessage = { type: "tick", payload: { serverTime: now, rows, botStats: computeBotStats(rows), ...getUniverseInfo() } };
-      for (const c of clients) safeSend(c, msg);
-    }, 1000);
+  function startLiveUpdateAggregator() {
+    liveUpdateAggregator.start();
   }
 
-  function stopTickTimer() {
-    if (tickTimer) clearInterval(tickTimer);
-    tickTimer = null;
+  function stopLiveUpdateAggregator() {
+    liveUpdateAggregator.stop();
   }
 
   function syncRuntimeStreamLifecycle() {
@@ -539,8 +546,8 @@ export function createWsHub(app: FastifyInstance) {
       streamsEnabled = true;
       desiredStreams = true;
       void startUpstreamIfNeeded();
-      if (st.sessionState === "RUNNING") startTickTimer();
-      else stopTickTimer();
+      if (st.sessionState === "RUNNING") startLiveUpdateAggregator();
+      else stopLiveUpdateAggregator();
       broadcastStreamsState();
       return;
     }
@@ -548,7 +555,7 @@ export function createWsHub(app: FastifyInstance) {
     streamsEnabled = false;
     desiredStreams = false;
     stopUpstreamHard();
-    stopTickTimer();
+    stopLiveUpdateAggregator();
     broadcastStreamsState();
   }
 
@@ -612,6 +619,7 @@ export function createWsHub(app: FastifyInstance) {
       onTicker: (topic, _type, data) => {
         const symbol = topic.slice("tickers.".length);
         cache.upsertFromTicker(symbol, data);
+        liveUpdateAggregator.upsert(`ticker:${symbol}`);
         const row = cache.getRawRow(symbol);
         const markPrice = Number(row?.markPrice);
         const openInterestValue = Number(row?.openInterestValue);
@@ -626,6 +634,9 @@ export function createWsHub(app: FastifyInstance) {
         const confirmRaw = (klineRow as any)?.confirm;
         const isConfirm = confirmRaw === true || confirmRaw === "true" || confirmRaw === 1 || confirmRaw === "1";
         candles.ingestKline(symbol, klineRow);
+        if (isConfirm) {
+          liveUpdateAggregator.upsert(`kline:${symbol}`);
+        }
       },
     });
 
@@ -847,8 +858,7 @@ export function createWsHub(app: FastifyInstance) {
     if (universeApplyTimer) clearTimeout(universeApplyTimer);
     universeApplyTimer = null;
 
-    if (tickTimer) clearInterval(tickTimer);
-    tickTimer = null;
+    stopLiveUpdateAggregator();
 
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = null;

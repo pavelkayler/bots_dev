@@ -214,7 +214,7 @@ CORS note:
 ### Server → Client messages
 - `hello`
 - `snapshot` (full state)
-- `tick` (1Hz rows update while RUNNING)
+- `tick` (coalesced rows update while RUNNING, flushed up to 10Hz)
 - `streams_state`
 - `events_tail`
 - `events_append`

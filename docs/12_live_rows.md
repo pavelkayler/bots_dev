@@ -7,7 +7,7 @@ Last update: 2026-02-25
 - When session is STOPPING/STOPPED, server pushes `rows: []` by design (no tickers while stopped).
 
 ## Update cadence
-- Server sends `tick` (1Hz) while RUNNING.
+- Server coalesces live row changes and sends `tick` while RUNNING with a fixed 100ms flush cadence (up to 10Hz).
 - “Refresh rows” triggers `rows_refresh_request` for immediate update.
 
 ## Header controls (UI)
