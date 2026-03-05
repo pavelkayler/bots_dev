@@ -13,14 +13,17 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
       - name: Install backend deps
         run: |
           cd backend
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm ci
       - name: Install frontend deps
         run: |
           cd frontend
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm ci
       - name: Backend typecheck + tests
         run: |
           cd backend
