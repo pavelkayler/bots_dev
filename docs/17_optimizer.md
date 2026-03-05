@@ -5,7 +5,7 @@ Last update: 2026-03-04
 This document describes the Optimizer feature used to tune paper-trading parameters via cached historical market data and deterministic replay.
 
 ## Goals
-- Record market tapes (JSONL) while runtime session is **RUNNING**.
+- Record market dataset histories (JSONL) while runtime session is **RUNNING**.
 - Run random-search optimization over many parameter candidates on one or more tape files.
 - Keep backend responsive during heavy optimization (worker thread).
 - Support long runs: pause/resume/cancel, checkpoints, and looped execution.
@@ -106,7 +106,7 @@ Each result row includes:
   - warnings (e.g., low disk)
 - `GET /api/soak/last` returns last soak snapshot cached in memory.
 
-## Remote dataset cache (planned replacement for tapes)
+## Remote dataset cache (planned replacement for dataset histories)
 
 The optimizer uses the Receive Data cache under `backend/data/cache/bybit_klines/`.
 Instead, it will operate on a cached historical dataset fetched from Bybit REST history endpoints.

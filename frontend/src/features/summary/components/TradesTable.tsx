@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Badge, Form, Pagination, Table } from "react-bootstrap";
+import { Badge, Table } from "react-bootstrap";
+import { TablePaginationControls, useStoredPageSize } from "../../../shared/ui/TablePaginationControls";
 import type { PaperTrade } from "../types";
 import { fmtMoney, fmtNum, fmtTime, formatFee } from "../../../shared/utils/format";
 
@@ -17,7 +18,7 @@ function sideBadge(side: string | undefined) {
 export function TradesTable({ trades }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("closedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useStoredPageSize("summary-trades", 25);
   const [currentPage, setCurrentPage] = useState(1);
 
   const sortedTrades = useMemo(() => {
@@ -131,30 +132,17 @@ export function TradesTable({ trades }: Props) {
           ))}
         </tbody>
       </Table>
-      <div className="d-flex align-items-center justify-content-between">
-        <Pagination size="sm" className="mb-0">
-          <Pagination.Prev disabled={page <= 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} />
-          <Pagination.Item active>{page}</Pagination.Item>
-          <Pagination.Next disabled={page >= totalPages} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} />
-        </Pagination>
-
-        <div className="d-flex align-items-center gap-2">
-          <span style={{ fontSize: 12, opacity: 0.8 }}>Rows</span>
-          <Form.Select
-            size="sm"
-            value={pageSize}
-            style={{ width: 90 }}
-            onChange={(e) => {
-              setPageSize(Number(e.currentTarget.value));
-              setCurrentPage(1);
-            }}
-          >
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-            <option value={200}>200</option>
-          </Form.Select>
-        </div>
-      </div>
+      <TablePaginationControls
+        tableId="summary-trades"
+        page={page}
+        totalRows={sortedTrades.length}
+        pageSize={pageSize}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          setCurrentPage(1);
+        }}
+      />
     </>
   );
 }

@@ -70,7 +70,7 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
   - disabled if draft == applied
   - disabled if invalid
 
-**Note:** Apply-and-Run / Start-and-Record buttons were removed. Recording is automatic (see below).
+Apply-and-Run / record controls are removed. Optimizer uses dataset histories/cache only.
 - Presets:
   - selector + Save (overwrite) + Remove
   - option label includes timeframe: `... [tf=<klineTfMin>m]`

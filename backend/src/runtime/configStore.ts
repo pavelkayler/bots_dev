@@ -129,6 +129,11 @@ function writeFileAtomic(filePath: string, content: string) {
 function migrateLoaded(raw: any): any {
   if (!raw || typeof raw !== "object") return raw;
 
+  delete (raw as any).optimizer;
+  delete (raw as any).tapeId;
+  delete (raw as any).tapeIds;
+  delete (raw as any).tapesDir;
+
   if (!raw.universe || typeof raw.universe !== "object") {
     raw.universe = {
       selectedId: "",
@@ -191,6 +196,10 @@ function normalizeIncomingPatch(rawPatch: unknown): unknown {
   if (!rawPatch || typeof rawPatch !== "object") return rawPatch;
 
   const patch = deepClone(rawPatch as Record<string, unknown>);
+  delete (patch as any).optimizer;
+  delete (patch as any).tapeId;
+  delete (patch as any).tapeIds;
+  delete (patch as any).tapesDir;
   const paper = (patch as any).paper;
 
   if (paper && typeof paper === "object") {

@@ -533,7 +533,7 @@ function buildConfigForApply(): RuntimeConfig {
                     <Form.Select value={draft.execution?.mode ?? "paper"} onChange={(e) => setDraft({ ...draft, execution: { ...draft.execution, mode: e.currentTarget.value as "paper" | "demo" | "empty" } })}>
                       <option value="paper">Paper</option>
                       <option value="demo">Demo</option>
-                      <option value="empty">Empty (tape only)</option>
+                      <option value="empty">Empty</option>
                     </Form.Select>
                     <span style={{ fontSize: 12, whiteSpace: "nowrap" }}>
                       {isDemoMode

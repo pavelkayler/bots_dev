@@ -1201,7 +1201,6 @@ useEffect(() => {
       }
 
       const loopPayload = {
-        tapeIds: [],
         datasetHistoryIds: selectedHistoryIds,
         candidates: Number(candidates),
         seed: Number(seed),
@@ -1893,7 +1892,7 @@ useEffect(() => {
     const patch = {
       source: "optimizer",
       ts: Date.now(),
-      tapeId: null,
+      datasetId: null,
       jobId: activeJobId,
       rank: row.rank,
       patch: {
@@ -2472,7 +2471,7 @@ useEffect(() => {
                   <th style={{ ...historyEndedAtCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
                   <th style={{ ...historyStatusCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("mode")}>mode</th> : null}
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tapes")}>dataset</th>
+                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("datasets")}>dataset</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("candidates")}>candidates</th>
                   <th style={HISTORY_CELL_STYLE}>sim</th>
@@ -2500,7 +2499,7 @@ useEffect(() => {
                         <td style={historyEndedAtCellStyle} title={new Date(row.endedAtMs).toISOString()}><span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{formatHistoryEndedAt(row.endedAtMs)}</span></td>
                         <td style={historyStatusCellStyle}>{row.status.toUpperCase()}</td>
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.mode ?? "-"}</td> : null}
-                        <td style={HISTORY_CELL_STYLE} title={row.runPayload.tapeIds.join(",")}>{row.runPayload.tapeIds.length}</td>
+                        <td style={HISTORY_CELL_STYLE} title={row.runPayload.datasetHistoryIds.join(",")}>{row.runPayload.datasetHistoryIds.length}</td>
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.optTfMin ?? "-"}</td>
                         <td style={HISTORY_CELL_STYLE}>{row.runPayload.candidates}</td>
                         <td style={HISTORY_CELL_STYLE}>{formatSimSummary((row.runPayload as any).sim)}</td>
