@@ -1211,8 +1211,8 @@ export function registerHttpRoutes(app: FastifyInstance) {
 
     try {
       const status = await runtime.start({
-        waitForReady: async () => {
-          await awaitAllStreamsConnected({ timeoutMs: 20_000, signal: abortController.signal });
+        waitForReady: async ({ signal }) => {
+          await awaitAllStreamsConnected({ timeoutMs: 20_000, signal });
         },
       });
 

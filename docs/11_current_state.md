@@ -158,3 +158,11 @@ Workflow:
 `klineTfMin` does **not** affect Universe naming and is unrelated to Universe file name/id semantics.
 
 Data fetch must be rate-limit aware (strict limit: 500 requests / 5 seconds) and provide progress/ETA.
+
+
+## Stability hardening (latest)
+- Runtime stop uses a per-run context with `runId` + `AbortController` and a hard stop timeout, so STOP requests abort in-flight startup/cleanup work and always converge to `STOPPED`.
+- Stop is idempotent while `STOPPING` (reuses a single stop promise), and transition logs include `runId`, from/to state, plus stop duration.
+- Execution layer enforces a per-symbol invariant (`FLAT | OPENING | OPEN | CLOSING`) to prevent entry stacking while a symbol is not flat.
+- Entry IDs are deterministic per run/symbol/attempt in paper+demo paths for idempotent OPENING behavior.
+- Fill/exit decision logic is centralized in `backend/src/execution/executionRules.ts` and used by paper execution (therefore optimizer replay, which runs through paper broker, uses identical limit + TP/SL rules and worst-case conservative tie-break).
