@@ -3,7 +3,7 @@ import path from "node:path";
 
 export type OptimizerLoopRunPayload = {
   [key: string]: unknown;
-  tapeIds: string[];
+  datasetHistoryIds: string[];
   candidates: number;
   seed: number;
   directionMode: "both" | "long" | "short";
@@ -56,7 +56,7 @@ export function readLoopState(): OptimizerLoopState | null {
   try {
     const raw = fs.readFileSync(LOOP_STATE_PATH, "utf8");
     const parsed = JSON.parse(raw) as Partial<OptimizerLoopState>;
-    if (!parsed || typeof parsed.loopId !== "string" || !parsed.runPayload || !Array.isArray(parsed.runPayload.tapeIds)) return null;
+    if (!parsed || typeof parsed.loopId !== "string" || !parsed.runPayload || !Array.isArray(parsed.runPayload.datasetHistoryIds)) return null;
     return {
       loopId: parsed.loopId,
       isRunning: Boolean(parsed.isRunning),

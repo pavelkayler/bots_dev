@@ -1,5 +1,6 @@
 import { Fragment, memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Pagination, Row, Table } from "react-bootstrap";
+import { TablePaginationControls, useStoredPageSize } from "../../shared/ui/TablePaginationControls";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -575,6 +576,7 @@ export function OptimizerPage() {
   const [historySortKey, setHistorySortKey] = useState<keyof DatasetHistoryRecord | "rangeMs" | "universeLabel">("receivedAtMs");
   const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
   const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useStoredPageSize("optimizer-dataset-history", 10);
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
@@ -1345,7 +1347,6 @@ useEffect(() => {
     });
   }, [datasetHistories, historySortDir, historySortKey]);
 
-  const historyPageSize = 10;
   const historyPages = Math.max(1, Math.ceil(historyRowsSorted.length / historyPageSize));
   const historyPageClamped = Math.max(1, Math.min(historyPage, historyPages));
   const historyRowsPaged = historyRowsSorted.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize);
@@ -2190,15 +2191,14 @@ useEffect(() => {
                   </Table>
                 </div>
 
-                <div className="d-flex justify-content-end">
-                  <Pagination className="mb-0">
-                    <Pagination.First onClick={() => setHistoryPage(1)} disabled={historyPageClamped <= 1} />
-                    <Pagination.Prev onClick={() => setHistoryPage(Math.max(1, historyPageClamped - 1))} disabled={historyPageClamped <= 1} />
-                    <Pagination.Item active>{historyPageClamped}</Pagination.Item>
-                    <Pagination.Next onClick={() => setHistoryPage(Math.min(historyPages, historyPageClamped + 1))} disabled={historyPageClamped >= historyPages} />
-                    <Pagination.Last onClick={() => setHistoryPage(historyPages)} disabled={historyPageClamped >= historyPages} />
-                  </Pagination>
-                </div>
+                <TablePaginationControls
+                  tableId="optimizer-dataset-history"
+                  page={historyPageClamped}
+                  totalRows={historyRowsSorted.length}
+                  pageSize={historyPageSize}
+                  onPageChange={setHistoryPage}
+                  onPageSizeChange={(size) => { setHistoryPage(1); setHistoryPageSize(size); }}
+                />
               </Card.Body>
             </Card>
 

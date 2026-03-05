@@ -7,7 +7,6 @@ import { CandleTracker } from "../engine/CandleTracker.js";
 import { SignalEngine } from "../engine/SignalEngine.js";
 import { PaperBroker, type PaperExecutionModel, type PaperStats, type PaperTickOhlc } from "../paper/PaperBroker.js";
 import { configStore } from "../runtime/configStore.js";
-import { getTapePath, safeId } from "./tapeStore.js";
 
 type TapeMeta = {
   tapeId?: string;
@@ -533,8 +532,6 @@ function buildCandidateParams(
 export type RunOptimizationArgs = {
   jobId?: string;
   runId?: string;
-  tapeIds: string[];
-  tapeFiles?: Array<{ tapeId: string; bytes: number }>;
   candidates: number;
   seed: number;
   ranges?: OptimizerRanges;
@@ -605,12 +602,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     runIndex: number;
   };
 }> {
-  const tapeFiles = Array.isArray(args.tapeFiles) && args.tapeFiles.length
-    ? args.tapeFiles
-      .map((file) => ({ tapeId: safeId(String(file.tapeId)), bytes: Math.max(0, Math.floor(Number(file.bytes) || 0)) }))
-      .filter((file) => file.bytes > 0)
-    : args.tapeIds.map((id) => ({ tapeId: safeId(id), bytes: -1 }));
-  const tapeIds = tapeFiles.map((file) => file.tapeId);
+  const tapeIds: string[] = [];
   const precision = withDefaultPrecision(args.precision);
   const baseSeed = Number.isFinite(args.seed) ? args.seed : 1;
   const loopIndex = Math.max(0, Math.floor(Number(args.loopIndex) || 0));
@@ -735,40 +727,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
   }
   if (!(args.cacheDataset || (Array.isArray(args.cacheDatasets) && args.cacheDatasets.length))) {
-  const tapePathEntries = tapeFiles.map((file) => ({ tapeId: file.tapeId, tapePath: getTapePath(file.tapeId), byteLimit: file.bytes > -1 ? file.bytes : undefined }));
-  const tapeSizes = await Promise.all(tapePathEntries.map(async ({ tapePath, byteLimit }) => {
-    const statSize = (await fs.promises.stat(tapePath)).size;
-    return byteLimit == null ? statSize : Math.max(0, Math.min(statSize, byteLimit));
-  }));
-  const totalTapeBytes = tapeSizes.reduce((sum, value) => sum + value, 0);
-  const loadedTapeBytesById = new Map<string, number>();
-
-  hooks?.onLoadProgress?.(0, totalTapeBytes);
-
-  for (const { tapeId, tapePath, byteLimit } of tapePathEntries) {
-    const readOptions = {
-      ...(byteLimit != null ? { byteLimit } : {}),
-      ...(args.timeRangeFromTs != null ? { timeRangeFromTs: args.timeRangeFromTs } : {}),
-      ...(args.timeRangeToTs != null ? { timeRangeToTs: args.timeRangeToTs } : {}),
-    };
-    const parsed = await readTapeLines(tapePath, readOptions, {
-      onProgress: (bytesRead, totalBytes) => {
-        const bounded = Math.max(0, Math.min(totalBytes, bytesRead));
-        loadedTapeBytesById.set(tapeId, bounded);
-        const loadedSoFar = tapePathEntries.reduce((sum, entry, index) => {
-          const fullSize = tapeSizes[index] ?? 0;
-          const loaded = loadedTapeBytesById.get(entry.tapeId);
-          return sum + (loaded == null ? 0 : Math.max(0, Math.min(fullSize, loaded)));
-        }, 0);
-        hooks?.onLoadProgress?.(loadedSoFar, totalTapeBytes);
-      },
-    });
-    tapes.push({ tapeId, meta: parsed.meta, events: parsed.events, firstTsMs: parsed.firstTsMs, lastTsMs: parsed.lastTsMs });
-    if (parsed.medianTickIntervalSec > 0 && globalTickIntervals.length < MAX_TICK_INTERVAL_SAMPLES) {
-      globalTickIntervals.push(parsed.medianTickIntervalSec);
-    }
-  }
-  hooks?.onLoadProgress?.(totalTapeBytes, totalTapeBytes);
+    throw new Error("dataset_cache_missing");
   }
   const medianTickIntervalSec = median(globalTickIntervals);
 
@@ -800,7 +759,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   };
   const effectiveDirection = args.directionMode ?? "both";
   const effectiveTf = Math.max(Math.floor(Number(args.optTfMin ?? MIN_OPT_TF_MIN)) || MIN_OPT_TF_MIN, MIN_OPT_TF_MIN);
-  const runKey = `tapes=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
+  const runKey = `datasets=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
   const seenCandidateKeys = new Set<string>();
   const shouldRememberNegatives = Boolean(args.rememberNegatives);
   const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;

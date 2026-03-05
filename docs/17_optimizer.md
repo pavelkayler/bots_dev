@@ -6,7 +6,7 @@ This document describes the Optimizer feature used to tune paper-trading paramet
 
 ## Goals
 - Record market dataset histories (JSONL) while runtime session is **RUNNING**.
-- Run random-search optimization over many parameter candidates on one or more tape files.
+- Run random-search optimization over many parameter candidates on dataset history windows from cache.
 - Keep backend responsive during heavy optimization (worker thread).
 - Support long runs: pause/resume/cancel, checkpoints, and looped execution.
 
