@@ -1,11 +1,11 @@
-## Milestone: Remote historical data cache (no tape recording)
+## Milestone: Remote historical data cache
 
-Status: **Planned** (next work batch)
+Status: **Implemented**
 
 ### Goals
-- Remove the entire tape recording subsystem (backend + frontend + UI).
+- Tape recording subsystem removed (backend + frontend + UI).
 - Replace it with an explicit **historical data cache** built from Bybit REST history endpoints for a user-selected **Universe** and **Range**.
-- Make Optimizer operate on cached historical points instead of local tape files.
+- Optimizer operates on cached historical points and dataset histories.
 - Standardize all tables/pagination UX across the app.
 
 ### Planned tasks

@@ -79,7 +79,7 @@ export type OptimizerHistorySortKey =
   | "endedAtMs"
   | "status"
   | "mode"
-  | "tapes"
+  | "datasets"
   | "tfMin"
   | "candidates"
   | "seed"
@@ -111,7 +111,7 @@ export type DoctorStatus = {
   ports: { http: number };
   disk: { dataDir: string; freeBytes: number | null };
   dataDirBytesFree: number | null;
-  paths: { tapesDir: string; checkpointsDir: string; blacklistsDir: string };
+  paths: { checkpointsDir: string; blacklistsDir: string };
   warnings: string[];
 };
 
@@ -130,7 +130,7 @@ export type OptimizerJobHistoryRecord = {
   endedAtMs: number;
   status: "done" | "cancelled" | "stopped" | "error";
   runPayload: {
-    tapeIds: string[];
+    datasetHistoryIds: string[];
     optTfMin?: number;
     timeRangeFromTs?: number;
     timeRangeToTs?: number;
@@ -196,8 +196,6 @@ export async function getStatus(): Promise<{ dataSource: "receive_data_cache" }>
 }
 
 export async function runOptimizationJob(payload: {
-  tapeId?: string;
-  tapeIds?: string[];
   datasetMode?: "snapshot" | "followTail";
   timeRangeFromTs?: number | null;
   timeRangeToTs?: number | null;
@@ -311,8 +309,6 @@ export async function resumeCurrentJob(): Promise<{ ok: true }> {
 
 
 export async function startOptimizerLoop(payload: {
-  tapeId?: string;
-  tapeIds?: string[];
   datasetMode?: "snapshot" | "followTail";
   timeRangeFromTs?: number | null;
   timeRangeToTs?: number | null;

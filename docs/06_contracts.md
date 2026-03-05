@@ -277,10 +277,10 @@ Health:
 - Jobs/loops are persisted to disk with paused-safe recovery on backend restart.
 - Tape recording is automatic on entering RUNNING and rotates at 90MB segments.
 
-## Planned API changes: historical dataset cache (tapes removal)
+## API changes: historical dataset cache (implemented)
 
 ### Deprecated (planned removal)
-- Tape recording endpoints and UI-related tape endpoints (current /api/tapes and /api/optimizer/tapes family) will be removed when tape mechanics are removed.
+- Tape endpoints have been removed. Optimizer runs are driven by dataset histories/cache only.
 
 ### New endpoints (planned)
 Dataset target:

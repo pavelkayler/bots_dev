@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install backend deps
+        run: |
+          cd backend
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Install frontend deps
+        run: |
+          cd frontend
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Backend typecheck + tests
+        run: |
+          cd backend
+          npm run build
+          npm test
+      - name: Frontend typecheck + build
+        run: |
+          cd frontend
+          npm run build
