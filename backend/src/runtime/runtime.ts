@@ -27,8 +27,19 @@ type Status = {
 };
 
 type StartOptions = {
-  waitForReady?: () => Promise<void>;
+  waitForReady?: (ctx: { runId: string; signal: AbortSignal }) => Promise<void>;
 };
+
+type RunContext = {
+  runId: string;
+  abortController: AbortController;
+  startedAt: number;
+  stopRequestedAt: number | null;
+};
+
+const STARTUP_OPERATION_TIMEOUT_MS = 5_000;
+const STOP_OPERATION_TIMEOUT_MS = 5_000;
+const STOP_OVERALL_TIMEOUT_MS = 15_000;
 
 
 type ClosedTrade = {
@@ -84,6 +95,46 @@ class Runtime extends EventEmitter {
 
   private getMarkPrice: ((symbol: string) => number | null) | null = null;
   private closedTrades: ClosedTrade[] = [];
+  private runContext: RunContext | null = null;
+  private stopPromise: Promise<Status> | null = null;
+
+  private transitionState(nextState: RuntimeSessionState) {
+    const fromState = this.sessionState;
+    this.sessionState = nextState;
+    const runId = this.runContext?.runId ?? this.sessionId;
+    this.logger?.log({
+      ts: Date.now(),
+      type: "SESSION_STATE",
+      payload: { state: nextState, fromState, runId, sessionId: this.sessionId }
+    });
+  }
+
+  private async withAbortAndTimeout<T>(promise: Promise<T>, args: { signal: AbortSignal; timeoutMs: number; label: string }): Promise<T> {
+    const { signal, timeoutMs, label } = args;
+    if (signal.aborted) throw new Error(`aborted:${label}`);
+    return await new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`timeout:${label}`));
+      }, timeoutMs);
+      const onAbort = () => {
+        cleanup();
+        reject(new Error(`aborted:${label}`));
+      };
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      promise.then((value) => {
+        cleanup();
+        resolve(value);
+      }).catch((err) => {
+        cleanup();
+        reject(err);
+      });
+    });
+  }
 
   attachMarkPriceProvider(fn: (symbol: string) => number | null) {
     this.getMarkPrice = fn;
@@ -109,6 +160,14 @@ class Runtime extends EventEmitter {
     }
 
     this.sessionId = newSessionId();
+    const runId = this.sessionId;
+    const abortController = new AbortController();
+    this.runContext = {
+      runId,
+      abortController,
+      startedAt: Date.now(),
+      stopRequestedAt: null,
+    };
     this.summaryFilePath = null;
     this.demoStartedAtMs = null;
     this.runningSinceMs = null;
@@ -143,26 +202,21 @@ class Runtime extends EventEmitter {
     const cfg = configStore.get();
     if (cfg.execution.mode === "demo") {
       this.paper = null;
-      this.demo = new DemoBroker(cfg.paper, this.logger, this.getMarkPrice ?? undefined);
+      this.demo = new DemoBroker(cfg.paper, this.logger, this.sessionId ?? "run", this.getMarkPrice ?? undefined);
       this.demo.start();
     } else if (cfg.execution.mode === "empty") {
       this.paper = null;
       this.demo = null;
     } else {
       this.demo = null;
-      this.paper = new PaperBroker(cfg.paper, this.logger);
+      this.paper = new PaperBroker(cfg.paper, this.logger, this.sessionId ?? "run");
     }
 
-    this.sessionState = "RESUMING";
-    this.logger?.log({
-      ts: Date.now(),
-      type: "SESSION_STATE",
-      payload: { state: this.sessionState, sessionId: this.sessionId }
-    });
+    this.transitionState("RESUMING");
     this.emit("state", this.getStatus());
 
     try {
-      await opts?.waitForReady?.();
+      await opts?.waitForReady?.({ runId, signal: abortController.signal });
     } catch {
       if (this.demo) {
         this.demo.stop();
@@ -171,24 +225,31 @@ class Runtime extends EventEmitter {
       this.demo = null;
       this.demoStartedAtMs = null;
       this.runningSinceMs = null;
+      this.runContext = null;
       this.sessionState = "STOPPED";
       const status = this.getStatus();
       this.emit("state", status);
       return status;
     }
 
-    this.sessionState = "RUNNING";
+    if (abortController.signal.aborted || this.runContext?.runId !== runId) {
+      this.transitionState("STOPPED");
+      this.runContext = null;
+      const status = this.getStatus();
+      this.emit("state", status);
+      return status;
+    }
+
+    this.transitionState("RUNNING");
     this.runningSinceMs = Date.now();
     if (cfg.execution.mode === "demo" && this.demo) {
       this.demoStartedAtMs = this.runningSinceMs;
-      this.demo.sessionStartBalanceUsdt = await this.demo.getWalletUsdtBalance();
+      this.demo.sessionStartBalanceUsdt = await this.withAbortAndTimeout(this.demo.getWalletUsdtBalance(), {
+        signal: abortController.signal,
+        timeoutMs: STARTUP_OPERATION_TIMEOUT_MS,
+        label: "demo_session_start_balance",
+      });
     }
-
-    this.logger.log({
-      ts: Date.now(),
-      type: "SESSION_STATE",
-      payload: { state: this.sessionState, sessionId: this.sessionId }
-    });
 
     const status = this.getStatus();
     this.emit("state", status);
@@ -202,82 +263,126 @@ class Runtime extends EventEmitter {
       return status;
     }
 
-    this.sessionState = "STOPPING";
-    this.logger?.log({
-      ts: Date.now(),
-      type: "SESSION_STATE",
-      payload: { state: this.sessionState, sessionId: this.sessionId }
-    });
-    this.emit("state", this.getStatus());
+    if (this.stopPromise) return this.stopPromise;
 
-    const now = Date.now();
-    if (this.paper) {
-      const provider = this.getMarkPrice ?? (() => null);
-      this.paper.stopAll({
-        nowMs: now,
-        symbols: [],
-        getMarkPrice: provider
-      });
-    }
-    if (this.demo) {
-      const demoEndedAtMs = Date.now();
-      this.demo.sessionEndBalanceUsdt = await this.demo.getWalletUsdtBalance();
-      const stats = this.demo.getStats();
-      const startBalanceUsdt = this.demo.sessionStartBalanceUsdt;
-      const endBalanceUsdt = this.demo.sessionEndBalanceUsdt;
-      const deltaUsdt = startBalanceUsdt != null && endBalanceUsdt != null ? endBalanceUsdt - startBalanceUsdt : null;
-      const demoSummary = {
-        sessionId: this.sessionId,
-        executionMode: "demo" as const,
-        startedAtMs: this.demoStartedAtMs,
-        endedAtMs: demoEndedAtMs,
-        startBalanceUsdt,
-        endBalanceUsdt,
-        deltaUsdt,
-        openPositionsAtEnd: stats.openPositions,
-        openOrdersAtEnd: stats.openOrders,
-        pendingEntriesAtEnd: stats.pendingEntries,
-        tradesCount: stats.tradesCount,
-        realizedPnlUsdt: stats.realizedPnlUsdt,
-        feesUsdt: stats.feesUsdt,
-        lastExecTimeMs: stats.lastExecTimeMs,
-      };
-      const sessionDir = this.logger?.filePath ? path.dirname(this.logger.filePath) : null;
-      if (sessionDir) {
-        fs.mkdirSync(sessionDir, { recursive: true });
-        const outPath = path.join(sessionDir, "demo_summary.json");
-        const tempPath = `${outPath}.tmp`;
-        fs.writeFileSync(tempPath, JSON.stringify(demoSummary, null, 2), "utf8");
-        fs.renameSync(tempPath, outPath);
+    const stopStartedAt = Date.now();
+    this.stopPromise = (async () => {
+      if (this.sessionState !== "STOPPING") {
+        this.transitionState("STOPPING");
+        this.emit("state", this.getStatus());
       }
-      this.demo.stop();
-      this.demo = null;
-    }
-    this.demoStartedAtMs = null;
-    this.runningSinceMs = null;
 
-    this.sessionState = "STOPPED";
-    this.logger?.log({
-      ts: Date.now(),
-      type: "SESSION_STATE",
-      payload: { state: this.sessionState, sessionId: this.sessionId }
-    });
+      const runCtx = this.runContext;
+      if (runCtx) {
+        runCtx.stopRequestedAt = Date.now();
+        runCtx.abortController.abort();
+      }
 
-    const eventsFile = this.logger?.filePath ?? null;
-    if (eventsFile) {
+      const stopSignal = runCtx?.abortController.signal ?? new AbortController().signal;
+
       try {
-        const outFile = getSummaryFilePathFromEventsFile(eventsFile);
-        const data = computePaperSummaryFromEvents({ sessionId: this.sessionId, eventsFile });
-        persistSummaryFile(outFile, data);
-        this.summaryFilePath = outFile;
-      } catch {
-        this.summaryFilePath = null;
-      }
-    }
+        const now = Date.now();
+        if (this.paper) {
+          const provider = this.getMarkPrice ?? (() => null);
+          this.paper.stopAll({
+            nowMs: now,
+            symbols: [],
+            getMarkPrice: provider
+          });
+        }
+        if (this.demo) {
+          const demoEndedAtMs = Date.now();
+          let endBalanceUsdt: number | null = null;
+          try {
+            endBalanceUsdt = await this.withAbortAndTimeout(this.demo.getWalletUsdtBalance(), {
+              signal: stopSignal,
+              timeoutMs: STOP_OPERATION_TIMEOUT_MS,
+              label: "demo_session_end_balance",
+            });
+          } catch {
+            endBalanceUsdt = null;
+          }
+          this.demo.sessionEndBalanceUsdt = endBalanceUsdt;
+          const stats = this.demo.getStats();
+          const startBalanceUsdt = this.demo.sessionStartBalanceUsdt;
+          const deltaUsdt = startBalanceUsdt != null && endBalanceUsdt != null ? endBalanceUsdt - startBalanceUsdt : null;
+          const demoSummary = {
+            sessionId: this.sessionId,
+            executionMode: "demo" as const,
+            startedAtMs: this.demoStartedAtMs,
+            endedAtMs: demoEndedAtMs,
+            startBalanceUsdt,
+            endBalanceUsdt,
+            deltaUsdt,
+            openPositionsAtEnd: stats.openPositions,
+            openOrdersAtEnd: stats.openOrders,
+            pendingEntriesAtEnd: stats.pendingEntries,
+            tradesCount: stats.tradesCount,
+            realizedPnlUsdt: stats.realizedPnlUsdt,
+            feesUsdt: stats.feesUsdt,
+            lastExecTimeMs: stats.lastExecTimeMs,
+          };
+          const sessionDir = this.logger?.filePath ? path.dirname(this.logger.filePath) : null;
+          if (sessionDir) {
+            fs.mkdirSync(sessionDir, { recursive: true });
+            const outPath = path.join(sessionDir, "demo_summary.json");
+            const tempPath = `${outPath}.tmp`;
+            fs.writeFileSync(tempPath, JSON.stringify(demoSummary, null, 2), "utf8");
+            fs.renameSync(tempPath, outPath);
+          }
+          this.demo.stop();
+          this.demo = null;
+        }
+      } finally {
+        this.paper = null;
+        this.demoStartedAtMs = null;
+        this.runningSinceMs = null;
+        this.runContext = null;
 
-    const status = this.getStatus();
-    this.emit("state", status);
-    return status;
+        this.transitionState("STOPPED");
+
+        const eventsFile = this.logger?.filePath ?? null;
+        if (eventsFile) {
+          try {
+            const outFile = getSummaryFilePathFromEventsFile(eventsFile);
+            const data = computePaperSummaryFromEvents({ sessionId: this.sessionId, eventsFile });
+            persistSummaryFile(outFile, data);
+            this.summaryFilePath = outFile;
+          } catch {
+            this.summaryFilePath = null;
+          }
+        }
+
+        const stopDurationMs = Date.now() - stopStartedAt;
+        this.logger?.log({ ts: Date.now(), type: "SESSION_STOP", payload: { sessionId: this.sessionId, stopDurationMs } });
+      }
+
+      const status = this.getStatus();
+      this.emit("state", status);
+      return status;
+    })();
+
+    const timeoutPromise = new Promise<Status>((resolve) => {
+      setTimeout(() => {
+        if (this.sessionState !== "STOPPED") {
+          this.paper = null;
+          this.demo = null;
+          this.demoStartedAtMs = null;
+          this.runningSinceMs = null;
+          this.runContext = null;
+          this.transitionState("STOPPED");
+          const status = this.getStatus();
+          this.emit("state", status);
+          resolve(status);
+        }
+      }, STOP_OVERALL_TIMEOUT_MS);
+    });
+
+    try {
+      return await Promise.race([this.stopPromise, timeoutPromise]);
+    } finally {
+      this.stopPromise = null;
+    }
   }
 
   pause(): Status {
@@ -316,14 +421,9 @@ class Runtime extends EventEmitter {
       return status;
     }
 
-    this.sessionState = "RUNNING";
+    this.transitionState("RUNNING");
     if (this.runningSinceMs == null) this.runningSinceMs = Date.now();
     if (this.demo) this.demo.start();
-    this.logger?.log({
-      ts: Date.now(),
-      type: "SESSION_STATE",
-      payload: { state: this.sessionState, sessionId: this.sessionId }
-    });
 
     const status = this.getStatus();
     this.emit("state", status);

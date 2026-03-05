@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { EventLogger } from "../logging/EventLogger.js";
+import { evaluateLimitFill, evaluateTpSl } from "../execution/executionRules.js";
 
 export type PaperSide = "LONG" | "SHORT";
 export type PaperExecutionModel = "closeOnly" | "conservativeOhlc";
@@ -66,6 +67,8 @@ type Position = {
 type SymbolState = {
     order: EntryOrder | null;
     position: Position | null;
+    executionState: "FLAT" | "OPENING" | "OPEN" | "CLOSING";
+    entryAttempt: number;
     cooldownUntil: number;
     totalRealizedPnl: number;
 };
@@ -150,10 +153,12 @@ export class PaperBroker {
     private feesPaid = 0;
     private fundingAccrued = 0;
     private currentMskDayKey: string | null = null;
+    private readonly runId: string;
 
-    constructor(cfg: PaperBrokerConfig, logger: EventLogger) {
+    constructor(cfg: PaperBrokerConfig, logger: EventLogger, runId = "run") {
         this.cfg = cfg;
         this.logger = logger;
+        this.runId = runId;
     }
 
     private syncRiskDay(nowMs: number) {
@@ -194,6 +199,8 @@ export class PaperBroker {
         const st = this.map.get(symbol) ?? {
             order: null,
             position: null,
+            executionState: "FLAT" as const,
+            entryAttempt: 0,
             cooldownUntil: 0,
             totalRealizedPnl: 0
         };
@@ -213,6 +220,7 @@ export class PaperBroker {
         }
 
         if (st.position) {
+            st.executionState = "OPEN";
             const p = st.position;
             const unreal =
                 markPrice == null
@@ -277,6 +285,8 @@ export class PaperBroker {
             const st = this.map.get(symbol) ?? {
                 order: null,
                 position: null,
+                executionState: "FLAT" as const,
+                entryAttempt: 0,
                 cooldownUntil: 0,
                 totalRealizedPnl: 0
             };
@@ -294,6 +304,7 @@ export class PaperBroker {
                     }
                 });
                 st.order = null;
+                st.executionState = st.position ? "OPEN" : "FLAT";
             }
 
             if (st.position) {
@@ -342,6 +353,7 @@ export class PaperBroker {
                 }
 
                 st.position = null;
+                st.executionState = "FLAT";
             }
 
             st.cooldownUntil = nowMs + this.cfg.rearmDelayMs;
@@ -375,12 +387,15 @@ export class PaperBroker {
         const st = this.map.get(symbol) ?? {
             order: null,
             position: null,
+            executionState: "FLAT" as const,
+            entryAttempt: 0,
             cooldownUntil: 0,
             totalRealizedPnl: 0
         };
 
         // 1) Position management
         if (st.position) {
+            st.executionState = "OPEN";
             const p = st.position;
 
             // funding at funding time (apply once per nextFundingTime value)
@@ -415,33 +430,18 @@ export class PaperBroker {
             let closeType: "TP" | "SL" | null = null;
             let closePrice: number | null = null;
 
-            if (useConservativeOhlc) {
-                const tpHit = p.side === "LONG" ? safeOhlc.high >= p.tpPrice : safeOhlc.low <= p.tpPrice;
-                const slHit = p.side === "LONG" ? safeOhlc.low <= p.slPrice : safeOhlc.high >= p.slPrice;
-                if (slHit) {
-                    closeType = "SL";
-                    closePrice = p.slPrice;
-                } else if (tpHit) {
-                    closeType = "TP";
-                    closePrice = p.tpPrice;
-                }
-            } else if (p.side === "LONG") {
-                if (markPrice >= p.tpPrice) {
-                    closeType = "TP";
-                    closePrice = p.tpPrice;
-                } else if (markPrice <= p.slPrice) {
-                    closeType = "SL";
-                    closePrice = p.slPrice;
-                }
-            } else {
-                if (markPrice <= p.tpPrice) {
-                    closeType = "TP";
-                    closePrice = p.tpPrice;
-                } else if (markPrice >= p.slPrice) {
-                    closeType = "SL";
-                    closePrice = p.slPrice;
-                }
-            }
+            const tpSl = evaluateTpSl({
+                ohlc: safeOhlc,
+                markPrice,
+                entryPrice: p.entryPrice,
+                tpPrice: p.tpPrice,
+                slPrice: p.slPrice,
+                side: p.side,
+                mode: executionModel,
+                tieBreakRule: "worstCase",
+            });
+            closeType = tpSl.closeType;
+            closePrice = tpSl.closePrice;
 
             if (closeType && closePrice != null) {
                 const notionalExit = closePrice * p.qty;
@@ -486,6 +486,7 @@ export class PaperBroker {
                 this.fundingAccrued += p.fundingAccrued;
 
                 st.position = null;
+                st.executionState = "FLAT";
                 st.cooldownUntil = nowMs + this.cfg.rearmDelayMs;
             }
 
@@ -506,14 +507,19 @@ export class PaperBroker {
                 });
 
                 st.order = null;
+                st.executionState = "FLAT";
                 st.cooldownUntil = nowMs + this.cfg.rearmDelayMs;
                 this.map.set(symbol, st);
                 return;
             }
 
-            const filled = useConservativeOhlc
-                ? (o.side === "LONG" ? safeOhlc.low <= o.entryPrice : safeOhlc.high >= o.entryPrice)
-                : (o.side === "LONG" ? markPrice <= o.entryPrice : markPrice >= o.entryPrice);
+            const filled = evaluateLimitFill({
+                ohlc: safeOhlc,
+                markPrice,
+                limitPrice: o.entryPrice,
+                side: o.side,
+                mode: executionModel,
+            });
 
             if (filled) {
                 const notionalEntry = o.entryPrice * o.qty;
@@ -556,13 +562,22 @@ export class PaperBroker {
 
                 st.order = null;
                 st.position = pos;
+                st.executionState = "OPEN";
 
                 if (useConservativeOhlc) {
-                    const slHit = pos.side === "LONG" ? safeOhlc.low <= pos.slPrice : safeOhlc.high >= pos.slPrice;
-                    const tpHit = pos.side === "LONG" ? safeOhlc.high >= pos.tpPrice : safeOhlc.low <= pos.tpPrice;
-                    if (slHit || tpHit) {
-                        const closeType = slHit ? "SL" : "TP";
-                        const closePrice = closeType === "SL" ? pos.slPrice : pos.tpPrice;
+                    const instantTpSl = evaluateTpSl({
+                        ohlc: safeOhlc,
+                        markPrice,
+                        entryPrice: pos.entryPrice,
+                        tpPrice: pos.tpPrice,
+                        slPrice: pos.slPrice,
+                        side: pos.side,
+                        mode: executionModel,
+                        tieBreakRule: "worstCase",
+                    });
+                    if (instantTpSl.closeType && instantTpSl.closePrice != null) {
+                        const closeType = instantTpSl.closeType;
+                        const closePrice = instantTpSl.closePrice;
                         const notionalExit = closePrice * pos.qty;
                         const exitFee = fee(notionalExit, this.cfg.makerFeeRate);
 
@@ -602,6 +617,7 @@ export class PaperBroker {
                         this.fundingAccrued += pos.fundingAccrued;
 
                         st.position = null;
+                        st.executionState = "FLAT";
                         st.cooldownUntil = nowMs + this.cfg.rearmDelayMs;
                     }
                 }
@@ -626,6 +642,17 @@ export class PaperBroker {
         }
 
         if (!signal) {
+            this.map.set(symbol, st);
+            return;
+        }
+
+        if (st.executionState !== "FLAT") {
+            this.logger.log({
+                ts: nowMs,
+                type: "ORDER_SKIPPED",
+                symbol,
+                payload: { reason: "symbol_not_flat", signal, executionState: st.executionState }
+            });
             this.map.set(symbol, st);
             return;
         }
@@ -661,7 +688,7 @@ export class PaperBroker {
         const qty = notional / entryPrice;
 
         const order: EntryOrder = {
-            id: randomUUID(),
+            id: `${this.runId}:${symbol}:${st.entryAttempt + 1}`,
             symbol,
             side: signal,
             entryPrice,
@@ -671,6 +698,8 @@ export class PaperBroker {
         };
 
         st.order = order;
+        st.entryAttempt += 1;
+        st.executionState = "OPENING";
 
         this.logger.log({
             ts: nowMs,

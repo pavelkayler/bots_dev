@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 import { decimalsFromStep, formatToDecimals, pickLinearMeta, roundDownToStep, roundUpToStep, type LinearInstrumentMeta } from "../bybit/instrumentsMeta.js";
 import type { EventLogger } from "../logging/EventLogger.js";
@@ -35,6 +34,8 @@ type TickInput = {
 };
 
 type SymbolState = {
+  executionState: "FLAT" | "OPENING" | "OPEN" | "CLOSING";
+  entryAttempt: number;
   positionOpen: boolean;
   side: PaperSide | null;
   entryPrice: number | null;
@@ -89,7 +90,12 @@ export class DemoBroker {
   public sessionStartBalanceUsdt: number | null = null;
   public sessionEndBalanceUsdt: number | null = null;
 
-  constructor(cfg: PaperBrokerConfig, logger: EventLogger, private readonly getMarkPrice?: (symbol: string) => number | null) {
+  constructor(
+    cfg: PaperBrokerConfig,
+    logger: EventLogger,
+    private readonly runId: string,
+    private readonly getMarkPrice?: (symbol: string) => number | null,
+  ) {
     this.cfg = cfg;
     this.logger = logger;
   }
@@ -116,6 +122,8 @@ export class DemoBroker {
     if (current) return current;
     const created: SymbolState = {
       positionOpen: false,
+      executionState: "FLAT",
+      entryAttempt: 0,
       side: null,
       entryPrice: null,
       qty: null,
@@ -136,6 +144,7 @@ export class DemoBroker {
     st.pendingOrderLinkId = null;
     st.placedAt = null;
     st.expiresAt = null;
+    st.executionState = st.positionOpen ? "OPEN" : "FLAT";
   }
 
   private isLeverageInvalidError(err: any): boolean {
@@ -402,7 +411,15 @@ export class DemoBroker {
       return;
     }
 
-    if (st.positionOpen || st.pendingEntry) return;
+    if (st.executionState !== "FLAT") {
+      this.logger.log({
+        ts: args.nowMs,
+        type: "ORDER_SKIPPED",
+        symbol: args.symbol,
+        payload: { reason: "symbol_not_flat", signal: args.signal, executionState: st.executionState },
+      });
+      return;
+    }
     if (!st.positionOpen && !st.pendingEntry && this.openOrderSymbolsCache.has(args.symbol)) {
       this.logger.log({
         ts: args.nowMs,
@@ -465,7 +482,7 @@ export class DemoBroker {
       : roundUpToStep(levelsRaw.sl, meta.tickSize);
     const qtyDecimals = decimalsFromStep(meta.qtyStep);
     const priceDecimals = decimalsFromStep(meta.tickSize);
-    const orderLinkId = "d" + crypto.randomBytes(16).toString("hex");
+    const orderLinkId = `${this.runId}:${args.symbol}:${st.entryAttempt + 1}`;
 
     try {
       await this.rest.placeOrderLinear({
@@ -493,6 +510,8 @@ export class DemoBroker {
     });
 
     st.pendingEntry = true;
+    st.entryAttempt += 1;
+    st.executionState = "OPENING";
     st.pendingOrderLinkId = orderLinkId;
     st.placedAt = args.nowMs;
     st.expiresAt = args.nowMs + this.cfg.entryTimeoutSec * 1000;
@@ -543,6 +562,7 @@ export class DemoBroker {
 
         if (st.pendingEntry && !hasOpenOrder && serverPos) {
           st.positionOpen = true;
+          st.executionState = "OPEN";
           st.side = String(serverPos.side ?? "").toLowerCase() === "sell" ? "SHORT" : "LONG";
           st.entryPrice = Number(serverPos.avgPrice ?? 0) || st.entryPrice;
           st.qty = Number(serverPos.size ?? 0) || st.qty;
@@ -566,6 +586,7 @@ export class DemoBroker {
         if (st.positionOpen && !serverPos) {
           this.logger.log({ ts: nowMs, type: "DEMO_POSITION_CLOSE", symbol, payload: { reason: "UNKNOWN" } });
           st.positionOpen = false;
+          st.executionState = "FLAT";
           st.side = null;
           st.entryPrice = null;
           st.qty = null;
@@ -579,6 +600,7 @@ export class DemoBroker {
         if (!symbol) continue;
         const st = this.getState(symbol);
         st.positionOpen = true;
+        st.executionState = "OPEN";
         st.side = String(serverPos.side ?? "").toLowerCase() === "sell" ? "SHORT" : "LONG";
         st.entryPrice = Number(serverPos.avgPrice ?? 0) || st.entryPrice;
         st.qty = Number(serverPos.size ?? 0) || st.qty;
