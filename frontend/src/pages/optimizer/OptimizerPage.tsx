@@ -34,6 +34,7 @@ import DatasetTargetCard from "../../features/datasetTarget/ui/DatasetTargetCard
 import { deleteDatasetHistory, listDatasetHistories, type DatasetHistoryRecord } from "../../features/datasetHistory/api/datasetHistoryApi";
 import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataReceiveApi";
 import { useInterval } from "../../shared/hooks/useInterval";
+import { getDatasetHistoryIds, getHistoryRunPayloadValue } from "../../features/optimizer/utils/historyPayload";
 
 type OptimizerResultRow = OptimizationResult;
 type LoopOptimizerResultRow = OptimizerResultRow & { __runJobId: string };
@@ -2469,6 +2470,11 @@ useEffect(() => {
                 {jobHistory.map((row) => {
                   const isOpen = Boolean(expandedHistory[row.jobId]);
                   const detailsRows = historyResults[row.jobId] ?? [];
+                  const datasetHistoryIds = getDatasetHistoryIds((row as any).runPayload);
+                  const optTfMin = getHistoryRunPayloadValue<number | string | null>((row as any).runPayload, "optTfMin", null);
+                  const candidates = getHistoryRunPayloadValue<number | string>((row as any).runPayload, "candidates", "-");
+                  const seed = getHistoryRunPayloadValue<number | string>((row as any).runPayload, "seed", "-");
+                  const direction = getHistoryRunPayloadValue<string>((row as any).runPayload, "directionMode", "-");
                   return (
                     <Fragment key={row.jobId}>
                       <tr>
@@ -2476,12 +2482,12 @@ useEffect(() => {
                         <td style={historyEndedAtCellStyle} title={new Date(row.endedAtMs).toISOString()}><span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{formatHistoryEndedAt(row.endedAtMs)}</span></td>
                         <td style={historyStatusCellStyle}>{row.status.toUpperCase()}</td>
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.mode ?? "-"}</td> : null}
-                        <td style={HISTORY_CELL_STYLE} title={row.runPayload.datasetHistoryIds.join(",")}>{row.runPayload.datasetHistoryIds.length}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.runPayload.optTfMin ?? "-"}</td>
-                        <td style={HISTORY_CELL_STYLE}>{row.runPayload.candidates}</td>
+                        <td style={HISTORY_CELL_STYLE} title={datasetHistoryIds.join(",") || "-"}>{datasetHistoryIds.length || "-"}</td>
+                        <td style={HISTORY_CELL_STYLE}>{optTfMin ?? "-"}</td>
+                        <td style={HISTORY_CELL_STYLE}>{candidates}</td>
                         <td style={HISTORY_CELL_STYLE}>{formatSimSummary((row.runPayload as any).sim)}</td>
-                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.runPayload.seed}</td> : null}
-                        <td style={HISTORY_CELL_STYLE}>{row.runPayload.directionMode}</td>
+                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{seed}</td> : null}
+                        <td style={HISTORY_CELL_STYLE}>{direction}</td>
                         <td style={HISTORY_CELL_STYLE}>{historyHoursByJobId[row.jobId] ?? "-"}</td>
                         <td style={historyBestNetCellStyle}>{row.summary.bestNetPnl == null ? "-" : row.summary.bestNetPnl.toFixed(4)}</td>
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestTrades ?? "-"}</td> : null}

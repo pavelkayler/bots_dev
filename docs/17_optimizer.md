@@ -14,7 +14,7 @@ Tape-based optimizer inputs are removed. All optimizer runs use dataset historie
 
 ## Data and replay mechanics
 - Price source: cached 1-minute klines from `backend/data/cache/bybit_klines/`.
-- OI source: cached at a 5-minute grid (Bybit `intervalTime` minimum is 5min), then used without synthetic interpolation.
+- OI source: Bybit 5-minute OI is authoritative on its boundary points; CoinGlass is used only to fill missing in-between 1-minute OI slots for Bybit symbols during Receive Data.
 - Funding source: `/v5/market/funding/history` point series from `backend/data/cache/bybit_funding_history/`; replay applies last-known funding value between timestamps.
 - Execution replay supports two modes: default `closeOnly`, and optional `conservativeOhlc` for bar-range touch checks with worst-case tie resolution.
 - Decision cadence is signal-window based: new entry decisions are evaluated only on `tf(opt)` window-close timestamps (`ts % tfMs === 0`).
@@ -137,12 +137,17 @@ Data receive must respect Bybit IP limits. Progress UI should show:
 
 Current limiter target: strict 500 requests per 5 seconds.
 
-## Planned: CoinGlass provider (deferred)
+## CoinGlass 1m OI gap-fill (implemented)
 
-- Why: Bybit historical open interest has a minimum 5m granularity, while CoinGlass can provide 1m open interest (and potentially 1m funding).
-- Scope (future): keep Bybit as primary provider and use CoinGlass only to fill missing 1m openInterest data and optionally 1m funding gaps.
-- Implementation note (future): add request throttling for CoinGlass and persist both providers into the same cache-row model used by optimizer replay.
-- Status: deferred until CoinGlass API access is purchased.
+- Bybit remains the primary source for historical data and runtime data remains Bybit-only.
+- CoinGlass is used only in Receive Data for historical Bybit OI minute gap fill.
+- Scope is narrow:
+  - OI only
+  - 1-minute interval only
+  - Bybit symbols only
+  - no price/funding/other provider mixing
+- Receive Data enforces strict completion: it does not finish successfully until all required 1m candles have OI values.
+- CoinGlass Hobbyist throttle handling is built in (30 req/min window). When waiting, progress emits a reset countdown message.
 
 ## Receive Data QA + manifest
 
@@ -154,7 +159,7 @@ Each Receive Data run now writes a deterministic QA manifest tied to the dataset
 ### What is validated
 Per symbol, for the selected range:
 - 1m kline expected vs present points, coverage %, missing contiguous windows, duplicate timestamps, out-of-order transitions, and SHA-256 hash.
-- 5m open-interest expected vs present points, coverage %, missing windows, duplicate timestamps, out-of-order transitions, and SHA-256 hash.
+- 5m Bybit open-interest points plus strict 1m candle-level OI completeness after CoinGlass gap fill.
 - Funding history points present in range, min/max timestamp, missing expected 8h points, and SHA-256 hash of raw points.
 
 ### Status rules

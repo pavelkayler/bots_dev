@@ -34,6 +34,14 @@ Enforcement behavior:
 - On threshold breach, runtime triggers `EMERGENCY_STOP`, sets runtime status message `Emergency stop: <reason>`, and initiates the hardened STOP flow.
 - Emergency-stop is sticky inside the same run lifecycle: status reason remains visible after stop and trading/resume is blocked until a clean new start/reset cycle.
 
+## Receive Data minute OI completeness
+- Bybit remains primary and authoritative.
+- Receive Data uses Bybit 1m klines as the base timeline.
+- Bybit 5m historical OI points stay authoritative on their timestamps.
+- CoinGlass is used only to fill missing in-between 1m OI points for Bybit symbols.
+- Completion is strict: if any 1m candle in the target range is missing OI, the job ends with error (not done).
+- CoinGlass requests are limiter-gated for Hobbyist limits (30 requests/min); when a wait is required, progress message reports reset countdown.
+
 Recommended soak procedure:
 1) Start session and let it run for 24h.
 2) Periodically check `/api/doctor` warnings and soak snapshot file growth.

@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { DashboardPage } from "../../pages/dashboard/DashboardPage";
 import { UniversePage } from "../../pages/universe/UniversePage";
 import { OptimizerPage } from "../../pages/optimizer/OptimizerPage";
+import { ROUTER_FUTURE_FLAGS } from "./futureFlags";
 
 export const router = createBrowserRouter(
   [
@@ -11,8 +12,6 @@ export const router = createBrowserRouter(
     { path: "*", element: <Navigate to="/" replace /> }
   ],
   {
-    future: {
-      v7_relativeSplatPath: true
-    }
+    future: ROUTER_FUTURE_FLAGS
   }
 );

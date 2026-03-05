@@ -130,16 +130,16 @@ export type OptimizerJobHistoryRecord = {
   endedAtMs: number;
   status: "done" | "cancelled" | "stopped" | "error";
   runPayload: {
-    datasetHistoryIds: string[];
+    datasetHistoryIds?: string[] | null;
     optTfMin?: number;
     timeRangeFromTs?: number;
     timeRangeToTs?: number;
-    candidates: number;
-    seed: number;
-    minTrades: number;
-    directionMode: "both" | "long" | "short";
-    rememberNegatives: boolean;
-    excludeNegative: boolean;
+    candidates?: number;
+    seed?: number;
+    minTrades?: number;
+    directionMode?: "both" | "long" | "short";
+    rememberNegatives?: boolean;
+    excludeNegative?: boolean;
     datasetHours?: number;
     sim?: OptimizerSimulationParams;
   };

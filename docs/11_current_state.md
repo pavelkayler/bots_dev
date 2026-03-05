@@ -108,8 +108,11 @@ High-level:
   - Tape APIs/recording are removed; optimizer inputs are dataset histories/cache only
   - data comes only from Receive Data cache + Dataset Target
   - price cache: `backend/data/cache/bybit_klines/` (1m candles)
-  - OI cache: 5-minute grid (Bybit supports 5min/15min/...; minimum is 5min)
+  - OI cache: Bybit 5-minute historical OI is the base (`backend/data/cache/bybit_open_interest/5min/`); CoinGlass fills only missing in-between 1m OI slots (`backend/data/cache/coinglass_open_interest/1min/`)
   - funding cache: `backend/data/cache/bybit_funding_history/` from `/v5/market/funding/history`, applied as last-known value between points
+  - Receive Data completion is strict: a dataset is marked done only when every required 1m candle has OI populated
+  - if CoinGlass minute backfill is required and rate-limited, Receive Data waits and continues (progress message shows reset countdown)
+  - if CoinGlass backfill is required but `COINGLASS_API_KEY` is missing, Receive Data fails with a clear dataset-quality error
 
 - Optimization:
   - job-based API with **pause/resume/cancel**
@@ -141,6 +144,13 @@ High-level:
 1) Keep tightening stability guards: low-disk behavior, backpressure behavior, and long-run soak checks.
 2) Add minimal CI: backend build always green; frontend build when TS debt is addressed.
 3) Add lightweight automated tests for config normalization + worker message contract.
+
+## Environment
+- Root `.env.example` is present and includes backend/runtime/optimizer dataset vars:
+  - `PORT`, `HOST`
+  - `BYBIT_REST_URL`, `BYBIT_DEMO_REST_URL`, `BYBIT_DEMO_API_KEY`, `BYBIT_DEMO_API_SECRET`, `BYBIT_RECV_WINDOW`
+  - `COINGLASS_API_KEY`, `COINGLASS_BASE_URL`
+  - `DEBUG_DATASET_TF`, `DEBUG_OPT_TRADES`, `DEBUG_OPT_MARKETDATA`
 
 ## Planned changes
 

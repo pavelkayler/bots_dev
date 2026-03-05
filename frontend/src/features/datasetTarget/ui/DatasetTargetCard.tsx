@@ -5,6 +5,7 @@ import { listUniverses } from "../../universe/api";
 import type { UniverseMeta } from "../../universe/types";
 import { DATASET_CACHE_STORAGE_KEY, cancelReceiveDataJob, getReceiveDataJob, startReceiveData, type ReceiveDataJob } from "../../dataReceive/api/dataReceiveApi";
 import { CenteredProgressBar } from "../../../shared/ui/CenteredProgressBar";
+import { formatReceiveProgressLine } from "./receiveProgress";
 
 type DraftState = {
   universeId: string | null;
@@ -386,11 +387,7 @@ export default function DatasetTargetCard() {
             showPercent
           />
           <div style={{ fontSize: 12, marginTop: 6, minHeight: 18 }}>
-            {receiveJob ? [
-              `${receiveJob.progress.completedSteps}/${receiveJob.progress.totalSteps}`,
-              receiveJob.progress.currentSymbol,
-              receiveJob.progress.message,
-            ].filter(Boolean).join(" — ") : ""}
+            {formatReceiveProgressLine(receiveJob)}
           </div>
         </div>
         <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>Bybit history retrieval is throttled in backend (~500 req / 5s) with incremental progress updates.</div>
