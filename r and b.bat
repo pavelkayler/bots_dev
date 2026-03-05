@@ -57,7 +57,9 @@ git reset -- backend/data/cache >nul 2>&1
 
 rem If nothing staged, skip commit/push
 git diff --cached --quiet
-if not errorlevel 1 (
+set "DIFF_RC=%errorlevel%"
+
+if "%DIFF_RC%"=="0" (
   echo   No staged changes in backend/data (after excluding cache). Skip commit/push.
   popd
   goto :after_push
