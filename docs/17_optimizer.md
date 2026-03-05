@@ -4,6 +4,8 @@ Last update: 2026-03-04
 
 This document describes the Optimizer feature used to tune paper-trading parameters via cached historical market data and deterministic replay.
 
+Tape-based optimizer inputs are removed. All optimizer runs use dataset histories/cache only.
+
 ## Goals
 - Record market dataset histories (JSONL) while runtime session is **RUNNING**.
 - Run random-search optimization over many parameter candidates on dataset history windows from cache.
@@ -28,7 +30,7 @@ This document describes the Optimizer feature used to tune paper-trading paramet
 Route: `/optimizer`
 
 Main sections:
-- Tape list (server directory)
+- Dataset histories list (cached data snapshots)
 - Optimization inputs (candidates/seed/tf/direction + filters + loop controls)
 - Progress (0.01% precision) + per-run elapsed/ETA + loop elapsed
 - Results table (live incremental updates)

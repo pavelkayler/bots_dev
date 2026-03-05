@@ -332,13 +332,32 @@ export class DemoBroker {
         const execId = String(exec.execId ?? "");
         if (!execId || this.execSeenIds.has(execId)) continue;
         this.trackExecSeen(execId);
+
+        const closedPnl = this.parseNumber(exec.closedPnl);
+        const execFee = this.parseNumber(exec.execFee);
         this.demoTradesCount += 1;
-        this.demoRealizedPnlUsdt += this.parseNumber(exec.closedPnl);
-        this.demoFeesUsdt += this.parseNumber(exec.execFee);
+        this.demoRealizedPnlUsdt += closedPnl;
+        this.demoFeesUsdt += execFee;
         const execTimeMs = Number(exec.execTime ?? 0);
+        const ts = Number.isFinite(execTimeMs) && execTimeMs > 0 ? execTimeMs : nowMs;
         if (Number.isFinite(execTimeMs) && execTimeMs > 0) {
           this.lastExecTimeMs = this.lastExecTimeMs == null ? execTimeMs : Math.max(this.lastExecTimeMs, execTimeMs);
         }
+        this.logger.log({
+          ts,
+          type: "DEMO_EXECUTION",
+          symbol: String(exec.symbol ?? ""),
+          payload: {
+            execId,
+            orderId: String(exec.orderId ?? ""),
+            side: String(exec.side ?? "").toUpperCase(),
+            execPrice: this.parseNumber(exec.orderPrice),
+            execQty: this.parseNumber(exec.execQty),
+            execFee,
+            closedPnl,
+            realizedPnl: closedPnl,
+          },
+        });
       }
     } catch (err: any) {
       this.logger.log({

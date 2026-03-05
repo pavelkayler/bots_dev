@@ -5,6 +5,7 @@ import { fmtTime } from "../../shared/utils/format";
 import { listPresets, readPreset, savePreset } from "./api";
 import type { PresetMeta } from "./types";
 import { updateRuntimeConfig, fetchRuntimeConfig } from "../config/api/configApi";
+import { TablePaginationControls, useStoredPageSize } from "../../shared/ui/TablePaginationControls";
 
 type Props = {
   sessionState: SessionState;
@@ -16,6 +17,8 @@ export function PresetsPanel({ sessionState }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useStoredPageSize("presets-list", 25);
 
   const canMutateUniverse = sessionState === "STOPPED";
 
@@ -41,6 +44,19 @@ export function PresetsPanel({ sessionState }: Props) {
     if (canMutateUniverse) return null;
     return "Universe apply is blocked while session is RUNNING. Stop session to apply presets that change symbols or klineTfMin.";
   }, [canMutateUniverse]);
+  const itemsKey = useMemo(() => items.map((item) => item.id).join("|"), [items]);
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const pageClamped = Math.max(1, Math.min(page, totalPages));
+  const start = (pageClamped - 1) * pageSize;
+  const pagedItems = items.slice(start, start + pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [itemsKey, pageSize]);
+
+  useEffect(() => {
+    if (page !== pageClamped) setPage(pageClamped);
+  }, [page, pageClamped]);
 
   async function onSaveCurrent() {
     const name = window.prompt("Preset name", `Preset ${new Date().toLocaleString()}`);
@@ -102,39 +118,52 @@ export function PresetsPanel({ sessionState }: Props) {
         ) : !items.length ? (
           <div style={{ opacity: 0.75 }}>No presets yet. Click "Save current".</div>
         ) : (
-          <Table striped bordered hover size="sm" style={{ tableLayout: "fixed", width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ width: "30%", fontSize: 12 }}>Name</th>
-                <th style={{ width: "20%", fontSize: 12 }}>Updated</th>
-                <th style={{ width: "20%", fontSize: 12 }}>Id</th>
-                <th style={{ width: "15%", fontSize: 12 }}>Action</th>
-                <th style={{ width: "15%", fontSize: 12 }}>State</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((p) => (
-                <tr key={p.id}>
-                  <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</td>
-                  <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(p.updatedAt)}</td>
-                  <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.id}</td>
-                  <td style={{ fontSize: 12 }}>
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      onClick={() => void onApply(p.id)}
-                      disabled={Boolean(busyId) || loading}
-                    >
-                      Apply
-                    </Button>
-                  </td>
-                  <td style={{ fontSize: 12 }}>
-                    {busyId === p.id ? <Badge bg="warning">applying</Badge> : <Badge bg="secondary">ready</Badge>}
-                  </td>
+          <>
+            <Table striped bordered hover size="sm" style={{ tableLayout: "fixed", width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ width: "30%", fontSize: 12 }}>Name</th>
+                  <th style={{ width: "20%", fontSize: 12 }}>Updated</th>
+                  <th style={{ width: "20%", fontSize: 12 }}>Id</th>
+                  <th style={{ width: "15%", fontSize: 12 }}>Action</th>
+                  <th style={{ width: "15%", fontSize: 12 }}>State</th>
                 </tr>
-              ))}
-            </tbody>
-          </Table>
+              </thead>
+              <tbody>
+                {pagedItems.map((p) => (
+                  <tr key={p.id}>
+                    <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</td>
+                    <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(p.updatedAt)}</td>
+                    <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.id}</td>
+                    <td style={{ fontSize: 12 }}>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => void onApply(p.id)}
+                        disabled={Boolean(busyId) || loading}
+                      >
+                        Apply
+                      </Button>
+                    </td>
+                    <td style={{ fontSize: 12 }}>
+                      {busyId === p.id ? <Badge bg="warning">applying</Badge> : <Badge bg="secondary">ready</Badge>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            <TablePaginationControls
+              tableId="presets-list"
+              page={pageClamped}
+              totalRows={items.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+            />
+          </>
         )}
       </Card.Body>
     </Card>

@@ -17,7 +17,7 @@ Response:
 ### GET /api/session/status
 Response:
 ```json
-{ "sessionState": "STOPPED|RUNNING|STOPPING|PAUSING|PAUSED|RESUMING", "sessionId": "string|null", "eventsFile": "string|null", "runningSinceMs": "number|null" }
+{ "sessionState": "STOPPED|RUNNING|STOPPING|PAUSING|PAUSED|RESUMING", "sessionId": "string|null", "eventsFile": "string|null", "runningSinceMs": "number|null", "runtimeMessage": "string|null" }
 ```
 
 ### POST /api/session/start
@@ -228,7 +228,7 @@ Health:
 - Heavy optimizer compute runs in a worker thread.
 - Main thread updates job state from worker messages.
 - Jobs/loops are persisted to disk with paused-safe recovery on backend restart.
-- Tape recording is automatic on entering RUNNING and rotates at 90MB segments.
+- Optimizer runs are driven by dataset histories/cache only.
 
 ## API changes: historical dataset cache (implemented)
 

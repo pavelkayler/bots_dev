@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Table } from "react-bootstrap";
+import { TablePaginationControls, useStoredPageSize } from "../../../shared/ui/TablePaginationControls";
 import type { TradeExcursionsRow } from "../api/tradeStatsApi";
 
 type SortKey = "symbol" | "tpTrades" | "tpWorstMinRoiPct" | "slTrades" | "slBestMaxRoiPct";
@@ -12,6 +13,8 @@ function fmtPct(v: number | null) {
 export function TradeExcursionsTable({ rows }: { rows: TradeExcursionsRow[] }) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useStoredPageSize("dashboard-trade-excursions", 25);
 
   const sortedRows = useMemo(() => {
     if (!sortKey) return rows;
@@ -37,6 +40,19 @@ export function TradeExcursionsTable({ rows }: { rows: TradeExcursionsRow[] }) {
     });
     return withIdx.map((x) => x.row);
   }, [rows, sortDir, sortKey]);
+  const symbolsKey = useMemo(() => rows.map((row) => row.symbol).sort().join("|"), [rows]);
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const pageClamped = Math.max(1, Math.min(page, totalPages));
+  const start = (pageClamped - 1) * pageSize;
+  const visibleRows = sortedRows.slice(start, start + pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [symbolsKey, pageSize]);
+
+  useEffect(() => {
+    if (page !== pageClamped) setPage(pageClamped);
+  }, [page, pageClamped]);
 
   function onSort(nextKey: SortKey) {
     if (sortKey === nextKey) {
@@ -60,7 +76,7 @@ export function TradeExcursionsTable({ rows }: { rows: TradeExcursionsRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((row) => (
+          {visibleRows.map((row) => (
             <tr key={row.symbol}>
               <td>{row.symbol}</td>
               <td>{row.tpTrades}</td>
@@ -69,13 +85,24 @@ export function TradeExcursionsTable({ rows }: { rows: TradeExcursionsRow[] }) {
               <td>{fmtPct(row.slBestMaxRoiPct)}</td>
             </tr>
           ))}
-          {!sortedRows.length ? (
+          {!visibleRows.length ? (
             <tr>
               <td colSpan={5} style={{ opacity: 0.75 }}>No data yet.</td>
             </tr>
           ) : null}
         </tbody>
       </Table>
+      <TablePaginationControls
+        tableId="dashboard-trade-excursions"
+        page={pageClamped}
+        totalRows={sortedRows.length}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          setPage(1);
+        }}
+      />
     </div>
   );
 }

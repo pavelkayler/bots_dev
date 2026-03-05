@@ -1,6 +1,6 @@
 # 15 Apply (Config) + Session controls
 
-Last update: 2026-02-26
+Last update: 2026-03-06
 
 This page describes operator-facing config application and session lifecycle controls.
 
@@ -19,7 +19,7 @@ Notes:
 Session lifecycle controls are in the header (common across pages):
 - **Start** (when STOPPED)
 - **Stop** (when RUNNING)
-- **Pause** (manual-only; intended for “close laptop / no internet”) 
+- **Pause** (manual-only; intended for close-laptop / no-internet cases)
 - **Resume** (from PAUSED)
 
 ### Semantics
@@ -29,9 +29,6 @@ Session lifecycle controls are in the header (common across pages):
   - timers are cancelled
   - live rows are cleared (`rows=[]`)
 
-## Tape recording (automatic)
-Optimizer tape recording is **automatic**:
-- starts when session enters `RUNNING`
-- stops when session leaves `RUNNING` (STOPPING/STOPPED/PAUSED)
-
-There are no separate “Start and Record” or “Apply and Run” buttons.
+## Optimizer data source
+- Optimizer uses dataset histories/cache only.
+- There are no recording controls and no separate Start-and-Record flow.

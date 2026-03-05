@@ -7,6 +7,7 @@ import { createUniverse, deleteUniverse, listUniverses, readUniverse } from "../
 import type { UniverseFile, UniverseMeta } from "../../features/universe/types";
 import { fmtNum, fmtTime } from "../../shared/utils/format";
 import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
+import { TablePaginationControls, useStoredPageSize } from "../../shared/ui/TablePaginationControls";
 
 const CREATE_JOB_STORAGE_KEY = "universeCreateJob";
 
@@ -41,6 +42,8 @@ export function UniversePage() {
   const [modalUniverse, setModalUniverse] = useState<UniverseFile | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [savedPage, setSavedPage] = useState(1);
+  const [savedPageSize, setSavedPageSize] = useStoredPageSize("universe-saved", 25);
   const createAbortRef = useRef<AbortController | null>(null);
 
   const persistCreateJob = useCallback((job: UniverseCreateJobState | null) => {
@@ -129,6 +132,19 @@ export function UniversePage() {
   }, [createJob]);
 
   const canCreate = useMemo(() => !creating, [creating]);
+  const savedIdsKey = useMemo(() => items.map((item) => item.id).join("|"), [items]);
+  const savedTotalPages = Math.max(1, Math.ceil(items.length / savedPageSize));
+  const savedPageClamped = Math.max(1, Math.min(savedPage, savedTotalPages));
+  const savedStart = (savedPageClamped - 1) * savedPageSize;
+  const pagedItems = items.slice(savedStart, savedStart + savedPageSize);
+
+  useEffect(() => {
+    setSavedPage(1);
+  }, [savedIdsKey, savedPageSize]);
+
+  useEffect(() => {
+    if (savedPage !== savedPageClamped) setSavedPage(savedPageClamped);
+  }, [savedPage, savedPageClamped]);
 
   async function onCreate() {
     setCreating(true);
@@ -301,39 +317,52 @@ export function UniversePage() {
           ) : !items.length ? (
             <div style={{ opacity: 0.75 }}>No universes yet. Click Create.</div>
           ) : (
-            <Table striped bordered hover size="sm" style={{ tableLayout: "fixed", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={{ width: "26%", fontSize: 12 }}>Name</th>
-                  <th style={{ width: "10%", fontSize: 12 }}>Count</th>
-                  <th style={{ width: "16%", fontSize: 12 }}>Min turnover</th>
-                  <th style={{ width: "14%", fontSize: 12 }}>Min vol</th>
-                  <th style={{ width: "18%", fontSize: 12 }}>Updated</th>
-                  <th style={{ width: "16%", fontSize: 12 }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((u) => (
-                  <tr key={u.id}>
-                    <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.name}</td>
-                    <td style={{ fontSize: 12 }}>{u.count}</td>
-                    <td style={{ fontSize: 12 }}>{fmtNum(u.minTurnoverUsd)}</td>
-                    <td style={{ fontSize: 12 }}>{fmtNum(u.minVolatilityPct)}%</td>
-                    <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(u.updatedAt)}</td>
-                    <td style={{ fontSize: 12 }}>
-                      <div className="d-flex align-items-center gap-2">
-                        <Button size="sm" variant="outline-secondary" onClick={() => void onViewSymbols(u.id)}>
-                          View symbols
-                        </Button>
-                        <Button size="sm" variant="outline-danger" onClick={() => void onDelete(u.id)}>
-                          Delete
-                        </Button>
-                      </div>
-                    </td>
+            <>
+              <Table striped bordered hover size="sm" style={{ tableLayout: "fixed", width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: "26%", fontSize: 12 }}>Name</th>
+                    <th style={{ width: "10%", fontSize: 12 }}>Count</th>
+                    <th style={{ width: "16%", fontSize: 12 }}>Min turnover</th>
+                    <th style={{ width: "14%", fontSize: 12 }}>Min vol</th>
+                    <th style={{ width: "18%", fontSize: 12 }}>Updated</th>
+                    <th style={{ width: "16%", fontSize: 12 }}>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </Table>
+                </thead>
+                <tbody>
+                  {pagedItems.map((u) => (
+                    <tr key={u.id}>
+                      <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.name}</td>
+                      <td style={{ fontSize: 12 }}>{u.count}</td>
+                      <td style={{ fontSize: 12 }}>{fmtNum(u.minTurnoverUsd)}</td>
+                      <td style={{ fontSize: 12 }}>{fmtNum(u.minVolatilityPct)}%</td>
+                      <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(u.updatedAt)}</td>
+                      <td style={{ fontSize: 12 }}>
+                        <div className="d-flex align-items-center gap-2">
+                          <Button size="sm" variant="outline-secondary" onClick={() => void onViewSymbols(u.id)}>
+                            View symbols
+                          </Button>
+                          <Button size="sm" variant="outline-danger" onClick={() => void onDelete(u.id)}>
+                            Delete
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+              <TablePaginationControls
+                tableId="universe-saved"
+                page={savedPageClamped}
+                totalRows={items.length}
+                pageSize={savedPageSize}
+                onPageChange={setSavedPage}
+                onPageSizeChange={(size) => {
+                  setSavedPageSize(size);
+                  setSavedPage(1);
+                }}
+              />
+            </>
           )}
         </Card.Body>
         </Card>

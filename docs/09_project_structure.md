@@ -25,14 +25,13 @@ Last update: 2026-02-25
 - `src/paper` paper broker and summary builder
 - `src/runtime` runtime session orchestrator + config store
 - `src/optimizer`
-  - tape store + recorder
-  - runner (replay + random search)
-  - optimizer settings (tapesDir)
+  - runner (dataset-cache replay + random search)
+  - loop persistence and history
 
 ## Data folders
 - `backend/data/`
   - `sessions/` per-run events + summary
   - `universes/` saved symbol sets
   - `presets/` saved config presets
-  - `tapes/` default tape directory (when optimizer `tapesDir` is not changed)
-  - `optimizer_settings.json` persisted optimizer settings (tapesDir)
+  - `cache/` historical market cache (klines/OI/funding)
+  - `dataset_histories.json` dataset history metadata

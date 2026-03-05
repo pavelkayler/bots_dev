@@ -1,24 +1,14 @@
 # 18 Stability & long-run operations
 
-Last update: 2026-02-26
+Last update: 2026-03-06
 
-This document describes stability mechanisms intended for multi-hour / multi-day runs.
+This document describes stability mechanisms intended for multi-hour and multi-day runs.
 
 ## Low disk guard
 - Threshold: **2GB** free in the backend data directory.
 - Exposed via `/api/doctor` as `dataDirBytesFree` with `low_disk` warning.
 - Behavior:
-  - Tape recorder performs periodic checks; if low disk is detected it stops recording gracefully and logs the stop reason.
   - Optimizer checkpoint writes are skipped on low disk (job message is appended).
-
-## Tape recording backpressure
-Tape recorder is drain-aware:
-- If stream `write()` returns false, recorder waits for `drain`.
-- Recorder maintains a bounded queue; if exceeded it stops recording with a `recording_backpressure` reason.
-
-## Tape rotation
-- Hard cap: **90 MB** per tape segment.
-- Rotation is transparent: recording stays ON, tapeId is updated to `-segN`.
 
 ## Optimizer isolation
 - Optimizer heavy compute runs in a worker thread.
@@ -29,9 +19,20 @@ Tape recorder is drain-aware:
   - `backend/data/soak_snapshots.jsonl`
 - `/api/soak/last` returns the last snapshot cached in memory.
 
+## Risk limits and emergency stop
+Runtime-enforced limits are configured in `riskLimits`:
+- `maxTradesPerDay`
+- `maxLossPerDayUsdt` (`null` disables)
+- `maxLossPerSessionUsdt` (`null` disables)
+- `maxConsecutiveErrors`
+
+Enforcement behavior:
+- Before new entry placement, runtime blocks entries when `maxTradesPerDay` is reached and logs `ORDER_SKIPPED` once per symbol/day.
+- Runtime tracks realized PnL from close/execution events and compares against daily/session loss thresholds.
+- Runtime tracks consecutive critical demo order errors.
+- On threshold breach, runtime triggers `EMERGENCY_STOP`, sets runtime status message `Emergency stop: <reason>`, and initiates the hardened STOP flow.
+
 Recommended soak procedure:
-1) Start session and let it run 24h.
-2) Periodically check:
-   - `/api/doctor` warnings
-   - tape rotation output
-   - soak snapshot file growth
+1) Start session and let it run for 24h.
+2) Periodically check `/api/doctor` warnings and soak snapshot file growth.
+3) Verify no emergency-stop message appears unless a risk threshold is intentionally tested.

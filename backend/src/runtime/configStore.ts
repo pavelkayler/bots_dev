@@ -77,6 +77,17 @@ const executionSchema = z
   })
   .strict();
 
+const riskLimitsSchema = z
+  .object({
+    maxTradesPerDay: z.number().int().min(1).max(1_000_000),
+    maxLossPerDayUsdt: z.number().finite().positive().nullable(),
+    maxLossPerSessionUsdt: z.number().finite().positive().nullable(),
+    maxConsecutiveErrors: z.number().int().min(1).max(1_000_000),
+  })
+  .strict();
+
+const riskLimitsPatchSchema = riskLimitsSchema.partial().strict();
+
 const runtimeConfigSchema = z
   .object({
     universe: universeSchema,
@@ -84,6 +95,7 @@ const runtimeConfigSchema = z
     signals: signalsSchema,
     execution: executionSchema,
     paper: paperSchema,
+    riskLimits: riskLimitsSchema,
   })
   .strict();
 
@@ -94,6 +106,7 @@ const patchSchema = z
     signals: signalsPatchSchema.optional(),
     execution: executionSchema.partial().optional(),
     paper: paperSchema.partial().optional(),
+    riskLimits: riskLimitsPatchSchema.optional(),
   })
   .strict();
 
@@ -126,13 +139,31 @@ function writeFileAtomic(filePath: string, content: string) {
   fs.renameSync(tmp, filePath);
 }
 
+function normalizePositiveInt(value: unknown, fallback: number, min = 1): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const n = Math.floor(parsed);
+  if (!Number.isFinite(n) || n < min) return fallback;
+  return n;
+}
+
+function normalizeLossLimit(value: unknown, fallback: number | null): number | null {
+  if (value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  if (n <= 0) return null;
+  return n;
+}
+
+function stripLegacyOptimizerKeys(target: Record<string, unknown>) {
+  const removedKeys = ["optimizer", "\u0074apeId", "\u0074apeIds", "\u0074apesDir"];
+  for (const key of removedKeys) delete (target as any)[key];
+}
+
 function migrateLoaded(raw: any): any {
   if (!raw || typeof raw !== "object") return raw;
 
-  delete (raw as any).optimizer;
-  delete (raw as any).tapeId;
-  delete (raw as any).tapeIds;
-  delete (raw as any).tapesDir;
+  stripLegacyOptimizerKeys(raw as Record<string, unknown>);
 
   if (!raw.universe || typeof raw.universe !== "object") {
     raw.universe = {
@@ -171,6 +202,17 @@ function migrateLoaded(raw: any): any {
     if (raw.signals.dailyTriggerMax == null) raw.signals.dailyTriggerMax = CONFIG.signals.dailyTriggerMax;
   }
 
+  if (!raw.riskLimits || typeof raw.riskLimits !== "object") {
+    raw.riskLimits = { ...CONFIG.riskLimits };
+  } else {
+    raw.riskLimits = {
+      maxTradesPerDay: normalizePositiveInt(raw.riskLimits.maxTradesPerDay, CONFIG.riskLimits.maxTradesPerDay, 1),
+      maxLossPerDayUsdt: normalizeLossLimit(raw.riskLimits.maxLossPerDayUsdt, CONFIG.riskLimits.maxLossPerDayUsdt),
+      maxLossPerSessionUsdt: normalizeLossLimit(raw.riskLimits.maxLossPerSessionUsdt, CONFIG.riskLimits.maxLossPerSessionUsdt),
+      maxConsecutiveErrors: normalizePositiveInt(raw.riskLimits.maxConsecutiveErrors, CONFIG.riskLimits.maxConsecutiveErrors, 1),
+    };
+  }
+
   return raw;
 }
 
@@ -196,10 +238,7 @@ function normalizeIncomingPatch(rawPatch: unknown): unknown {
   if (!rawPatch || typeof rawPatch !== "object") return rawPatch;
 
   const patch = deepClone(rawPatch as Record<string, unknown>);
-  delete (patch as any).optimizer;
-  delete (patch as any).tapeId;
-  delete (patch as any).tapeIds;
-  delete (patch as any).tapesDir;
+  stripLegacyOptimizerKeys(patch as Record<string, unknown>);
   const paper = (patch as any).paper;
 
   if (paper && typeof paper === "object") {
@@ -214,6 +253,24 @@ function normalizeIncomingPatch(rawPatch: unknown): unknown {
     (signals as any).requireFundingSign = true;
     if ((signals as any).dailyTriggerMin == null) (signals as any).dailyTriggerMin = CONFIG.signals.dailyTriggerMin;
     if ((signals as any).dailyTriggerMax == null) (signals as any).dailyTriggerMax = CONFIG.signals.dailyTriggerMax;
+  }
+
+  const limits = (patch as any).riskLimits;
+  if (limits && typeof limits === "object") {
+    const next = deepClone(limits);
+    if (Object.prototype.hasOwnProperty.call(next, "maxLossPerDayUsdt")) {
+      next.maxLossPerDayUsdt = normalizeLossLimit(next.maxLossPerDayUsdt, CONFIG.riskLimits.maxLossPerDayUsdt);
+    }
+    if (Object.prototype.hasOwnProperty.call(next, "maxLossPerSessionUsdt")) {
+      next.maxLossPerSessionUsdt = normalizeLossLimit(next.maxLossPerSessionUsdt, CONFIG.riskLimits.maxLossPerSessionUsdt);
+    }
+    if (Object.prototype.hasOwnProperty.call(next, "maxTradesPerDay")) {
+      next.maxTradesPerDay = normalizePositiveInt(next.maxTradesPerDay, CONFIG.riskLimits.maxTradesPerDay, 1);
+    }
+    if (Object.prototype.hasOwnProperty.call(next, "maxConsecutiveErrors")) {
+      next.maxConsecutiveErrors = normalizePositiveInt(next.maxConsecutiveErrors, CONFIG.riskLimits.maxConsecutiveErrors, 1);
+    }
+    (patch as any).riskLimits = next;
   }
 
   return patch;
@@ -286,6 +343,12 @@ class ConfigStore extends EventEmitter {
         rearmDelayMs: p.paper?.rearmDelayMs ?? this.cfg.paper.rearmDelayMs,
         maxDailyLossUSDT: p.paper?.maxDailyLossUSDT ?? this.cfg.paper.maxDailyLossUSDT,
       },
+      riskLimits: {
+        maxTradesPerDay: p.riskLimits?.maxTradesPerDay ?? this.cfg.riskLimits.maxTradesPerDay,
+        maxLossPerDayUsdt: p.riskLimits?.maxLossPerDayUsdt ?? this.cfg.riskLimits.maxLossPerDayUsdt,
+        maxLossPerSessionUsdt: p.riskLimits?.maxLossPerSessionUsdt ?? this.cfg.riskLimits.maxLossPerSessionUsdt,
+        maxConsecutiveErrors: p.riskLimits?.maxConsecutiveErrors ?? this.cfg.riskLimits.maxConsecutiveErrors,
+      },
     };
 
     const next = runtimeConfigSchema.parse(nextCandidate);
@@ -304,6 +367,7 @@ const defaults: RuntimeConfig = runtimeConfigSchema.parse({
   signals: CONFIG.signals,
   execution: { mode: "paper" },
   paper: CONFIG.paper,
+  riskLimits: CONFIG.riskLimits,
 });
 
 let initial: RuntimeConfig = defaults;

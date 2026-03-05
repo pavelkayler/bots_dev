@@ -38,5 +38,12 @@ export const CONFIG = {
 
         rearmDelayMs: 1000,
         maxDailyLossUSDT: 0
+    },
+
+    riskLimits: {
+        maxTradesPerDay: 2,
+        maxLossPerDayUsdt: null as number | null,
+        maxLossPerSessionUsdt: null as number | null,
+        maxConsecutiveErrors: 10
     }
 };

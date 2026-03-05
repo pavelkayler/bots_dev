@@ -4,10 +4,11 @@ type Props = {
   sessionId: string | null;
   eventsFile: string | null;
   apiError: string | null;
+  runtimeMessage: string | null;
 };
 
 export function SessionMetaBar(props: Props) {
-  const { sessionId, eventsFile, apiError } = props;
+  const { sessionId, eventsFile, apiError, runtimeMessage } = props;
 
   return (
     <div className="d-flex align-items-center gap-2 flex-wrap mb-2" style={{ fontSize: 12 }}>
@@ -23,6 +24,7 @@ export function SessionMetaBar(props: Props) {
       </div>
 
       {apiError ? <Badge bg="danger">API: {apiError}</Badge> : null}
+      {runtimeMessage ? <Badge bg="warning" text="dark">{runtimeMessage}</Badge> : null}
     </div>
   );
 }

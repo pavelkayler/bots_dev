@@ -46,10 +46,9 @@ Frontend:
 - Session controls include Start/Stop and manual Pause/Resume.
 - Pause is manual-only and intended for “close laptop / no internet for a while”.
 
-### Tape recording
-- Automatic on entering RUNNING; stops on leaving RUNNING.
-- Full ticker payload only, per-symbol throttle 5s.
-- Rotation: max **90 MB** per tape segment; creates `-seg2`, `-seg3`, ...
+### Optimizer data source
+- Tape recording inputs are removed.
+- Optimizer runs use dataset histories/cache only.
 
 ### Optimizer
 - Heavy compute runs in **worker_threads** (main server stays responsive).
@@ -63,13 +62,13 @@ Frontend:
 - Loop features:
   - run N times or infinite until stop
   - loop elapsed
-  - per-tape `runsTotal` counter shown in tape list
+  - per-dataset-history `loopsCount` counter shown in history list
   - loop results table is cumulative (aggregates candidates across loop iterations)
 
 ### Health / stability
 - `/api/doctor` returns best-effort disk/path checks and warnings (low disk threshold 2GB).
-- Tape recorder backpressure guard + low disk stop reason.
 - Soak snapshots: JSONL append every 60s while RUNNING; `/api/soak/last` exposes cached last snapshot.
+- Runtime risk limits and emergency stop are backend-enforced (`riskLimits` + `EMERGENCY_STOP`).
 
 ## 5) Next focus
 Continue stability/ops improvements:
@@ -77,10 +76,9 @@ Continue stability/ops improvements:
 - verify long-run soak behavior (24h/72h)
 - keep UI responsive under optimizer load
 
-## Next planned work batch (tape removal + remote historical cache)
+## Next planned work batch (remote historical cache)
 
 Planned direction:
-- Remove tape recording subsystem completely.
 - Introduce Dataset Target (Universe + Range) and a server-side historical cache built from Bybit REST history endpoints.
 - Add UI: Universe selector, Range presets/manual datetime, Receive Data (applies selected target) with rate-limit-aware progress.
 - Standardize table pagination UI across the app.

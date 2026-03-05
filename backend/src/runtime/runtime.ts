@@ -24,6 +24,7 @@ type Status = {
   eventsFile: string | null;
   summaryFile: string | null;
   runningSinceMs: number | null;
+  runtimeMessage: string | null;
 };
 
 type StartOptions = {
@@ -77,6 +78,11 @@ type TradeExcursionsRow = {
   slBestMaxRoiPct: number | null;
 };
 
+function toMskDayKey(ts: number): string {
+  const shifted = ts + 3 * 60 * 60 * 1000;
+  return new Date(shifted).toISOString().slice(0, 10);
+}
+
 function newSessionId() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
@@ -97,6 +103,14 @@ class Runtime extends EventEmitter {
   private closedTrades: ClosedTrade[] = [];
   private runContext: RunContext | null = null;
   private stopPromise: Promise<Status> | null = null;
+  private runtimeMessage: string | null = null;
+  private emergencyStopInFlight = false;
+  private riskDayKey: string | null = null;
+  private riskEntriesPerDay = 0;
+  private riskNetRealizedPerDay = 0;
+  private riskNetRealizedSession = 0;
+  private riskConsecutiveErrors = 0;
+  private riskSkipEntryLogged = new Set<string>();
 
   private transitionState(nextState: RuntimeSessionState) {
     const fromState = this.sessionState;
@@ -136,6 +150,146 @@ class Runtime extends EventEmitter {
     });
   }
 
+  private resetRiskState(nowMs: number) {
+    this.riskDayKey = toMskDayKey(nowMs);
+    this.riskEntriesPerDay = 0;
+    this.riskNetRealizedPerDay = 0;
+    this.riskNetRealizedSession = 0;
+    this.riskConsecutiveErrors = 0;
+    this.riskSkipEntryLogged = new Set();
+    this.emergencyStopInFlight = false;
+  }
+
+  private syncRiskDay(nowMs: number) {
+    const nextDay = toMskDayKey(nowMs);
+    if (this.riskDayKey === nextDay) return;
+    this.riskDayKey = nextDay;
+    this.riskEntriesPerDay = 0;
+    this.riskNetRealizedPerDay = 0;
+    this.riskSkipEntryLogged.clear();
+  }
+
+  private getRiskLimits() {
+    return configStore.get().riskLimits;
+  }
+
+  private checkLossThresholdBreach(): string | null {
+    const limits = this.getRiskLimits();
+    const dayLimit = limits.maxLossPerDayUsdt;
+    if (dayLimit != null && Number.isFinite(dayLimit) && dayLimit > 0 && this.riskNetRealizedPerDay <= -dayLimit) {
+      return `maxLossPerDayUsdt reached (${this.riskNetRealizedPerDay.toFixed(4)} <= -${dayLimit})`;
+    }
+    const sessionLimit = limits.maxLossPerSessionUsdt;
+    if (sessionLimit != null && Number.isFinite(sessionLimit) && sessionLimit > 0 && this.riskNetRealizedSession <= -sessionLimit) {
+      return `maxLossPerSessionUsdt reached (${this.riskNetRealizedSession.toFixed(4)} <= -${sessionLimit})`;
+    }
+    return null;
+  }
+
+  private maybeTriggerEmergencyStop(reason: string, nowMs: number) {
+    if (this.emergencyStopInFlight) return;
+    this.emergencyStopInFlight = true;
+    this.runtimeMessage = `Emergency stop: ${reason}`;
+    this.logger?.log({
+      ts: nowMs,
+      type: "EMERGENCY_STOP",
+      payload: {
+        reason,
+        entriesPerDay: this.riskEntriesPerDay,
+        netRealizedPerDay: this.riskNetRealizedPerDay,
+        netRealizedSession: this.riskNetRealizedSession,
+        consecutiveErrors: this.riskConsecutiveErrors,
+      },
+    });
+
+    if (this.sessionState === "RUNNING" || this.sessionState === "RESUMING") {
+      void this.stop().finally(() => {
+        this.emergencyStopInFlight = false;
+      });
+      return;
+    }
+
+    this.emergencyStopInFlight = false;
+  }
+
+  private handleRuntimeEvent(ev: LogEvent) {
+    const nowMs = Number.isFinite(Number(ev?.ts)) ? Number(ev.ts) : Date.now();
+    this.syncRiskDay(nowMs);
+
+    const type = String(ev?.type ?? "");
+    if (type === "ORDER_PLACED" || type === "DEMO_ORDER_PLACE") {
+      this.riskEntriesPerDay += 1;
+      this.riskConsecutiveErrors = 0;
+      return;
+    }
+
+    if (type === "ORDER_FILLED" || type === "DEMO_POSITION_OPEN") {
+      this.riskConsecutiveErrors = 0;
+      return;
+    }
+
+    if (type === "DEMO_ORDER_ERROR") {
+      this.riskConsecutiveErrors += 1;
+      const limit = this.getRiskLimits().maxConsecutiveErrors;
+      if (this.riskConsecutiveErrors >= limit) {
+        this.maybeTriggerEmergencyStop(`maxConsecutiveErrors reached (${this.riskConsecutiveErrors}/${limit})`, nowMs);
+      }
+      return;
+    }
+
+    const isCloseEvent = type === "POSITION_CLOSE_TP" || type === "POSITION_CLOSE_SL" || type === "POSITION_FORCE_CLOSE" || type === "DEMO_EXECUTION";
+    if (!isCloseEvent) return;
+
+    const payload = (ev?.payload ?? {}) as any;
+    const realizedPnl = Number(payload.realizedPnl ?? payload.closedPnl ?? 0);
+    if (!Number.isFinite(realizedPnl)) return;
+
+    this.riskNetRealizedSession += realizedPnl;
+    this.riskNetRealizedPerDay += realizedPnl;
+
+    const breach = this.checkLossThresholdBreach();
+    if (breach) this.maybeTriggerEmergencyStop(breach, nowMs);
+  }
+
+  private shouldAllowEntry(symbol: string, nowMs: number): boolean {
+    this.syncRiskDay(nowMs);
+
+    const lossBreach = this.checkLossThresholdBreach();
+    if (lossBreach) {
+      this.maybeTriggerEmergencyStop(lossBreach, nowMs);
+      return false;
+    }
+
+    const limits = this.getRiskLimits();
+    if (this.riskConsecutiveErrors >= limits.maxConsecutiveErrors) {
+      this.maybeTriggerEmergencyStop(`maxConsecutiveErrors reached (${this.riskConsecutiveErrors}/${limits.maxConsecutiveErrors})`, nowMs);
+      return false;
+    }
+
+    const dayLimit = limits.maxTradesPerDay;
+    if (this.riskEntriesPerDay >= dayLimit) {
+      const dayKey = this.riskDayKey ?? toMskDayKey(nowMs);
+      const dedupeKey = `${dayKey}:${symbol}`;
+      if (!this.riskSkipEntryLogged.has(dedupeKey)) {
+        this.riskSkipEntryLogged.add(dedupeKey);
+        this.logger?.log({
+          ts: nowMs,
+          type: "ORDER_SKIPPED",
+          symbol,
+          payload: {
+            reason: "risk_max_trades_per_day",
+            maxTradesPerDay: dayLimit,
+            entriesPerDay: this.riskEntriesPerDay,
+            day: dayKey,
+          },
+        });
+      }
+      return false;
+    }
+
+    return true;
+  }
+
   attachMarkPriceProvider(fn: (symbol: string) => number | null) {
     this.getMarkPrice = fn;
   }
@@ -147,6 +301,7 @@ class Runtime extends EventEmitter {
       eventsFile: this.logger?.filePath ?? null,
       summaryFile: this.summaryFilePath,
       runningSinceMs: this.runningSinceMs,
+      runtimeMessage: this.runtimeMessage,
     };
   }
 
@@ -171,6 +326,8 @@ class Runtime extends EventEmitter {
     this.summaryFilePath = null;
     this.demoStartedAtMs = null;
     this.runningSinceMs = null;
+    this.runtimeMessage = null;
+    this.resetRiskState(Date.now());
 
     this.closedTrades = [];
 
@@ -196,6 +353,7 @@ class Runtime extends EventEmitter {
           maxRoiPct: Number.isFinite(maxRoi) ? maxRoi : null,
         });
       }
+      this.handleRuntimeEvent(ev);
       this.emit("event", ev);
     });
 
@@ -509,13 +667,18 @@ class Runtime extends EventEmitter {
     if (!this.isRunning()) return;
     const mode = configStore.get().execution.mode;
     if (mode === "empty") return;
+    const shouldCheckEntry = args.signal != null && !args.cooldownActive;
+    const entryAllowed = !shouldCheckEntry || this.shouldAllowEntry(args.symbol, args.nowMs);
+    const nextArgs = entryAllowed
+      ? args
+      : { ...args, signal: null, signalReason: `risk_limits_blocked:${args.signalReason || "entry"}` };
     if (mode === "demo") {
       if (!this.demo) return;
-      void this.demo.tick(args);
+      void this.demo.tick(nextArgs);
       return;
     }
     if (!this.paper) return;
-    this.paper.tick(args);
+    this.paper.tick(nextArgs);
   }
 
   getTradeStatsBySymbol(mode: "both" | "long" | "short", symbols: string[]): TradeStatsBySymbolRow[] {

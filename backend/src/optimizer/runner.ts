@@ -8,8 +8,8 @@ import { SignalEngine } from "../engine/SignalEngine.js";
 import { PaperBroker, type PaperExecutionModel, type PaperStats, type PaperTickOhlc } from "../paper/PaperBroker.js";
 import { configStore } from "../runtime/configStore.js";
 
-type TapeMeta = {
-  tapeId?: string;
+type DatasetMeta = {
+  datasetId?: string;
   createdAt?: number;
   sessionId?: string | null;
   universeSelectedId?: string;
@@ -17,13 +17,13 @@ type TapeMeta = {
   symbols?: string[];
 };
 
-type TapeEvent =
+type DatasetEvent =
   | { type: "ticker"; ts: number; symbol: string; payload: any }
   | { type: "kline_confirm"; ts: number; symbol: string; payload: any };
 
-type TapeParsed = {
-  meta: TapeMeta | null;
-  events: TapeEvent[];
+type DatasetParsed = {
+  meta: DatasetMeta | null;
+  events: DatasetEvent[];
   firstTsMs: number | null;
   lastTsMs: number | null;
   medianTickIntervalSec: number;
@@ -230,7 +230,7 @@ export function createReplayEventsFromCacheRows(args: {
   fundingSamples: Array<{ ts: number; rate: number }>;
 }) {
   const { rows, windows, replayIntervalMin, symbol, fundingSamples } = args;
-  const events: TapeEvent[] = [];
+  const events: DatasetEvent[] = [];
   let firstTsMs: number | null = null;
   let lastTsMs: number | null = null;
   let candleCount = 0;
@@ -366,8 +366,8 @@ function readRange(bound: { min?: unknown; max?: unknown } | undefined, fallback
   return { min, max };
 }
 
-export async function readTapeLines(
-  tapePath: string,
+export async function readDatasetLines(
+  datasetPath: string,
   options?: {
     byteLimit?: number;
     timeRangeFromTs?: number;
@@ -376,8 +376,8 @@ export async function readTapeLines(
   hooks?: {
     onProgress?: (bytesRead: number, totalBytes: number) => void;
   }
-): Promise<TapeParsed> {
-  const statSize = (await fs.promises.stat(tapePath)).size;
+): Promise<DatasetParsed> {
+  const statSize = (await fs.promises.stat(datasetPath)).size;
   const byteLimit = typeof options?.byteLimit === "number" ? Math.floor(options.byteLimit) : undefined;
   const totalBytes = byteLimit == null ? statSize : Math.max(0, Math.min(statSize, byteLimit));
   if (totalBytes <= 0) {
@@ -391,15 +391,15 @@ export async function readTapeLines(
     };
   }
   const stream = fs.createReadStream(
-    tapePath,
+    datasetPath,
     byteLimit == null
       ? { encoding: "utf8" }
       : { encoding: "utf8", start: 0, end: Math.max(0, totalBytes - 1) }
   );
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
-  let meta: TapeMeta | null = null;
-  const events: TapeEvent[] = [];
+  let meta: DatasetMeta | null = null;
+  const events: DatasetEvent[] = [];
   let firstTsMs: number | null = null;
   let lastTsMs: number | null = null;
 
@@ -430,7 +430,7 @@ export async function readTapeLines(
     }
 
     if (row?.type === "meta" && meta == null && row.payload && typeof row.payload === "object") {
-      meta = row.payload as TapeMeta;
+      meta = row.payload as DatasetMeta;
       continue;
     }
 
@@ -532,6 +532,7 @@ function buildCandidateParams(
 export type RunOptimizationArgs = {
   jobId?: string;
   runId?: string;
+  datasetHistoryIds?: string[];
   candidates: number;
   seed: number;
   ranges?: OptimizerRanges;
@@ -581,15 +582,15 @@ export type RunOptimizationHooks = {
 };
 
 export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: RunOptimizationHooks): Promise<{
-  tapeIds: string[];
-  metaByTapeId: Record<string, TapeMeta | null>;
+  datasetIds: string[];
+  metaByDatasetId: Record<string, DatasetMeta | null>;
   results: OptimizerResult[];
   cancelled: boolean;
   diagnostics?: {
     decisionsNoRefs: number;
     decisionsOk: number;
-    effectiveTfMinByTapeId: Record<string, number>;
-    durationMinByTapeId: Record<string, number>;
+    effectiveTfMinByDatasetId: Record<string, number>;
+    durationMinByDatasetId: Record<string, number>;
     medianTickIntervalSec: number;
   };
   blacklist?: {
@@ -602,14 +603,16 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     runIndex: number;
   };
 }> {
-  const tapeIds: string[] = [];
+  const datasetIds: string[] = Array.isArray(args.datasetHistoryIds)
+    ? [...new Set(args.datasetHistoryIds.map((id) => String(id ?? "").trim()).filter((id) => id.length > 0))]
+    : [];
   const precision = withDefaultPrecision(args.precision);
   const baseSeed = Number.isFinite(args.seed) ? args.seed : 1;
   const loopIndex = Math.max(0, Math.floor(Number(args.loopIndex) || 0));
   const baseConfig = configStore.get();
   const ranges = args.ranges ?? {};
 
-  const tapes: Array<{ tapeId: string; meta: TapeMeta | null; events: TapeEvent[]; firstTsMs: number | null; lastTsMs: number | null }> = [];
+  const loadedDatasets: Array<{ datasetId: string; meta: DatasetMeta | null; events: DatasetEvent[]; firstTsMs: number | null; lastTsMs: number | null }> = [];
   const globalTickIntervals: number[] = [];
   let sampleSymbolForDebug = "";
   let sampleSymbolCandleCount = 0;
@@ -699,17 +702,18 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         }
         prevTickerTs = event.ts;
       }
-      const tapeMedianTickIntervalSec = median(tickerDeltasSec);
-      if (tapeMedianTickIntervalSec > 0 && globalTickIntervals.length < MAX_TICK_INTERVAL_SAMPLES) {
-        globalTickIntervals.push(tapeMedianTickIntervalSec);
+      const datasetMedianTickIntervalSec = median(tickerDeltasSec);
+      if (datasetMedianTickIntervalSec > 0 && globalTickIntervals.length < MAX_TICK_INTERVAL_SAMPLES) {
+        globalTickIntervals.push(datasetMedianTickIntervalSec);
       }
 
-      if (DEBUG_DATASET_TF && tapes.length === 0) {
+      if (DEBUG_DATASET_TF && loadedDatasets.length === 0) {
         const firstTs = events.length ? events[0]?.ts ?? null : null;
         const lastTs = events.length ? events[events.length - 1]?.ts ?? null : null;
         console.log("[optimizer-dataset-tf]", { symbol, interval: replayInterval, tfMin: replayIntervalMin, firstTs, lastTs, candleCount });
       }
-      tapes.push({ tapeId: symbol, meta: { symbols: [symbol], klineTfMin: replayIntervalMin }, events, firstTsMs, lastTsMs });
+      loadedDatasets.push({ datasetId: symbol, meta: { symbols: [symbol], klineTfMin: replayIntervalMin }, events, firstTsMs, lastTsMs });
+      if (datasetIds.length === 0) datasetIds.push(symbol);
     }
     hooks?.onLoadProgress?.(100, 100);
     if (DEBUG_OPT_MARKETDATA) {
@@ -759,7 +763,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   };
   const effectiveDirection = args.directionMode ?? "both";
   const effectiveTf = Math.max(Math.floor(Number(args.optTfMin ?? MIN_OPT_TF_MIN)) || MIN_OPT_TF_MIN, MIN_OPT_TF_MIN);
-  const runKey = `datasets=${[...tapeIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
+  const runKey = `datasets=${[...datasetIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
   const seenCandidateKeys = new Set<string>();
   const shouldRememberNegatives = Boolean(args.rememberNegatives);
   const blacklistState = shouldRememberNegatives ? loadNegativeBlacklist(runKey) : null;
@@ -779,8 +783,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
   const decisionsNoRefsGlobal = { value: 0 };
   const decisionsOkGlobal = { value: 0 };
-  const effectiveTfMinByTapeId: Record<string, number> = {};
-  const durationMinByTapeId: Record<string, number> = {};
+  const effectiveTfMinByDatasetId: Record<string, number> = {};
+  const durationMinByDatasetId: Record<string, number> = {};
 
   let evaluatedTotal = 0;
   for (let runOffset = 0; runOffset < runsCount; runOffset += 1) {
@@ -860,13 +864,13 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
     const closes: CloseSnapshot[] = [];
 
-    for (const tape of tapes) {
-      const durationMs = Math.max(0, (tape.lastTsMs ?? 0) - (tape.firstTsMs ?? 0));
+    for (const dataset of loadedDatasets) {
+      const durationMs = Math.max(0, (dataset.lastTsMs ?? 0) - (dataset.firstTsMs ?? 0));
       const durationMin = durationMs / 60_000;
       const effectiveTfMin = Math.max(Math.floor(Number(args.optTfMin ?? MIN_OPT_TF_MIN)) || MIN_OPT_TF_MIN, MIN_OPT_TF_MIN);
       const tfMs = effectiveTfMin * 60_000;
-      effectiveTfMinByTapeId[tape.tapeId] = effectiveTfMin;
-      durationMinByTapeId[tape.tapeId] = durationMin;
+      effectiveTfMinByDatasetId[dataset.datasetId] = effectiveTfMin;
+      durationMinByDatasetId[dataset.datasetId] = durationMin;
 
       const candidateConfig = {
         ...baseConfig,
@@ -955,7 +959,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         }>();
 
         let eventCounter = 0;
-        for (const event of tape.events) {
+        for (const event of dataset.events) {
           const tsRaw = Number(event.ts) || 0;
           const ts = tsRaw > 0 && tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
           eventCounter += 1;
@@ -971,7 +975,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
                 break;
               }
             }
-            const totalEvents = tape.events.length || 1;
+            const totalEvents = dataset.events.length || 1;
             const fracWithin = Math.min(1, (eventCounter / totalEvents) * 0.5 + progressOffset);
             reportProgressFrac(candidateIndexBase, fracWithin);
             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1056,7 +1060,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
 
         if (cancelled) return null;
 
-        const symbols = Array.isArray(tape.meta?.symbols) ? tape.meta.symbols : [];
+        const symbols = Array.isArray(dataset.meta?.symbols) ? dataset.meta.symbols : [];
         paper.stopAll({
           nowMs: lastEventTs || segmentEndMs || 0,
           symbols,
@@ -1066,15 +1070,15 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         return paper.getStats();
       };
 
-      const tapeStartMs = floorToMinute(Number(tape.firstTsMs ?? 0));
-      const tapeEndMs = floorToMinute(Number(tape.lastTsMs ?? 0));
-      const totalMs = Math.max(0, tapeEndMs - tapeStartMs);
-      const splitRawMs = tapeStartMs + Math.floor(totalMs * 0.7);
-      const splitMs = Math.max(tapeStartMs, Math.min(tapeEndMs, floorToMinute(splitRawMs)));
+      const datasetStartMs = floorToMinute(Number(dataset.firstTsMs ?? 0));
+      const datasetEndMs = floorToMinute(Number(dataset.lastTsMs ?? 0));
+      const totalMs = Math.max(0, datasetEndMs - datasetStartMs);
+      const splitRawMs = datasetStartMs + Math.floor(totalMs * 0.7);
+      const splitMs = Math.max(datasetStartMs, Math.min(datasetEndMs, floorToMinute(splitRawMs)));
 
-      const trainStats = await runSegment(tapeStartMs, splitMs, 0);
+      const trainStats = await runSegment(datasetStartMs, splitMs, 0);
       if (cancelled || !trainStats) break;
-      const valStats = await runSegment(splitMs, tapeEndMs, 0.5);
+      const valStats = await runSegment(splitMs, datasetEndMs, 0.5);
       if (cancelled || !valStats) break;
 
       trainNetPnlTotal += trainStats.netRealized;
@@ -1084,19 +1088,19 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
       valTradesTotal += valStats.closedTrades;
       valWinsTotal += valStats.wins;
 
-      const tapeStats = {
+      const datasetStats = {
         netRealized: trainStats.netRealized + valStats.netRealized,
         closedTrades: trainStats.closedTrades + valStats.closedTrades,
         wins: trainStats.wins + valStats.wins,
         feesPaid: (Number(trainStats.feesPaid) || 0) + (Number(valStats.feesPaid) || 0),
         fundingAccrued: (Number(trainStats.fundingAccrued) || 0) + (Number(valStats.fundingAccrued) || 0),
       };
-      netPnlTotal += tapeStats.netRealized;
-      tradesTotal += tapeStats.closedTrades;
-      winsTotal += tapeStats.wins;
-      feesPaidTotal += tapeStats.feesPaid;
-      fundingAccruedTotal += tapeStats.fundingAccrued;
-      debugClosedTrades += tapeStats.closedTrades;
+      netPnlTotal += datasetStats.netRealized;
+      tradesTotal += datasetStats.closedTrades;
+      winsTotal += datasetStats.wins;
+      feesPaidTotal += datasetStats.feesPaid;
+      fundingAccruedTotal += datasetStats.fundingAccrued;
+      debugClosedTrades += datasetStats.closedTrades;
     }
 
     if (cancelled) break;
@@ -1235,8 +1239,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
   }
 
   return {
-    tapeIds,
-    metaByTapeId: Object.fromEntries(tapes.map((t) => [t.tapeId, t.meta])),
+    datasetIds,
+    metaByDatasetId: Object.fromEntries(loadedDatasets.map((t) => [t.datasetId, t.meta])),
     results: sortOptimizationResults(results, "netPnl", "desc"),
     cancelled,
     ...(decisionsOkGlobal.value === 0 && decisionsNoRefsGlobal.value >= 100
@@ -1244,8 +1248,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           diagnostics: {
             decisionsNoRefs: decisionsNoRefsGlobal.value,
             decisionsOk: decisionsOkGlobal.value,
-            effectiveTfMinByTapeId,
-            durationMinByTapeId,
+            effectiveTfMinByDatasetId,
+            durationMinByDatasetId,
             medianTickIntervalSec,
           },
         }
@@ -1423,3 +1427,5 @@ export function buildCandidateKey(
   };
   return JSON.stringify(normalized);
 }
+
+

@@ -1,6 +1,7 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Table } from "react-bootstrap";
 import { fmtMoney, fmtNum, fmtPct, fmtTime, formatFee } from "../../../shared/utils/format";
+import { TablePaginationControls, useStoredPageSize } from "../../../shared/ui/TablePaginationControls";
 import type { TradeStatsBySymbol } from "../hooks/useTradeStatsBySymbol";
 
 type SortKey =
@@ -24,6 +25,8 @@ function finiteNum(value: unknown) {
 export function TradeStatsBySymbolTable({ stats, mode }: { stats: TradeStatsBySymbol[]; mode: "both" | "long" | "short" }) {
   const [sortKey, setSortKey] = useState<SortKey>("netPnl");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useStoredPageSize("dashboard-trade-stats-by-symbol", 25);
 
   const sorted = useMemo(() => {
     const withIdx = stats.map((row, idx) => ({ row, idx }));
@@ -64,6 +67,19 @@ export function TradeStatsBySymbolTable({ stats, mode }: { stats: TradeStatsBySy
     });
     return withIdx.map((x) => x.row);
   }, [stats, sortDir, sortKey]);
+  const symbolsKey = useMemo(() => stats.map((row) => row.symbol).sort().join("|"), [stats]);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const pageClamped = Math.max(1, Math.min(page, totalPages));
+  const start = (pageClamped - 1) * pageSize;
+  const visibleRows = sorted.slice(start, start + pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [mode, symbolsKey, pageSize]);
+
+  useEffect(() => {
+    if (page !== pageClamped) setPage(pageClamped);
+  }, [page, pageClamped]);
 
   function onSort(nextKey: SortKey) {
     if (sortKey === nextKey) {
@@ -105,7 +121,7 @@ export function TradeStatsBySymbolTable({ stats, mode }: { stats: TradeStatsBySy
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row) => {
+          {visibleRows.map((row) => {
             const winRate = row.trades > 0 ? (row.wins / row.trades) * 100 : 0;
             return (
               <tr key={row.symbol}>
@@ -123,7 +139,7 @@ export function TradeStatsBySymbolTable({ stats, mode }: { stats: TradeStatsBySy
               </tr>
             );
           })}
-          {sorted.length === 0 ? (
+          {visibleRows.length === 0 ? (
             <tr>
               <td colSpan={emptyColSpan} style={{ opacity: 0.75 }}>
                 No trades yet.
@@ -132,6 +148,17 @@ export function TradeStatsBySymbolTable({ stats, mode }: { stats: TradeStatsBySy
           ) : null}
         </tbody>
       </Table>
+      <TablePaginationControls
+        tableId="dashboard-trade-stats-by-symbol"
+        page={pageClamped}
+        totalRows={sorted.length}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          setPage(1);
+        }}
+      />
     </div>
   );
 }

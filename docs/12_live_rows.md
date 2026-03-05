@@ -57,16 +57,13 @@ ActiveOnly shows a row if:
 - paper status is OPEN or ENTRY_PENDING, OR
 - signal is LONG or SHORT
 
-## Table pagination standard (planned)
+## Table pagination standard
 
-All tables should follow a consistent pagination UX:
+Tables follow a consistent shared pagination UX:
 - Rows per page selector
 - Page indicator: "Page X of Y"
 - Total records count
 - Navigation: first (<<), prev (<), next (>), last (>>)
 
-This applies to:
-- Universe list
-- Optimizer completed/stopped runs
-- Any future cache job/history tables
+Rows-per-page options are standardized to `10 / 25 / 50` and persisted per table id in localStorage.
 

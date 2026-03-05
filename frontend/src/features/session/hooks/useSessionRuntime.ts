@@ -8,7 +8,8 @@ export function useSessionRuntime() {
     sessionState: "STOPPED",
     sessionId: null,
     eventsFile: null,
-    runningSinceMs: null
+    runningSinceMs: null,
+    runtimeMessage: null
   });
 
   const [busy, setBusy] = useState<"none" | "start" | "stop" | "pause" | "resume">("none");

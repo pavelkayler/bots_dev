@@ -7,6 +7,7 @@ export type StatusResponse = {
   sessionId: string | null;
   eventsFile: string | null;
   runningSinceMs?: number | null;
+  runtimeMessage?: string | null;
 };
 
 export type RuntimeConfig = {

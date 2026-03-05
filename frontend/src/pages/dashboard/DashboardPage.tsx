@@ -137,6 +137,7 @@ export function DashboardPage() {
           sessionId={status.sessionId}
           eventsFile={status.eventsFile}
           apiError={error}
+          runtimeMessage={status.runtimeMessage ?? null}
         />
 
         <BotSummaryBar sessionState={status.sessionState} botStats={botStats} uptimeText={uptimeText} />

@@ -24,7 +24,7 @@ WS фронта к backend — singleton.
 
 signals.requireFundingSign всегда true; UI чекбокс удалён. funding>0 → LONG, funding<0 → SHORT.
 
-Tape recording: auto start/stop по RUNNING, throttle per symbol 5s (full payload), rotation 90MB/segment.
+Optimizer data source: dataset histories/cache only.
 
 Optimizer: worker_threads, progress 0.01%, pause/resume/cancel, checkpoints+retention, loop (N/infinite)+elapsed, blacklist rememberNegatives + effectiveSeed shift, loop results table кумулятивная (не сбрасывать).
 
@@ -106,12 +106,14 @@ frontend: cd frontend && npm run dev
 
 builds: cd backend && npm run build ; cd frontend && npm run build
 
-## Next planned work batch (tape removal + remote historical cache)
+## Next planned work batch (remote historical cache)
 
 Planned direction:
-- Remove tape recording subsystem completely.
+- Keep optimizer data flow on dataset histories/cache only.
 - Introduce Dataset Target (Universe + Range) and a server-side historical cache built from Bybit REST history endpoints.
 - Add UI: Universe selector, Range presets/manual datetime, Receive Data (applies selected target) with rate-limit-aware progress.
 - Standardize table pagination UI across the app.
 - Universe page: remove unused buttons, fix Create 400, add progress, preserve Create state across routing.
 - Optimizer: remove single-run controls and manual from/to; use Dataset Target range.
+
+

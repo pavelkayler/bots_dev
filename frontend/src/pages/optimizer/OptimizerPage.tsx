@@ -1,5 +1,5 @@
 import { Fragment, memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Pagination, Row, Table } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Row, Table } from "react-bootstrap";
 import { TablePaginationControls, useStoredPageSize } from "../../shared/ui/TablePaginationControls";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
@@ -54,9 +54,6 @@ const RANGE_DEFAULTS: RangeState = {
   rearmSec: { min: "900", max: "3600" },
 };
 
-const RESULTS_PAGE_SIZES = [10, 25, 50] as const;
-const DEFAULT_RESULTS_PAGE_SIZE = 25;
-const HISTORY_PAGE_SIZES = [10, 25, 50, 100] as const;
 const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
 const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
 const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
@@ -576,7 +573,7 @@ export function OptimizerPage() {
   const [historySortKey, setHistorySortKey] = useState<keyof DatasetHistoryRecord | "rangeMs" | "universeLabel">("receivedAtMs");
   const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
   const [historyPage, setHistoryPage] = useState(1);
-  const [historyPageSize, setHistoryPageSize] = useStoredPageSize("optimizer-dataset-history", 10);
+  const [historyPageSize, setHistoryPageSize] = useStoredPageSize("optimizer-dataset-histories", 10);
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
@@ -734,7 +731,7 @@ useEffect(() => {
 }, [loopAggRowsForRender]);
 
   const [page, setPage] = useState(1);
-  const [resultsPageSize, setResultsPageSize] = useState<(typeof RESULTS_PAGE_SIZES)[number]>(DEFAULT_RESULTS_PAGE_SIZE);
+  const [resultsPageSize, setResultsPageSize] = useStoredPageSize("optimizer-results", 25);
   const [totalRows, setTotalRows] = useState(0);
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
@@ -747,7 +744,7 @@ useEffect(() => {
   const [loopBusy, setLoopBusy] = useState(false);
   const [jobHistory, setJobHistory] = useState<OptimizerJobHistoryRecord[]>([]);
   const [jobHistoryTotal, setJobHistoryTotal] = useState(0);
-  const [jobHistoryLimit, setJobHistoryLimit] = useState<(typeof HISTORY_PAGE_SIZES)[number]>(25);
+  const [jobHistoryLimit, setJobHistoryLimit] = useStoredPageSize("optimizer-job-history", 25);
   const [jobHistoryOffset, setJobHistoryOffset] = useState(0);
   const [jobHistorySortKey, setJobHistorySortKey] = useState<OptimizerHistorySortKey>("endedAtMs");
   const [jobHistorySortDir, setJobHistorySortDir] = useState<OptimizerSortDir>("desc");
@@ -1350,10 +1347,15 @@ useEffect(() => {
   const historyPages = Math.max(1, Math.ceil(historyRowsSorted.length / historyPageSize));
   const historyPageClamped = Math.max(1, Math.min(historyPage, historyPages));
   const historyRowsPaged = historyRowsSorted.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize);
+  const historySourceKey = useMemo(() => historyRowsSorted.map((row) => row.id).join("|"), [historyRowsSorted]);
 
   useEffect(() => {
     if (historyPage !== historyPageClamped) setHistoryPage(historyPageClamped);
   }, [historyPage, historyPageClamped]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historySourceKey, historyPageSize]);
 
   const toggleHistory = useCallback((id: string) => {
     setSelectedHistoryIds((prev) => prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]);
@@ -1611,9 +1613,10 @@ useEffect(() => {
     nextSortKey: OptimizerSortKeyExtended,
     nextSortDir: OptimizerSortDir,
     activeJobId: string,
-    options?: { keepPreviousIfEmpty?: boolean }
+    options?: { keepPreviousIfEmpty?: boolean; pageSize?: 10 | 25 | 50 }
   ) {
-    const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir, pageSize: resultsPageSize });
+    const fetchSize = options?.pageSize ?? resultsPageSize;
+    const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir, pageSize: fetchSize });
     const nextResults = res.results ?? [];
     if (loopActive) {
       return;
@@ -1856,16 +1859,14 @@ useEffect(() => {
     await fetchResults(nextPage, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
   }
 
-  async function onResultsPageSizeChange(e: ChangeEvent<HTMLSelectElement>) {
-    const nextSize = Number(e.currentTarget.value) as (typeof RESULTS_PAGE_SIZES)[number];
-    if (!RESULTS_PAGE_SIZES.includes(nextSize)) return;
+  async function onResultsPageSizeChange(nextSize: 10 | 25 | 50) {
     setResultsPageSize(nextSize);
+    setPage(1);
     if (isLoopDisplay) {
-      setPage(1);
       return;
     }
     if (!activeJobId) return;
-    await fetchResults(1, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive });
+    await fetchResults(1, sortKey, sortDir, activeJobId, { keepPreviousIfEmpty: loopActive, pageSize: nextSize });
   }
 
   const activePrecision = (activeJobId ? jobPrecisionById[activeJobId] : undefined) ?? DEFAULT_PRECISION;
@@ -1957,14 +1958,6 @@ useEffect(() => {
     setJobHistoryOffset(0);
   }
 
-  function onHistoryLimitChange(e: ChangeEvent<HTMLSelectElement>) {
-    const nextLimit = Number(e.currentTarget.value) as (typeof HISTORY_PAGE_SIZES)[number];
-    if (!HISTORY_PAGE_SIZES.includes(nextLimit)) return;
-    setJobHistoryLimit(nextLimit);
-    setJobHistoryOffset(0);
-  }
-
-
   async function onExportHistory() {
     setHistoryTransferMessage(null);
     setError(null);
@@ -2021,6 +2014,7 @@ useEffect(() => {
     return true;
   });
   const sortedDisplayedRows = useMemo(() => sortOptimizerRows(displayedRows, sortKey, sortDir), [displayedRows, sortDir, sortKey]);
+  const resultsSourceKey = `${isLoopDisplay ? "loop" : "single"}:${activeJobId ?? ""}`;
   const rawRowsCount = rawRows.length;
   const displayedRowsCount = sortedDisplayedRows.length;
   const loopDisplayRows = useMemo(() => {
@@ -2050,6 +2044,10 @@ useEffect(() => {
   useEffect(() => {
     setPage((prev) => Math.min(prev, totalPages));
   }, [totalPages]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [resultsSourceKey, minTradesLimit, hideNegativeNetPnl, filterValPnlPerTradePos, filterValNetPnlPos]);
 
   useEffect(() => {
     const maxOffset = Math.max(0, (jobHistoryTotalPages - 1) * jobHistoryLimit);
@@ -2192,7 +2190,7 @@ useEffect(() => {
                 </div>
 
                 <TablePaginationControls
-                  tableId="optimizer-dataset-history"
+                  tableId="optimizer-dataset-histories"
                   page={historyPageClamped}
                   totalRows={historyRowsSorted.length}
                   pageSize={historyPageSize}
@@ -2387,21 +2385,12 @@ useEffect(() => {
 
             {showLoopNoRowsWarning ? <div style={{ fontSize: 12, marginBottom: 8, color: "#a86d00" }}>No result rows received yet. If this persists, enable debugOptimizerRows.</div> : null}
             {!showLoopNoRowsWarning && rawRowsCount > 0 && displayedRowsCount === 0 ? <div style={{ fontSize: 12, marginBottom: 8, color: "#6c757d" }}>Rows exist but are hidden by active display filters.</div> : null}
-            <div className="d-flex align-items-center justify-content-between mb-2" style={{ fontSize: 12 }}>
-              <div className="d-flex align-items-center gap-2">
-                <span>Rows per page</span>
-                <Form.Select size="sm" value={resultsPageSize} onChange={(e) => void onResultsPageSizeChange(e)} style={{ width: 90 }}>
-                  {RESULTS_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-                </Form.Select>
-                <span>minTrades</span>
-                <Form.Control size="sm" value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} style={{ width: 90 }} />
-                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={hideNegativeNetPnl} onChange={(e) => setHideNegativeNetPnl(e.currentTarget.checked)} />
-                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val pnl/trade > 0" checked={filterValPnlPerTradePos} onChange={(e) => setFilterValPnlPerTradePos(e.currentTarget.checked)} />
-                <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val netPnl > 0" checked={filterValNetPnlPos} onChange={(e) => setFilterValNetPnlPos(e.currentTarget.checked)} />
-              </div>
-              <div>
-                Page <b>{Math.min(page, totalPages)}</b> of <b>{totalPages}</b> · Total <b>{isLoopDisplay ? sortedDisplayedRows.length : totalRows}</b>
-              </div>
+            <div className="d-flex align-items-center gap-2 mb-2 flex-wrap" style={{ fontSize: 12 }}>
+              <span>minTrades</span>
+              <Form.Control size="sm" value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} style={{ width: 90 }} />
+              <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={hideNegativeNetPnl} onChange={(e) => setHideNegativeNetPnl(e.currentTarget.checked)} />
+              <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val pnl/trade > 0" checked={filterValPnlPerTradePos} onChange={(e) => setFilterValPnlPerTradePos(e.currentTarget.checked)} />
+              <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val netPnl > 0" checked={filterValNetPnlPos} onChange={(e) => setFilterValNetPnlPos(e.currentTarget.checked)} />
             </div>
             <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
               <thead>
@@ -2438,32 +2427,20 @@ useEffect(() => {
                 onExportTrades={onExportTrades}
               />
             </Table>
-            {sortedDisplayedRows.length ? (
-              <Pagination>
-                <Pagination.First onClick={() => void onPageChange(1)} disabled={page <= 1} />
-                <Pagination.Prev onClick={() => void onPageChange(Math.max(1, page - 1))} disabled={page <= 1} />
-                <Pagination.Item active>{page}</Pagination.Item>
-                <Pagination.Next onClick={() => void onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} />
-                <Pagination.Last onClick={() => void onPageChange(totalPages)} disabled={page >= totalPages} />
-              </Pagination>
-            ) : null}
+            <TablePaginationControls
+              tableId="optimizer-results"
+              page={Math.min(page, totalPages)}
+              totalRows={isLoopDisplay ? sortedDisplayedRows.length : totalRows}
+              pageSize={resultsPageSize}
+              onPageChange={(nextPage) => { void onPageChange(nextPage); }}
+              onPageSizeChange={(size) => { void onResultsPageSizeChange(size); }}
+            />
           </Card.Body>
         </Card>
 
         <Card>
           <Card.Header><b>Completed / Stopped runs</b></Card.Header>
           <Card.Body>
-            <div className="d-flex align-items-center justify-content-between mb-2" style={{ fontSize: 12 }}>
-              <div className="d-flex align-items-center gap-2">
-                <span>Rows per page</span>
-                <Form.Select size="sm" value={jobHistoryLimit} onChange={onHistoryLimitChange} style={{ width: 90 }}>
-                  {HISTORY_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-                </Form.Select>
-              </div>
-              <div>
-                Page <b>{jobHistoryCurrentPage}</b> of <b>{jobHistoryTotalPages}</b> · Total <b>{jobHistoryTotal}</b>
-              </div>
-            </div>
             <Table striped bordered hover size="sm" style={HISTORY_TABLE_STYLE}>
               <thead>
                 <tr>
@@ -2557,35 +2534,17 @@ useEffect(() => {
                 ) : null}
               </tbody>
             </Table>
-            {jobHistoryTotal > 0 ? (
-              <Pagination>
-                <Pagination.First
-                  onClick={() => setJobHistoryOffset(0)}
-                  disabled={jobHistoryOffset <= 0}
-                />
-                <Pagination.Prev
-                  onClick={() => setJobHistoryOffset(Math.max(0, jobHistoryOffset - jobHistoryLimit))}
-                  disabled={jobHistoryOffset <= 0}
-                />
-                {Array.from({ length: jobHistoryTotalPages }, (_, i) => i + 1).slice(Math.max(0, jobHistoryCurrentPage - 3), Math.max(0, jobHistoryCurrentPage - 3) + 5).map((pageNum) => (
-                  <Pagination.Item
-                    key={pageNum}
-                    active={pageNum === jobHistoryCurrentPage}
-                    onClick={() => setJobHistoryOffset((pageNum - 1) * jobHistoryLimit)}
-                  >
-                    {pageNum}
-                  </Pagination.Item>
-                ))}
-                <Pagination.Next
-                  onClick={() => setJobHistoryOffset(Math.min((jobHistoryTotalPages - 1) * jobHistoryLimit, jobHistoryOffset + jobHistoryLimit))}
-                  disabled={jobHistoryCurrentPage >= jobHistoryTotalPages}
-                />
-                <Pagination.Last
-                  onClick={() => setJobHistoryOffset((jobHistoryTotalPages - 1) * jobHistoryLimit)}
-                  disabled={jobHistoryCurrentPage >= jobHistoryTotalPages}
-                />
-              </Pagination>
-            ) : null}
+            <TablePaginationControls
+              tableId="optimizer-job-history"
+              page={jobHistoryCurrentPage}
+              totalRows={jobHistoryTotal}
+              pageSize={jobHistoryLimit}
+              onPageChange={(nextPage) => setJobHistoryOffset((Math.max(1, nextPage) - 1) * jobHistoryLimit)}
+              onPageSizeChange={(size) => {
+                setJobHistoryLimit(size);
+                setJobHistoryOffset(0);
+              }}
+            />
           </Card.Body>
         </Card>
       </Container>
@@ -2593,3 +2552,7 @@ useEffect(() => {
     </>
   );
 }
+
+
+
+

@@ -60,7 +60,7 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
 - Summary:
   - resets on Start (new run)
   - loads on Stop
-  - trades table supports global sort + pagination (50/100/200)
+  - trades table supports global sort + shared pagination (10/25/50)
 
 ### Config + Presets
 - Config is edited as **draft** and applied via **Apply**.
@@ -167,3 +167,5 @@ Data fetch must be rate-limit aware (strict limit: 500 requests / 5 seconds) and
 - Execution layer enforces a per-symbol invariant (`FLAT | OPENING | OPEN | CLOSING`) to prevent entry stacking while a symbol is not flat.
 - Entry IDs are deterministic per run/symbol/attempt in paper+demo paths for idempotent OPENING behavior.
 - Fill/exit decision logic is centralized in `backend/src/execution/executionRules.ts` and used by paper execution (therefore optimizer replay, which runs through paper broker, uses identical limit + TP/SL rules and worst-case conservative tie-break).
+- Backend risk limits are runtime-enforced via `riskLimits` (`maxTradesPerDay`, `maxLossPerDayUsdt`, `maxLossPerSessionUsdt`, `maxConsecutiveErrors`).
+- On risk breach, runtime emits `EMERGENCY_STOP`, sets session runtime message `Emergency stop: <reason>`, and triggers the hardened STOP flow automatically.

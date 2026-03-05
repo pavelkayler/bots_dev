@@ -1,6 +1,6 @@
 {
   "universe": {
-    "selectedId": "5m_5pct",
+    "selectedId": "10m_5pct",
     "symbols": [
       "BTCUSDT",
       "ETHUSDT",
@@ -74,72 +74,36 @@
       "ATOMUSDT",
       "XLMUSDT",
       "FILUSDT",
-      "ICPUSDT",
-      "TRIAUSDT",
-      "RAVEUSDT",
-      "ORCAUSDT",
-      "IPUSDT",
-      "ETCUSDT",
-      "FOGOUSDT",
-      "SNXUSDT",
-      "HANAUSDT",
-      "RENDERUSDT",
-      "MNTUSDT",
-      "MORPHOUSDT",
-      "ARUSDT",
-      "SPXUSDT",
-      "ORDERUSDT",
-      "EIGENUSDT",
-      "TIAUSDT",
-      "LINEAUSDT",
-      "STRKUSDT",
-      "LDOUSDT",
-      "ALLOUSDT",
-      "DYDXUSDT",
-      "BIOUSDT",
-      "AEROUSDT",
-      "MONUSDT",
-      "JTOUSDT",
-      "ZILUSDT",
-      "SENTUSDT",
-      "DASHUSDT",
-      "DUSKUSDT",
-      "MOODENGUSDT",
-      "KAITOUSDT",
-      "ZKUSDT",
-      "GUNUSDT",
-      "SONICUSDT",
-      "HNTUSDT",
-      "WHITEWHALEUSDT"
+      "ICPUSDT"
     ],
-    "klineTfMin": 1
+    "klineTfMin": 15
   },
   "fundingCooldown": {
     "beforeMin": 5,
     "afterMin": 10
   },
   "signals": {
-    "priceThresholdPct": 0.25,
-    "oivThresholdPct": 0.35,
+    "priceThresholdPct": 4.6,
+    "oivThresholdPct": 2.5,
     "requireFundingSign": true,
     "dailyTriggerMin": 1,
     "dailyTriggerMax": 999
   },
   "execution": {
-    "mode": "paper"
+    "mode": "demo"
   },
   "paper": {
     "enabled": true,
     "directionMode": "both",
     "marginUSDT": 100,
     "leverage": 10,
-    "entryOffsetPct": 0.008,
-    "entryTimeoutSec": 30,
-    "tpRoiPct": 2.5,
-    "slRoiPct": 2,
+    "entryOffsetPct": 0.79,
+    "entryTimeoutSec": 299,
+    "tpRoiPct": 71.9,
+    "slRoiPct": 20.6,
     "makerFeeRate": 0.0002,
     "applyFunding": false,
-    "rearmDelayMs": 1500,
+    "rearmDelayMs": 1574000,
     "maxDailyLossUSDT": 0
   }
 }

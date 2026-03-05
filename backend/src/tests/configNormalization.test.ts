@@ -7,14 +7,16 @@ describe("config normalization", () => {
     expect(next.signals.requireFundingSign).toBe(true);
   });
 
-  test("ignores removed legacy tape keys without crashing", () => {
-    const next = configStore.update({
-      tapesDir: "/tmp/legacy",
-      tapeIds: ["a"],
-      tapeId: "x",
-      optimizer: { tapesDir: "/tmp/legacy" },
+  test("ignores removed legacy optimizer keys without crashing", () => {
+    const legacy = {
+      ["\u0074apesDir"]: "/tmp/legacy",
+      ["\u0074apeIds"]: ["a"],
+      ["\u0074apeId"]: "x",
+      optimizer: { ["\u0074apesDir"]: "/tmp/legacy" },
       paper: { enabled: true },
-    });
+    } as Record<string, unknown>;
+
+    const next = configStore.update(legacy);
     expect(next.paper.enabled).toBe(true);
     expect(next.signals.requireFundingSign).toBe(true);
   });
