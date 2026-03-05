@@ -1,4 +1,5 @@
 import { buildSignedHeaders, buildSortedQueryString } from "./v5Auth.js";
+import { nowMs, startServerTimeOffsetScheduler } from "./serverTimeOffset.js";
 
 type ApiResp<T> = {
   retCode: number;
@@ -85,7 +86,8 @@ export class BybitDemoRestClient {
     this.baseUrl = process.env.BYBIT_DEMO_REST_URL ?? "https://api-demo.bybit.com";
     this.apiKey = process.env.BYBIT_DEMO_API_KEY ?? "";
     this.apiSecret = process.env.BYBIT_DEMO_API_SECRET ?? "";
-    this.recvWindow = Number(process.env.BYBIT_RECV_WINDOW ?? 5000);
+    this.recvWindow = Number(process.env.BYBIT_RECV_WINDOW ?? 20000);
+    startServerTimeOffsetScheduler({ baseUrl: this.baseUrl });
   }
 
   hasCredentials(): boolean {
@@ -151,12 +153,11 @@ export class BybitDemoRestClient {
 
     let retried = retried10006;
     while (true) {
-      const timestamp = Date.now();
       const signed = buildSignedHeaders({
         apiKey: this.apiKey,
         apiSecret: this.apiSecret,
         recvWindow: this.recvWindow,
-        timestamp,
+        timestamp: nowMs(),
         method,
         queryString: q,
         bodyString,

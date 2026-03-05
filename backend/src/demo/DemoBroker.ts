@@ -69,6 +69,8 @@ export class DemoBroker {
   private openOrderSymbolsCache = new Set<string>();
   private metaBySymbol = new Map<string, LinearInstrumentMeta>();
   private leverageSet = new Set<string>();
+  private leverageMaxBySymbol = new Map<string, number>();
+  private readonly leverageFallbackBySymbol = new Map<string, number>([["SIRENUSDT", 5]]);
   private missingMetaLogged = new Set<string>();
   private lastReconcileAtMs = 0;
   private globalOpenOrdersCount = 0;
@@ -134,6 +136,85 @@ export class DemoBroker {
     st.pendingOrderLinkId = null;
     st.placedAt = null;
     st.expiresAt = null;
+  }
+
+  private isLeverageInvalidError(err: any): boolean {
+    const retCode = Number(err?.retCode);
+    const retMsg = String(err?.retMsg ?? "").toLowerCase();
+    return retCode === 10001 || retMsg.includes("leverage invalid");
+  }
+
+  private async resolveMaxLeverage(symbol: string): Promise<number | null> {
+    const cached = this.leverageMaxBySymbol.get(symbol);
+    if (Number.isFinite(cached) && cached && cached > 0) return cached;
+
+    const fallback = this.leverageFallbackBySymbol.get(symbol);
+    if (Number.isFinite(fallback) && fallback && fallback > 0) {
+      this.leverageMaxBySymbol.set(symbol, fallback);
+      return fallback;
+    }
+
+    try {
+      const instruments = await this.rest.getInstrumentsInfoLinear({ symbol });
+      const first = Array.isArray(instruments) ? instruments[0] : null;
+      const maxLevRaw = Number((first as any)?.leverageFilter?.maxLeverage);
+      if (Number.isFinite(maxLevRaw) && maxLevRaw > 0) {
+        this.leverageMaxBySymbol.set(symbol, maxLevRaw);
+        return maxLevRaw;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  private async ensureLeverageConfigured(args: TickInput, st: SymbolState): Promise<boolean> {
+    if (this.leverageSet.has(args.symbol)) return true;
+
+    const desiredLeverage = this.cfg.leverage;
+    try {
+      await this.rest.setLeverageLinear({
+        symbol: args.symbol,
+        buyLeverage: String(desiredLeverage),
+        sellLeverage: String(desiredLeverage),
+      });
+      this.leverageSet.add(args.symbol);
+      return true;
+    } catch (err: any) {
+      if (!this.isLeverageInvalidError(err)) {
+        this.onTickRestError(args, "setLeverage", err, st);
+        return false;
+      }
+
+      const maxLeverage = await this.resolveMaxLeverage(args.symbol);
+      const fallbackLeverage = Number.isFinite(maxLeverage) && maxLeverage != null
+        ? Math.max(1, Math.floor(Math.min(desiredLeverage, maxLeverage)))
+        : null;
+      if (!fallbackLeverage || fallbackLeverage === desiredLeverage) {
+        this.onTickRestError(args, "setLeverage", err, st);
+        return false;
+      }
+
+      try {
+        await this.rest.setLeverageLinear({
+          symbol: args.symbol,
+          buyLeverage: String(fallbackLeverage),
+          sellLeverage: String(fallbackLeverage),
+        });
+        this.logger.log({
+          ts: args.nowMs,
+          type: "DEMO_LEVERAGE_CLAMP",
+          symbol: args.symbol,
+          payload: { desiredLeverage, appliedLeverage: fallbackLeverage, maxLeverage },
+        });
+        this.leverageSet.add(args.symbol);
+        return true;
+      } catch (retryErr: any) {
+        this.onTickRestError(args, "setLeverageFallback", retryErr, st);
+        return false;
+      }
+    }
   }
 
   start() {
@@ -354,19 +435,8 @@ export class DemoBroker {
       return;
     }
 
-    if (!this.leverageSet.has(args.symbol)) {
-      try {
-        await this.rest.setLeverageLinear({
-          symbol: args.symbol,
-          buyLeverage: String(this.cfg.leverage),
-          sellLeverage: String(this.cfg.leverage),
-        });
-      } catch (err: any) {
-        this.onTickRestError(args, "setLeverage", err, st);
-      } finally {
-        this.leverageSet.add(args.symbol);
-      }
-    }
+    const leverageReady = await this.ensureLeverageConfigured(args, st);
+    if (!leverageReady) return;
 
     const priceRaw = args.signal === "LONG" ? markPrice * (1 - offset) : markPrice * (1 + offset);
     const notional = this.cfg.marginUSDT * this.cfg.leverage;
