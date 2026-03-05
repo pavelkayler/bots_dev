@@ -9,9 +9,8 @@ Status: **Implemented**
 - Standardize all tables/pagination UX across the app.
 
 ### Planned tasks
-1) **Remove tape mechanics**
-   - Delete tape recorder backend logic, related REST endpoints, and UI sections (tapes directory, tape list, recording status).
-   - Remove optimizer/tape coupling.
+1) **Remove legacy recording mechanics**
+   - Implemented: optimizer input is dataset histories/cache only.
 
 2) **New UI for Universe + Range + data receive**
    - Universe selector.
@@ -53,8 +52,8 @@ This file is intentionally written as an actionable backlog for the next chat.
 ## Priority 1 — Optimizer hardening
 - Persist optimizer jobs/results to disk so a backend restart does not lose the last run.
 - Add job cancellation.
-- Add results export (CSV/JSON) and a small “run manifest” (tapeIds + ranges + precision + seed + candidates).
-- Add a retention policy for tapes (optional): max files / max total size.
+- Add results export (CSV/JSON) and a small “run manifest” (datasetHistoryIds + ranges + precision + seed + candidates).
+- Add dataset history retention policy (optional): max records / max total cache size.
 
 ## Priority 2 — Reliability + observability
 - Add unit tests:

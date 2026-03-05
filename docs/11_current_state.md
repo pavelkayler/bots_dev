@@ -105,6 +105,7 @@ See `docs/17_optimizer.md`.
 High-level:
 
 - Optimizer dataset source:
+  - Tape APIs/recording are removed; optimizer inputs are dataset histories/cache only
   - data comes only from Receive Data cache + Dataset Target
   - price cache: `backend/data/cache/bybit_klines/` (1m candles)
   - OI cache: 5-minute grid (Bybit supports 5min/15min/...; minimum is 5min)

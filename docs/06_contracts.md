@@ -93,57 +93,14 @@ Downloads current universe snapshot JSON.
 See `docs/17_optimizer.md` for semantics.
 
 #### GET /api/optimizer/status
-Reports tape recorder status.
-Response:
-```json
-{ "isRecording": true, "tapeId": "tape-2026-02-25T11-15-26-635Z" }
-```
-
-#### GET /api/optimizer/settings
-Response:
-```json
-{ "tapesDir": "...server filesystem path..." }
-```
-
-#### POST /api/optimizer/settings
-Body:
-```json
-{ "tapesDir": "...server filesystem path..." }
-```
-Response:
-```json
-{ "tapesDir": "..." }
-```
-
-#### GET /api/optimizer/tapes
-Response:
-```json
-{
-  "tapes": [
-    {
-      "id": "tape-...",
-      "createdAt": "2026-02-25T...Z",
-      "fileSizeBytes": 12345,
-      "meta": { "klineTfMin": 1, "symbolsCount": 337 }
-    }
-  ]
-}
-```
-
-#### POST /api/optimizer/tapes/start
-Manual tape start is disabled (lifecycle-managed by session state).
-- Returns `409` with `error: "tape_recording_lifecycle_managed"`.
-
-#### POST /api/optimizer/tapes/stop
-Manual tape stop is disabled (lifecycle-managed by session state).
-- Returns `409` with `error: "tape_recording_lifecycle_managed"`.
+Returns optimizer datasource status.
 
 #### POST /api/optimizer/run
-Starts an optimization job.
-Body (preferred multi-tape):
+Starts an optimization job using selected dataset histories/cache.
+Body:
 ```json
 {
-  "tapeIds": ["tape-...", "tape-..."],
+  "datasetHistoryIds": ["history-..."],
   "candidates": 200,
   "seed": 1,
   "ranges": {
@@ -152,10 +109,6 @@ Body (preferred multi-tape):
   },
   "precision": { "tp": 0, "sl": 0, "offset": 3 }
 }
-```
-Legacy (single tape):
-```json
-{ "tapeId": "tape-...", "candidates": 200, "seed": 1 }
 ```
 Response:
 ```json

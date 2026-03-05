@@ -11,10 +11,7 @@ import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
 type SessionSummaryResponse = any;
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
-import { getOptimizerSettings, getTapeSizeBytes, listTapeSegments, listTapes, safeId, setOptimizerSettings } from "../optimizer/tapeStore.js";
-import { incrementTapeRuns } from "../optimizer/tapeRunsStore.js";
 import { readLoopState, recoverLoopStateOnBoot, type OptimizerLoopProgressState, type OptimizerLoopRunPayload, type OptimizerLoopState, writeLoopState } from "../optimizer/loopStore.js";
-import { tapeRecorder } from "../optimizer/tapeRecorder.js";
 import {
   DEFAULT_OPTIMIZER_PRECISION,
   simulateCandidateTrades,
@@ -58,23 +55,6 @@ type OptimizerJob = {
   runPayload: Record<string, unknown> | null;
 };
 
-type DatasetMode = "snapshot" | "followTail";
-
-type SnapshotDescriptor = {
-  datasetMode: "snapshot";
-  tapeFiles: Array<{ tapeId: string; bytes: number }>;
-  timeRangeFromTs?: number;
-  timeRangeToTs?: number;
-};
-
-type FollowTailDescriptor = {
-  datasetMode: "followTail";
-  baseTapeIds: string[];
-  explicitTapeIds: string[];
-  timeRangeFromTs?: number;
-  timeRangeToTs?: number;
-};
-
 type OptimizerCheckpoint = {
   jobId: string;
   createdAt: number;
@@ -110,7 +90,7 @@ type OptimizerJobHistoryRecord = {
   endedAtMs: number;
   status: "done" | "cancelled" | "error" | "stopped";
   runPayload: {
-    tapeIds: string[];
+    datasetHistoryIds: string[];
     optTfMin?: number;
     timeRangeFromTs?: number;
     timeRangeToTs?: number;
@@ -152,65 +132,6 @@ const lastSnapshotWriteMs = new Map<string, number>();
 let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
 let shutdownHandler: (() => Promise<void> | void) | null = null;
 let sessionStartAbortController: AbortController | null = null;
-const tapeBoundsCache = new Map<string, { signature: string; startTs: number | null; endTs: number | null }>();
-
-function toBaseTapeId(tapeId: string): string {
-  const match = tapeId.match(/^(.*)-seg\d+$/);
-  return match?.[1] ? match[1] : tapeId;
-}
-
-function readTapeBounds(baseTapeId: string): { startTs: number | null; endTs: number | null } {
-  const tapesDir = getOptimizerSettings().tapesDir;
-  const segmentIds = listTapeSegments(baseTapeId);
-  const signatureParts: string[] = [];
-  for (const segmentId of segmentIds) {
-    const segmentPath = path.join(tapesDir, `${segmentId}.jsonl`);
-    try {
-      const stat = fs.statSync(segmentPath);
-      signatureParts.push(`${segmentId}:${stat.size}:${Math.floor(stat.mtimeMs)}`);
-    } catch {
-      continue;
-    }
-  }
-  const signature = signatureParts.join("|");
-  const cached = tapeBoundsCache.get(baseTapeId);
-  if (cached && cached.signature === signature) {
-    return { startTs: cached.startTs, endTs: cached.endTs };
-  }
-
-  let startTs: number | null = null;
-  let endTs: number | null = null;
-
-  for (const segmentId of segmentIds) {
-    const segmentPath = path.join(tapesDir, `${segmentId}.jsonl`);
-    let raw = "";
-    try {
-      raw = fs.readFileSync(segmentPath, "utf8");
-    } catch {
-      continue;
-    }
-    const lines = raw.split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const row = JSON.parse(trimmed) as { type?: string; ts?: unknown };
-        if (row?.type === "meta") continue;
-        const tsRaw = Number(row?.ts);
-        if (!Number.isFinite(tsRaw) || tsRaw <= 0) continue;
-        const tsMs = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
-        if (startTs == null || tsMs < startTs) startTs = tsMs;
-        if (endTs == null || tsMs > endTs) endTs = tsMs;
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  tapeBoundsCache.set(baseTapeId, { signature, startTs, endTs });
-  return { startTs, endTs };
-}
-
 function readOptimizerJobHistory(): OptimizerJobHistoryRecord[] {
   if (!fs.existsSync(OPTIMIZER_JOB_HISTORY_PATH)) return [];
   try {
@@ -268,10 +189,10 @@ function isValidHistoryRecord(record: unknown): boolean {
 }
 
 function toHistoryRunPayload(runPayload: Record<string, unknown> | null): OptimizerJobHistoryRecord["runPayload"] {
-  const rawTapeIds = Array.isArray((runPayload as any)?.tapeIds) ? (runPayload as any).tapeIds : [];
-  const tapeIds = rawTapeIds.map((id: unknown) => String(id ?? "")).filter(Boolean);
+  const rawDatasetHistoryIds = Array.isArray((runPayload as any)?.datasetHistoryIds) ? (runPayload as any).datasetHistoryIds : [];
+  const datasetHistoryIds = rawDatasetHistoryIds.map((id: unknown) => String(id ?? "")).filter(Boolean);
   return {
-    tapeIds,
+    datasetHistoryIds,
     ...(Number.isFinite(Number((runPayload as any)?.optTfMin)) ? { optTfMin: Math.floor(Number((runPayload as any)?.optTfMin)) } : {}),
     ...(Number.isFinite(Number((runPayload as any)?.timeRangeFromTs)) ? { timeRangeFromTs: Math.floor(Number((runPayload as any)?.timeRangeFromTs)) } : {}),
     ...(Number.isFinite(Number((runPayload as any)?.timeRangeToTs)) ? { timeRangeToTs: Math.floor(Number((runPayload as any)?.timeRangeToTs)) } : {}),
@@ -549,7 +470,7 @@ function restoreLatestJobSnapshot() {
       totalCandidates: Math.max(0, Math.floor(Number((parsed.runPayload as any)?.candidates) || 0)),
       excludeNegative: Boolean((parsed.runPayload as any)?.excludeNegative),
       rememberNegatives: Boolean((parsed.runPayload as any)?.rememberNegatives),
-      runKey: `tapes=${Array.isArray((parsed.runPayload as any)?.tapeIds) ? [...(parsed.runPayload as any).tapeIds].sort().join(",") : ""}|dir=${String((parsed.runPayload as any)?.directionMode ?? "both")}|tf=${Number((parsed.runPayload as any)?.optTfMin ?? 0) || 0}`,
+      runKey: `datasets=${Array.isArray((parsed.runPayload as any)?.datasetHistoryIds) ? [...(parsed.runPayload as any).datasetHistoryIds].sort().join(",") : ""}|dir=${String((parsed.runPayload as any)?.directionMode ?? "both")}|tf=${Number((parsed.runPayload as any)?.optTfMin ?? 0) || 0}`,
       finishedAtMs: typeof parsed.finishedAtMs === "number" ? parsed.finishedAtMs : null,
       runPayload: parsed.runPayload,
       ...(typeof parsed.message === "string" ? { message: parsed.message } : {}),
@@ -1013,45 +934,7 @@ function buildDatasetRunKey(input: {
   return `datasetHist=${digest}`;
 }
 
-function resolveTapeFilesAtRunStart(baseTapeIds: string[], explicitTapeIds: string[]): Array<{ tapeId: string; bytes: number }> {
-  const resolvedIds = [
-    ...baseTapeIds.flatMap((baseTapeId) => listTapeSegments(baseTapeId)),
-    ...explicitTapeIds,
-  ];
-  const dedupedIds = [...new Set(resolvedIds)];
-  return dedupedIds
-    .map((tapeId) => {
-      try {
-        return { tapeId, bytes: getTapeSizeBytes(tapeId) };
-      } catch {
-        return null;
-      }
-    })
-    .filter((row): row is { tapeId: string; bytes: number } => row != null && row.bytes > 0);
-}
-
 function withDatasetResolved(runPayload: Record<string, unknown>): Record<string, unknown> {
-  const snapshot = (runPayload as any)?.snapshot as SnapshotDescriptor | undefined;
-  if (snapshot?.datasetMode === "snapshot") {
-    return {
-      ...runPayload,
-      tapeIds: snapshot.tapeFiles.map((file) => file.tapeId),
-      tapeFiles: snapshot.tapeFiles,
-      ...(snapshot.timeRangeFromTs != null ? { timeRangeFromTs: snapshot.timeRangeFromTs } : {}),
-      ...(snapshot.timeRangeToTs != null ? { timeRangeToTs: snapshot.timeRangeToTs } : {}),
-    };
-  }
-  const followTail = (runPayload as any)?.followTail as FollowTailDescriptor | undefined;
-  if (followTail?.datasetMode === "followTail") {
-    const tapeFiles = resolveTapeFilesAtRunStart(followTail.baseTapeIds, followTail.explicitTapeIds);
-    return {
-      ...runPayload,
-      tapeIds: tapeFiles.map((file) => file.tapeId),
-      tapeFiles,
-      ...(followTail.timeRangeFromTs != null ? { timeRangeFromTs: followTail.timeRangeFromTs } : {}),
-      ...(followTail.timeRangeToTs != null ? { timeRangeToTs: followTail.timeRangeToTs } : {}),
-    };
-  }
   return runPayload;
 }
 
@@ -1101,7 +984,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
       state: status.sessionState,
       memory: { rss: mem.rss, heapUsed: mem.heapUsed, heapTotal: mem.heapTotal },
       uptimeSec: Math.floor(process.uptime()),
-      activeTapeId: tapeRecorder.getState().currentTapeId,
       dataDirFreeBytes: freeBytes,
       optimizerLoopStatus: optimizerLoopState?.isRunning ? (optimizerLoopState?.isPaused ? "paused" : "running") : "stopped",
       currentJobStatus: currentJob?.status ?? null,
@@ -1142,10 +1024,7 @@ export function registerHttpRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/doctor", async () => {
-    const tapesDir = getOptimizerSettings().tapesDir;
     const warnings: string[] = [];
-    const tapeWarning = ensureWritableDir(tapesDir);
-    if (tapeWarning) warnings.push(`tapesDir not writable: ${tapeWarning}`);
     const checkpointWarning = ensureWritableDir(checkpointDir);
     if (checkpointWarning) warnings.push(`checkpointsDir not writable: ${checkpointWarning}`);
     const blacklistWarning = ensureWritableDir(optimizerBlacklistsDir);
@@ -1173,7 +1052,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
       disk: { dataDir, freeBytes },
       dataDirBytesFree: freeBytes,
       paths: {
-        tapesDir,
         checkpointsDir: checkpointDir,
         blacklistsDir: optimizerBlacklistsDir,
       },
@@ -1647,7 +1525,6 @@ app.get("/api/config", async () => {
     const runPayload = {
       jobId,
       runId: jobId,
-      tapeIds: [],
       datasetHistoryIds,
       cacheDatasets,
       interval,
@@ -1858,7 +1735,6 @@ app.get("/api/config", async () => {
     }
     const payload: OptimizerLoopRunPayload = {
       ...body,
-      tapeIds: [],
       datasetHistoryIds,
       cacheDatasets,
       interval,
@@ -2117,7 +1993,7 @@ app.get("/api/config", async () => {
           case "endedAtMs": return Number(row.endedAtMs) || 0;
           case "status": return row.status;
           case "mode": return row.mode ?? "";
-          case "tapes": return row.runPayload.tapeIds.length;
+          case "datasets": return row.runPayload.datasetHistoryIds.length;
           case "tfMin": return Number(row.runPayload.optTfMin) || 0;
           case "candidates": return Number(row.runPayload.candidates) || 0;
           case "seed": return Number(row.runPayload.seed) || 0;
@@ -2234,7 +2110,6 @@ app.get("/api/config", async () => {
 
     const params = candidate.params as OptimizerParams;
     const runArgs = {
-      tapeIds: Array.isArray((resolvedRunPayload as any)?.tapeIds) ? (resolvedRunPayload as any).tapeIds.map((id: unknown) => String(id ?? "")).filter(Boolean) : [],
       candidates: 1,
       seed: Number((resolvedRunPayload as any)?.seed) || 1,
       ...(candidate.directionMode ? { directionMode: candidate.directionMode } : {}),
@@ -2242,7 +2117,6 @@ app.get("/api/config", async () => {
         ? { executionModel: String((resolvedRunPayload as any)?.executionModel) as "closeOnly" | "conservativeOhlc" }
         : {}),
       optTfMin: Number((resolvedRunPayload as any)?.optTfMin) || 15,
-      ...(Array.isArray((resolvedRunPayload as any)?.tapeFiles) ? { tapeFiles: (resolvedRunPayload as any).tapeFiles } : {}),
       ...(((resolvedRunPayload as any)?.ranges && typeof (resolvedRunPayload as any).ranges === "object") ? { ranges: (resolvedRunPayload as any).ranges as OptimizerRanges } : {}),
       ...(((resolvedRunPayload as any)?.precision && typeof (resolvedRunPayload as any).precision === "object") ? { precision: (resolvedRunPayload as any).precision as Partial<OptimizerPrecision> } : {}),
       ...(Number.isFinite(Number((resolvedRunPayload as any)?.timeRangeFromTs)) ? { timeRangeFromTs: Number((resolvedRunPayload as any)?.timeRangeFromTs) } : {}),
