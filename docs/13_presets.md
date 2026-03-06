@@ -1,34 +1,53 @@
-# 13 Presets (Config presets)
+# 13 Presets and Profiles
 
-Last update: 2026-02-25
+Last update: 2026-03-06
 
 ## Purpose
-Presets are named snapshots of runtime config (excluding Universe selection itself), to allow fast repeatable runs.
+Preset storage is split for future multi-bot support:
+- bot presets (strategy-specific)
+- execution profiles (shared execution/session/risk)
 
-## Storage
-- `backend/data/presets/*.json`
+TP/SL is strategy semantics and is part of bot presets.
 
-## UI behavior
-- Preset selector shows label: `<name> [tf=<klineTfMin>m]`
-- Buttons:
-  - **Save**: overwrites the currently selected preset with the current draft config
-  - **Remove**: deletes the selected preset
-- Selecting a preset loads its config into the **draft** (does not auto-apply).
-- Preferred Universe auto-select (best-effort):
-  - If preset name contains `[<token>]` (e.g. `[10m/6%]`)
-  - UI tries to find a saved Universe with `universe.name === token` and selects it.
+## Bot Presets
+- Scope: one `botId`
+- Storage: `backend/data/bot_presets/<botId>__<presetId>.json`
+- Contains only bot config:
+  - funding cooldown
+  - signal thresholds / daily gates
+  - strategy fields (`klineTfMin`, `entryOffsetPct`, `entryTimeoutSec`, `tpRoiPct`, `slRoiPct`, `rearmDelayMs`, `applyFunding`)
 
-## API
-- `GET /api/presets`
-- `GET /api/presets/:id`
-- `PUT /api/presets/:id`
-- `DELETE /api/presets/:id`
+API:
+- `GET /api/bot-presets?botId=<id>`
+- `GET /api/bot-presets/:id?botId=<id>`
+- `PUT /api/bot-presets/:id?botId=<id>`
+- `DELETE /api/bot-presets/:id?botId=<id>`
 
-## Defaults
-Seeded presets (examples):
-- Conservative [20m/8%]
-- Balanced [10m/6%]
-- Aggressive [5m/5%]
+## Execution Profiles
+- Scope: shared across bots
+- Storage: `backend/data/execution_profiles/<profileId>.json`
+- Contains only generic execution/session/risk:
+  - execution mode (`paper/demo/empty`)
+  - direction gate / margin / leverage / fee / maxDailyLoss
+  - risk limits (`maxTradesPerDay`, `maxLossPerDayUsdt`, `maxLossPerSessionUsdt`, `maxConsecutiveErrors`)
 
-All presets default to:
-- `paper.directionMode: "both"`
+API:
+- `GET /api/execution-profiles`
+- `GET /api/execution-profiles/:id`
+- `PUT /api/execution-profiles/:id`
+- `DELETE /api/execution-profiles/:id`
+
+## Selections
+Current active selections are stored in runtime config:
+- `selectedBotId`
+- `selectedBotPresetId`
+- `selectedExecutionProfileId`
+
+API:
+- `GET /api/config/selections`
+- `POST /api/config/selections`
+
+## Backward Compatibility
+- Legacy presets in `backend/data/presets/*.json` remain readable.
+- Legacy runtime config shape is migrated into split config on load.
+- Runtime still exposes resolved compatibility fields for existing flow.

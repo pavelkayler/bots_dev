@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { CONFIG } from "../config.js";
+import { DEFAULT_BOT_ID, getBotDefinition, type BotConfig } from "../bots/registry.js";
 
 const symbolSchema = z
   .string()
@@ -16,102 +17,136 @@ const universeSchema = z
   .object({
     selectedId: z.string().max(120).default(""),
     symbols: z.array(symbolSchema).min(1).max(1000),
-    klineTfMin: z.number().int().min(1).max(60),
   })
   .strict();
 
-const signalsShapeSchema = z
+const botConfigSchema = z
   .object({
-    priceThresholdPct: z.number().finite().min(0),
-    oivThresholdPct: z.number().finite().min(0),
-    requireFundingSign: z.boolean(),
-    dailyTriggerMin: z.number().int().min(1),
-    dailyTriggerMax: z.number().int().min(1),
+    fundingCooldown: z
+      .object({
+        beforeMin: z.number().finite().min(0).max(240),
+        afterMin: z.number().finite().min(0).max(240),
+      })
+      .strict(),
+    signals: z
+      .object({
+        priceThresholdPct: z.number().finite().min(0),
+        oivThresholdPct: z.number().finite().min(0),
+        requireFundingSign: z.boolean(),
+        dailyTriggerMin: z.number().int().min(1),
+        dailyTriggerMax: z.number().int().min(1),
+      })
+      .strict(),
+    strategy: z
+      .object({
+        klineTfMin: z.number().int().min(1).max(60),
+        entryOffsetPct: z.number().finite().min(0).max(50),
+        entryTimeoutSec: z.number().int().min(1),
+        tpRoiPct: z.number().finite().min(0).max(1000),
+        slRoiPct: z.number().finite().min(0).max(1000),
+        rearmDelayMs: z.number().int().min(0),
+        applyFunding: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.signals.dailyTriggerMax < v.signals.dailyTriggerMin) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signals", "dailyTriggerMax"],
+        message: "dailyTriggerMax must be greater than or equal to dailyTriggerMin",
+      });
+    }
+  });
+
+const executionProfileSchema = z
+  .object({
+    execution: z
+      .object({
+        mode: z.enum(["paper", "demo", "empty"]),
+      })
+      .strict(),
+    paper: z
+      .object({
+        enabled: z.boolean(),
+        directionMode: z.enum(["both", "long", "short"]),
+        marginUSDT: z.number().finite().min(0),
+        leverage: z.number().finite().min(1).max(1000),
+        makerFeeRate: z.number().finite().min(0).max(0.01),
+        maxDailyLossUSDT: z.number().finite().min(0).max(1_000_000_000),
+      })
+      .strict(),
+    riskLimits: z
+      .object({
+        maxTradesPerDay: z.number().int().min(1).max(1_000_000),
+        maxLossPerDayUsdt: z.number().finite().positive().nullable(),
+        maxLossPerSessionUsdt: z.number().finite().positive().nullable(),
+        maxConsecutiveErrors: z.number().int().min(1).max(1_000_000),
+      })
+      .strict(),
   })
   .strict();
 
-const signalsSchema = signalsShapeSchema.superRefine((v, ctx) => {
-  if (v.dailyTriggerMax < v.dailyTriggerMin) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["dailyTriggerMax"],
-      message: "dailyTriggerMax must be greater than or equal to dailyTriggerMin",
-    });
-  }
-});
-
-const signalsPatchSchema = signalsShapeSchema.partial().strict();
-
-const fundingCooldownSchema = z
+const storedStateSchema = z
   .object({
-    beforeMin: z.number().finite().min(0).max(240),
-    afterMin: z.number().finite().min(0).max(240),
-  })
-  .strict();
-
-const paperSchema = z
-  .object({
-    enabled: z.boolean(),
-    directionMode: z.enum(["both", "long", "short"]),
-
-    marginUSDT: z.number().finite().min(0),
-    leverage: z.number().finite().min(1).max(1000),
-
-    entryOffsetPct: z.number().finite().min(0).max(50),
-    entryTimeoutSec: z.number().finite().min(1),
-
-    tpRoiPct: z.number().finite().min(0).max(1000),
-    slRoiPct: z.number().finite().min(0).max(1000),
-
-    makerFeeRate: z.number().finite().min(0).max(0.01),
-    applyFunding: z.boolean(),
-
-    rearmDelayMs: z.number().finite().min(0),
-    maxDailyLossUSDT: z.number().finite().min(0).max(1_000_000_000),
-  })
-  .strict();
-
-const executionSchema = z
-  .object({
-    mode: z.enum(["paper", "demo", "empty"]),
-  })
-  .strict();
-
-const riskLimitsSchema = z
-  .object({
-    maxTradesPerDay: z.number().int().min(1).max(1_000_000),
-    maxLossPerDayUsdt: z.number().finite().positive().nullable(),
-    maxLossPerSessionUsdt: z.number().finite().positive().nullable(),
-    maxConsecutiveErrors: z.number().int().min(1).max(1_000_000),
-  })
-  .strict();
-
-const riskLimitsPatchSchema = riskLimitsSchema.partial().strict();
-
-const runtimeConfigSchema = z
-  .object({
+    selectedBotId: z.string().min(1).max(120),
+    selectedBotPresetId: z.string().min(1).max(120),
+    selectedExecutionProfileId: z.string().min(1).max(120),
     universe: universeSchema,
-    fundingCooldown: fundingCooldownSchema,
-    signals: signalsSchema,
-    execution: executionSchema,
-    paper: paperSchema,
-    riskLimits: riskLimitsSchema,
+    botConfig: botConfigSchema,
+    executionProfile: executionProfileSchema,
   })
   .strict();
 
-const patchSchema = z
-  .object({
-    universe: universeSchema.partial().optional(),
-    fundingCooldown: fundingCooldownSchema.partial().optional(),
-    signals: signalsPatchSchema.optional(),
-    execution: executionSchema.partial().optional(),
-    paper: paperSchema.partial().optional(),
-    riskLimits: riskLimitsPatchSchema.optional(),
-  })
-  .strict();
+type StoredConfigState = z.infer<typeof storedStateSchema>;
+export type ExecutionProfile = z.infer<typeof executionProfileSchema>;
+type ExecutionProfilePatch = {
+  execution?: Partial<ExecutionProfile["execution"]>;
+  paper?: Partial<ExecutionProfile["paper"]>;
+  riskLimits?: Partial<ExecutionProfile["riskLimits"]>;
+};
 
-export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
-export type RuntimeConfigPatch = z.infer<typeof patchSchema>;
+export type RuntimeConfig = {
+  selectedBotId: string;
+  selectedBotPresetId: string;
+  selectedExecutionProfileId: string;
+  universe: z.infer<typeof universeSchema> & { klineTfMin: number };
+  botConfig: BotConfig;
+  executionProfile: ExecutionProfile;
+  fundingCooldown: BotConfig["fundingCooldown"];
+  signals: BotConfig["signals"];
+  execution: ExecutionProfile["execution"];
+  paper: {
+    enabled: boolean;
+    directionMode: "both" | "long" | "short";
+    marginUSDT: number;
+    leverage: number;
+    entryOffsetPct: number;
+    entryTimeoutSec: number;
+    tpRoiPct: number;
+    slRoiPct: number;
+    makerFeeRate: number;
+    applyFunding: boolean;
+    rearmDelayMs: number;
+    maxDailyLossUSDT: number;
+  };
+  riskLimits: ExecutionProfile["riskLimits"];
+};
+
+export type RuntimeConfigPatch = Partial<{
+  selectedBotId: string;
+  selectedBotPresetId: string;
+  selectedExecutionProfileId: string;
+  universe: Partial<StoredConfigState["universe"]> & { klineTfMin?: number };
+  botConfig: Partial<BotConfig>;
+  executionProfile: Partial<ExecutionProfile>;
+  fundingCooldown: Partial<BotConfig["fundingCooldown"]>;
+  signals: Partial<BotConfig["signals"]>;
+  execution: Partial<ExecutionProfile["execution"]>;
+  paper: Partial<RuntimeConfig["paper"]> & { rearmSec?: number };
+  riskLimits: Partial<ExecutionProfile["riskLimits"]>;
+}>;
 
 function deepClone<T>(x: T): T {
   return structuredClone(x);
@@ -120,22 +155,18 @@ function deepClone<T>(x: T): T {
 const CONFIG_FILE_PATH = path.resolve(process.cwd(), "data", "config.json");
 
 function ensureDataDir() {
-  const dir = path.dirname(CONFIG_FILE_PATH);
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.dirname(CONFIG_FILE_PATH), { recursive: true });
 }
 
 function writeFileAtomic(filePath: string, content: string) {
   ensureDataDir();
-
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, content, "utf8");
-
   try {
     fs.rmSync(filePath, { force: true });
   } catch {
     // ignore
   }
-
   fs.renameSync(tmp, filePath);
 }
 
@@ -155,73 +186,153 @@ function normalizeLossLimit(value: unknown, fallback: number | null): number | n
   return n;
 }
 
-function stripLegacyOptimizerKeys(target: Record<string, unknown>) {
-  const removedKeys = ["optimizer", "\u0074apeId", "\u0074apeIds", "\u0074apesDir"];
-  for (const key of removedKeys) delete (target as any)[key];
+function stripLegacyKeys(target: Record<string, unknown>) {
+  const removed = ["optimizer", "\u0074apeId", "\u0074apeIds", "\u0074apesDir"];
+  for (const key of removed) delete (target as any)[key];
 }
 
-function migrateLoaded(raw: any): any {
-  if (!raw || typeof raw !== "object") return raw;
-
-  stripLegacyOptimizerKeys(raw as Record<string, unknown>);
-
-  if (!raw.universe || typeof raw.universe !== "object") {
-    raw.universe = {
-      selectedId: "",
-      symbols: Array.from(CONFIG.symbols),
-      klineTfMin: CONFIG.klineTfMin,
-    };
-  } else {
-    if (raw.universe.selectedId == null) raw.universe.selectedId = "";
-    if (!Array.isArray(raw.universe.symbols)) raw.universe.symbols = Array.from(CONFIG.symbols);
-    if (raw.universe.klineTfMin == null) raw.universe.klineTfMin = CONFIG.klineTfMin;
-  }
-
-
-  if (!raw.execution || typeof raw.execution !== "object") {
-    raw.execution = { mode: "paper" };
-  } else {
-    if (raw.execution.mode == null) raw.execution.mode = "paper";
-  }
-
-  if (!raw.paper || typeof raw.paper !== "object") {
-    raw.paper = { ...CONFIG.paper };
-  } else {
-    if (raw.paper.directionMode == null) {
-      raw.paper.directionMode = raw.paper.longOnly === true ? "long" : "both";
-    }
-    if (raw.paper.maxDailyLossUSDT == null) raw.paper.maxDailyLossUSDT = CONFIG.paper.maxDailyLossUSDT;
-    delete raw.paper.longOnly;
-  }
-
-  if (!raw.signals || typeof raw.signals !== "object") {
-    raw.signals = { ...CONFIG.signals, requireFundingSign: true };
-  } else {
-    raw.signals.requireFundingSign = true;
-    if (raw.signals.dailyTriggerMin == null) raw.signals.dailyTriggerMin = CONFIG.signals.dailyTriggerMin;
-    if (raw.signals.dailyTriggerMax == null) raw.signals.dailyTriggerMax = CONFIG.signals.dailyTriggerMax;
-  }
-
-  if (!raw.riskLimits || typeof raw.riskLimits !== "object") {
-    raw.riskLimits = { ...CONFIG.riskLimits };
-  } else {
-    raw.riskLimits = {
-      maxTradesPerDay: normalizePositiveInt(raw.riskLimits.maxTradesPerDay, CONFIG.riskLimits.maxTradesPerDay, 1),
-      maxLossPerDayUsdt: normalizeLossLimit(raw.riskLimits.maxLossPerDayUsdt, CONFIG.riskLimits.maxLossPerDayUsdt),
-      maxLossPerSessionUsdt: normalizeLossLimit(raw.riskLimits.maxLossPerSessionUsdt, CONFIG.riskLimits.maxLossPerSessionUsdt),
-      maxConsecutiveErrors: normalizePositiveInt(raw.riskLimits.maxConsecutiveErrors, CONFIG.riskLimits.maxConsecutiveErrors, 1),
-    };
-  }
-
-  return raw;
+function defaultBotConfig(botId: string): BotConfig {
+  const bot = getBotDefinition(botId);
+  return deepClone(bot.defaults);
 }
 
-function tryLoadFromDisk(): RuntimeConfig | null {
+function defaultExecutionProfile(): ExecutionProfile {
+  return {
+    execution: { mode: "paper" },
+    paper: {
+      enabled: CONFIG.paper.enabled,
+      directionMode: CONFIG.paper.directionMode,
+      marginUSDT: CONFIG.paper.marginUSDT,
+      leverage: CONFIG.paper.leverage,
+      makerFeeRate: CONFIG.paper.makerFeeRate,
+      maxDailyLossUSDT: CONFIG.paper.maxDailyLossUSDT,
+    },
+    riskLimits: {
+      maxTradesPerDay: CONFIG.riskLimits.maxTradesPerDay,
+      maxLossPerDayUsdt: CONFIG.riskLimits.maxLossPerDayUsdt,
+      maxLossPerSessionUsdt: CONFIG.riskLimits.maxLossPerSessionUsdt,
+      maxConsecutiveErrors: CONFIG.riskLimits.maxConsecutiveErrors,
+    },
+  };
+}
+
+function toStoredState(raw: any): StoredConfigState {
+  const source = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  stripLegacyKeys(source);
+
+  const selectedBotId = typeof source.selectedBotId === "string" && source.selectedBotId.trim()
+    ? source.selectedBotId.trim()
+    : DEFAULT_BOT_ID;
+  const botDefinition = getBotDefinition(selectedBotId);
+
+  const legacySignals = source.signals ?? {};
+  const legacyFunding = source.fundingCooldown ?? {};
+  const legacyPaper = source.paper ?? {};
+  const legacyExecution = source.execution ?? {};
+  const legacyUniverse = source.universe ?? {};
+  const legacyRiskLimits = source.riskLimits ?? {};
+
+  const botConfigInput = source.botConfig ?? {
+    fundingCooldown: {
+      beforeMin: legacyFunding.beforeMin ?? CONFIG.fundingCooldown.beforeMin,
+      afterMin: legacyFunding.afterMin ?? CONFIG.fundingCooldown.afterMin,
+    },
+    signals: {
+      priceThresholdPct: legacySignals.priceThresholdPct ?? CONFIG.signals.priceThresholdPct,
+      oivThresholdPct: legacySignals.oivThresholdPct ?? CONFIG.signals.oivThresholdPct,
+      requireFundingSign: true,
+      dailyTriggerMin: legacySignals.dailyTriggerMin ?? CONFIG.signals.dailyTriggerMin,
+      dailyTriggerMax: legacySignals.dailyTriggerMax ?? CONFIG.signals.dailyTriggerMax,
+    },
+    strategy: {
+      klineTfMin: legacyUniverse.klineTfMin ?? CONFIG.klineTfMin,
+      entryOffsetPct: legacyPaper.entryOffsetPct ?? CONFIG.paper.entryOffsetPct,
+      entryTimeoutSec: legacyPaper.entryTimeoutSec ?? CONFIG.paper.entryTimeoutSec,
+      tpRoiPct: legacyPaper.tpRoiPct ?? CONFIG.paper.tpRoiPct,
+      slRoiPct: legacyPaper.slRoiPct ?? CONFIG.paper.slRoiPct,
+      rearmDelayMs: legacyPaper.rearmDelayMs ?? CONFIG.paper.rearmDelayMs,
+      applyFunding: legacyPaper.applyFunding ?? CONFIG.paper.applyFunding,
+    },
+  };
+
+  const executionProfileInput = source.executionProfile ?? {
+    execution: {
+      mode: legacyExecution.mode ?? "paper",
+    },
+    paper: {
+      enabled: legacyPaper.enabled ?? CONFIG.paper.enabled,
+      directionMode: legacyPaper.directionMode ?? (legacyPaper.longOnly ? "long" : CONFIG.paper.directionMode),
+      marginUSDT: legacyPaper.marginUSDT ?? CONFIG.paper.marginUSDT,
+      leverage: legacyPaper.leverage ?? CONFIG.paper.leverage,
+      makerFeeRate: legacyPaper.makerFeeRate ?? CONFIG.paper.makerFeeRate,
+      maxDailyLossUSDT: legacyPaper.maxDailyLossUSDT ?? CONFIG.paper.maxDailyLossUSDT,
+    },
+    riskLimits: {
+      maxTradesPerDay: normalizePositiveInt(legacyRiskLimits.maxTradesPerDay, CONFIG.riskLimits.maxTradesPerDay),
+      maxLossPerDayUsdt: normalizeLossLimit(legacyRiskLimits.maxLossPerDayUsdt, CONFIG.riskLimits.maxLossPerDayUsdt),
+      maxLossPerSessionUsdt: normalizeLossLimit(legacyRiskLimits.maxLossPerSessionUsdt, CONFIG.riskLimits.maxLossPerSessionUsdt),
+      maxConsecutiveErrors: normalizePositiveInt(legacyRiskLimits.maxConsecutiveErrors, CONFIG.riskLimits.maxConsecutiveErrors),
+    },
+  };
+
+  const normalizedBot = botDefinition.normalizeBotConfig(botConfigInput);
+  botDefinition.validateBotConfig(normalizedBot);
+
+  const executionProfile = executionProfileSchema.parse(executionProfileInput);
+  const state = storedStateSchema.parse({
+    selectedBotId: botDefinition.id,
+    selectedBotPresetId: typeof source.selectedBotPresetId === "string" && source.selectedBotPresetId.trim()
+      ? source.selectedBotPresetId.trim()
+      : "default",
+    selectedExecutionProfileId: typeof source.selectedExecutionProfileId === "string" && source.selectedExecutionProfileId.trim()
+      ? source.selectedExecutionProfileId.trim()
+      : "default",
+    universe: {
+      selectedId: typeof legacyUniverse.selectedId === "string" ? legacyUniverse.selectedId : "",
+      symbols: Array.isArray(legacyUniverse.symbols) ? legacyUniverse.symbols : Array.from(CONFIG.symbols),
+    },
+    botConfig: normalizedBot,
+    executionProfile,
+  });
+  return state;
+}
+
+function resolveRuntimeConfig(state: StoredConfigState): RuntimeConfig {
+  return {
+    selectedBotId: state.selectedBotId,
+    selectedBotPresetId: state.selectedBotPresetId,
+    selectedExecutionProfileId: state.selectedExecutionProfileId,
+    universe: {
+      ...state.universe,
+      klineTfMin: state.botConfig.strategy.klineTfMin,
+    },
+    botConfig: deepClone(state.botConfig),
+    executionProfile: deepClone(state.executionProfile),
+    fundingCooldown: deepClone(state.botConfig.fundingCooldown),
+    signals: deepClone(state.botConfig.signals),
+    execution: deepClone(state.executionProfile.execution),
+    paper: {
+      enabled: state.executionProfile.paper.enabled,
+      directionMode: state.executionProfile.paper.directionMode,
+      marginUSDT: state.executionProfile.paper.marginUSDT,
+      leverage: state.executionProfile.paper.leverage,
+      entryOffsetPct: state.botConfig.strategy.entryOffsetPct,
+      entryTimeoutSec: state.botConfig.strategy.entryTimeoutSec,
+      tpRoiPct: state.botConfig.strategy.tpRoiPct,
+      slRoiPct: state.botConfig.strategy.slRoiPct,
+      makerFeeRate: state.executionProfile.paper.makerFeeRate,
+      applyFunding: state.botConfig.strategy.applyFunding,
+      rearmDelayMs: state.botConfig.strategy.rearmDelayMs,
+      maxDailyLossUSDT: state.executionProfile.paper.maxDailyLossUSDT,
+    },
+    riskLimits: deepClone(state.executionProfile.riskLimits),
+  };
+}
+
+function tryLoadFromDisk(): StoredConfigState | null {
   if (!fs.existsSync(CONFIG_FILE_PATH)) return null;
-
   const rawText = fs.readFileSync(CONFIG_FILE_PATH, "utf8");
-  const parsed = migrateLoaded(JSON.parse(rawText));
-  return runtimeConfigSchema.parse(parsed);
+  return toStoredState(JSON.parse(rawText));
 }
 
 function quarantineBadConfigFile() {
@@ -233,63 +344,57 @@ function quarantineBadConfigFile() {
   }
 }
 
-
-function normalizeIncomingPatch(rawPatch: unknown): unknown {
-  if (!rawPatch || typeof rawPatch !== "object") return rawPatch;
-
-  const patch = deepClone(rawPatch as Record<string, unknown>);
-  stripLegacyOptimizerKeys(patch as Record<string, unknown>);
-  const paper = (patch as any).paper;
-
-  if (paper && typeof paper === "object") {
-    if ((paper as any).directionMode == null) {
-      (paper as any).directionMode = (paper as any).longOnly === true ? "long" : "both";
-    }
-    delete (paper as any).longOnly;
-  }
-
-  const signals = (patch as any).signals;
-  if (signals && typeof signals === "object") {
-    (signals as any).requireFundingSign = true;
-    if ((signals as any).dailyTriggerMin == null) (signals as any).dailyTriggerMin = CONFIG.signals.dailyTriggerMin;
-    if ((signals as any).dailyTriggerMax == null) (signals as any).dailyTriggerMax = CONFIG.signals.dailyTriggerMax;
-  }
-
-  const limits = (patch as any).riskLimits;
-  if (limits && typeof limits === "object") {
-    const next = deepClone(limits);
-    if (Object.prototype.hasOwnProperty.call(next, "maxLossPerDayUsdt")) {
-      next.maxLossPerDayUsdt = normalizeLossLimit(next.maxLossPerDayUsdt, CONFIG.riskLimits.maxLossPerDayUsdt);
-    }
-    if (Object.prototype.hasOwnProperty.call(next, "maxLossPerSessionUsdt")) {
-      next.maxLossPerSessionUsdt = normalizeLossLimit(next.maxLossPerSessionUsdt, CONFIG.riskLimits.maxLossPerSessionUsdt);
-    }
-    if (Object.prototype.hasOwnProperty.call(next, "maxTradesPerDay")) {
-      next.maxTradesPerDay = normalizePositiveInt(next.maxTradesPerDay, CONFIG.riskLimits.maxTradesPerDay, 1);
-    }
-    if (Object.prototype.hasOwnProperty.call(next, "maxConsecutiveErrors")) {
-      next.maxConsecutiveErrors = normalizePositiveInt(next.maxConsecutiveErrors, CONFIG.riskLimits.maxConsecutiveErrors, 1);
-    }
-    (patch as any).riskLimits = next;
-  }
-
-  return patch;
+function defaultState(): StoredConfigState {
+  return toStoredState({
+    selectedBotId: DEFAULT_BOT_ID,
+    selectedBotPresetId: "default",
+    selectedExecutionProfileId: "default",
+    universe: {
+      selectedId: "",
+      symbols: Array.from(CONFIG.symbols),
+    },
+    botConfig: defaultBotConfig(DEFAULT_BOT_ID),
+    executionProfile: defaultExecutionProfile(),
+  });
 }
 
-function sameUniverse(a: RuntimeConfig["universe"], b: RuntimeConfig["universe"]) {
-  return JSON.stringify(a) === JSON.stringify(b);
+function mergeExecutionProfile(base: ExecutionProfile, patch?: ExecutionProfilePatch): ExecutionProfile {
+  if (!patch) return base;
+  return executionProfileSchema.parse({
+    execution: {
+      mode: patch.execution?.mode ?? base.execution.mode,
+    },
+    paper: {
+      enabled: patch.paper?.enabled ?? base.paper.enabled,
+      directionMode: patch.paper?.directionMode ?? base.paper.directionMode,
+      marginUSDT: patch.paper?.marginUSDT ?? base.paper.marginUSDT,
+      leverage: patch.paper?.leverage ?? base.paper.leverage,
+      makerFeeRate: patch.paper?.makerFeeRate ?? base.paper.makerFeeRate,
+      maxDailyLossUSDT: patch.paper?.maxDailyLossUSDT ?? base.paper.maxDailyLossUSDT,
+    },
+    riskLimits: {
+      maxTradesPerDay: patch.riskLimits?.maxTradesPerDay ?? base.riskLimits.maxTradesPerDay,
+      maxLossPerDayUsdt: patch.riskLimits?.maxLossPerDayUsdt ?? base.riskLimits.maxLossPerDayUsdt,
+      maxLossPerSessionUsdt: patch.riskLimits?.maxLossPerSessionUsdt ?? base.riskLimits.maxLossPerSessionUsdt,
+      maxConsecutiveErrors: patch.riskLimits?.maxConsecutiveErrors ?? base.riskLimits.maxConsecutiveErrors,
+    },
+  });
 }
 
 class ConfigStore extends EventEmitter {
-  private cfg: RuntimeConfig;
+  private state: StoredConfigState;
 
-  constructor(initial: RuntimeConfig) {
+  constructor(initial: StoredConfigState) {
     super();
-    this.cfg = initial;
+    this.state = initial;
   }
 
   get(): RuntimeConfig {
-    return deepClone(this.cfg);
+    return resolveRuntimeConfig(this.state);
+  }
+
+  getStoredState(): StoredConfigState {
+    return deepClone(this.state);
   }
 
   getFilePath(): string {
@@ -297,87 +402,129 @@ class ConfigStore extends EventEmitter {
   }
 
   persist(): void {
-    const json = JSON.stringify(this.cfg, null, 2);
-    writeFileAtomic(CONFIG_FILE_PATH, json);
+    writeFileAtomic(CONFIG_FILE_PATH, JSON.stringify(this.state, null, 2));
   }
 
-  update(patch: unknown): RuntimeConfig {
-    const p = patchSchema.parse(normalizeIncomingPatch(patch));
-
-    const nextCandidate: RuntimeConfig = {
-      universe: {
-        selectedId: p.universe?.selectedId ?? this.cfg.universe.selectedId,
-        symbols: p.universe?.symbols ?? this.cfg.universe.symbols,
-        klineTfMin: p.universe?.klineTfMin ?? this.cfg.universe.klineTfMin,
-      },
-      fundingCooldown: {
-        beforeMin: p.fundingCooldown?.beforeMin ?? this.cfg.fundingCooldown.beforeMin,
-        afterMin: p.fundingCooldown?.afterMin ?? this.cfg.fundingCooldown.afterMin,
-      },
-      signals: {
-        priceThresholdPct: p.signals?.priceThresholdPct ?? this.cfg.signals.priceThresholdPct,
-        oivThresholdPct: p.signals?.oivThresholdPct ?? this.cfg.signals.oivThresholdPct,
-        requireFundingSign: true,
-        dailyTriggerMin: p.signals?.dailyTriggerMin ?? this.cfg.signals.dailyTriggerMin,
-        dailyTriggerMax: p.signals?.dailyTriggerMax ?? this.cfg.signals.dailyTriggerMax,
-      },
-      execution: {
-        mode: p.execution?.mode ?? this.cfg.execution.mode,
-      },
-      paper: {
-        enabled: p.paper?.enabled ?? this.cfg.paper.enabled,
-        directionMode: p.paper?.directionMode ?? this.cfg.paper.directionMode,
-
-        marginUSDT: p.paper?.marginUSDT ?? this.cfg.paper.marginUSDT,
-        leverage: p.paper?.leverage ?? this.cfg.paper.leverage,
-
-        entryOffsetPct: p.paper?.entryOffsetPct ?? this.cfg.paper.entryOffsetPct,
-        entryTimeoutSec: p.paper?.entryTimeoutSec ?? this.cfg.paper.entryTimeoutSec,
-
-        tpRoiPct: p.paper?.tpRoiPct ?? this.cfg.paper.tpRoiPct,
-        slRoiPct: p.paper?.slRoiPct ?? this.cfg.paper.slRoiPct,
-
-        makerFeeRate: p.paper?.makerFeeRate ?? this.cfg.paper.makerFeeRate,
-        applyFunding: p.paper?.applyFunding ?? this.cfg.paper.applyFunding,
-
-        rearmDelayMs: p.paper?.rearmDelayMs ?? this.cfg.paper.rearmDelayMs,
-        maxDailyLossUSDT: p.paper?.maxDailyLossUSDT ?? this.cfg.paper.maxDailyLossUSDT,
-      },
-      riskLimits: {
-        maxTradesPerDay: p.riskLimits?.maxTradesPerDay ?? this.cfg.riskLimits.maxTradesPerDay,
-        maxLossPerDayUsdt: p.riskLimits?.maxLossPerDayUsdt ?? this.cfg.riskLimits.maxLossPerDayUsdt,
-        maxLossPerSessionUsdt: p.riskLimits?.maxLossPerSessionUsdt ?? this.cfg.riskLimits.maxLossPerSessionUsdt,
-        maxConsecutiveErrors: p.riskLimits?.maxConsecutiveErrors ?? this.cfg.riskLimits.maxConsecutiveErrors,
-      },
+  setSelections(next: { selectedBotId?: string; selectedBotPresetId?: string; selectedExecutionProfileId?: string }): RuntimeConfig {
+    const selectedBotId = next.selectedBotId ? getBotDefinition(next.selectedBotId).id : this.state.selectedBotId;
+    const selectedBotPresetId = next.selectedBotPresetId?.trim() || this.state.selectedBotPresetId;
+    const selectedExecutionProfileId = next.selectedExecutionProfileId?.trim() || this.state.selectedExecutionProfileId;
+    this.state = {
+      ...this.state,
+      selectedBotId,
+      selectedBotPresetId,
+      selectedExecutionProfileId,
     };
-
-    const next = runtimeConfigSchema.parse(nextCandidate);
-    const universeChanged = !sameUniverse(this.cfg.universe, next.universe);
-
-    this.cfg = next;
-    this.emit("change", this.get(), { universeChanged });
-
+    this.emit("change", this.get(), { universeChanged: false });
     return this.get();
   }
+
+  applyProfiles(args: { botConfig?: BotConfig; executionProfile?: ExecutionProfile }): RuntimeConfig {
+    const nextState: StoredConfigState = {
+      ...this.state,
+      botConfig: args.botConfig ? getBotDefinition(this.state.selectedBotId).normalizeBotConfig(args.botConfig) : this.state.botConfig,
+      executionProfile: args.executionProfile ? executionProfileSchema.parse(args.executionProfile) : this.state.executionProfile,
+    };
+    getBotDefinition(nextState.selectedBotId).validateBotConfig(nextState.botConfig);
+    this.state = nextState;
+    this.emit("change", this.get(), { universeChanged: false });
+    return this.get();
+  }
+
+  update(patchRaw: unknown): RuntimeConfig {
+    const patch = (patchRaw && typeof patchRaw === "object" ? patchRaw : {}) as RuntimeConfigPatch;
+
+    const universePatch = patch.universe ?? {};
+    const legacyPaperPatch = patch.paper ?? {};
+    const legacySignalsPatch = patch.signals ?? {};
+    const legacyFundingPatch = patch.fundingCooldown ?? {};
+
+    const nextBotId = patch.selectedBotId ? getBotDefinition(patch.selectedBotId).id : this.state.selectedBotId;
+    const botDef = getBotDefinition(nextBotId);
+    const nextBotConfig = botDef.normalizeBotConfig({
+      fundingCooldown: {
+        ...this.state.botConfig.fundingCooldown,
+        ...legacyFundingPatch,
+        ...(patch.botConfig?.fundingCooldown ?? {}),
+      },
+      signals: {
+        ...this.state.botConfig.signals,
+        ...legacySignalsPatch,
+        ...(patch.botConfig?.signals ?? {}),
+        requireFundingSign: true,
+      },
+      strategy: {
+        ...this.state.botConfig.strategy,
+        ...(patch.botConfig?.strategy ?? {}),
+        ...(legacyPaperPatch.entryOffsetPct != null ? { entryOffsetPct: Number(legacyPaperPatch.entryOffsetPct) } : {}),
+        ...(legacyPaperPatch.entryTimeoutSec != null ? { entryTimeoutSec: Math.max(1, Math.floor(Number(legacyPaperPatch.entryTimeoutSec))) } : {}),
+        ...(legacyPaperPatch.tpRoiPct != null ? { tpRoiPct: Number(legacyPaperPatch.tpRoiPct) } : {}),
+        ...(legacyPaperPatch.slRoiPct != null ? { slRoiPct: Number(legacyPaperPatch.slRoiPct) } : {}),
+        ...(legacyPaperPatch.rearmSec != null ? { rearmDelayMs: Math.max(0, Math.floor(Number(legacyPaperPatch.rearmSec) * 1000)) } : {}),
+        ...(legacyPaperPatch.rearmDelayMs != null ? { rearmDelayMs: Math.max(0, Math.floor(Number(legacyPaperPatch.rearmDelayMs))) } : {}),
+        ...(legacyPaperPatch.applyFunding != null ? { applyFunding: Boolean(legacyPaperPatch.applyFunding) } : {}),
+        ...(universePatch.klineTfMin != null ? { klineTfMin: Math.max(1, Math.floor(Number(universePatch.klineTfMin))) } : {}),
+      },
+    });
+    botDef.validateBotConfig(nextBotConfig);
+
+    const executionPatch: ExecutionProfilePatch = {};
+    if (patch.executionProfile?.execution || patch.execution?.mode != null) {
+      executionPatch.execution = {
+        mode: (patch.execution?.mode ?? patch.executionProfile?.execution?.mode ?? this.state.executionProfile.execution.mode),
+      };
+    }
+    if (patch.executionProfile?.paper || Object.keys(legacyPaperPatch).length > 0) {
+      executionPatch.paper = {
+        ...(patch.executionProfile?.paper ?? {}),
+        ...(legacyPaperPatch.enabled != null ? { enabled: Boolean(legacyPaperPatch.enabled) } : {}),
+        ...(legacyPaperPatch.directionMode != null ? { directionMode: legacyPaperPatch.directionMode as "both" | "long" | "short" } : {}),
+        ...(legacyPaperPatch.marginUSDT != null ? { marginUSDT: Number(legacyPaperPatch.marginUSDT) } : {}),
+        ...(legacyPaperPatch.leverage != null ? { leverage: Number(legacyPaperPatch.leverage) } : {}),
+        ...(legacyPaperPatch.makerFeeRate != null ? { makerFeeRate: Number(legacyPaperPatch.makerFeeRate) } : {}),
+        ...(legacyPaperPatch.maxDailyLossUSDT != null ? { maxDailyLossUSDT: Math.max(0, Number(legacyPaperPatch.maxDailyLossUSDT)) } : {}),
+      };
+    }
+    if (patch.executionProfile?.riskLimits || patch.riskLimits) {
+      executionPatch.riskLimits = {
+        ...(patch.executionProfile?.riskLimits ?? {}),
+        ...(patch.riskLimits ?? {}),
+      };
+    }
+    const executionProfile = mergeExecutionProfile(this.state.executionProfile, executionPatch);
+
+    const nextState: StoredConfigState = storedStateSchema.parse({
+      selectedBotId: nextBotId,
+      selectedBotPresetId: patch.selectedBotPresetId?.trim() || this.state.selectedBotPresetId,
+      selectedExecutionProfileId: patch.selectedExecutionProfileId?.trim() || this.state.selectedExecutionProfileId,
+      universe: {
+        selectedId: universePatch.selectedId ?? this.state.universe.selectedId,
+        symbols: Array.isArray(universePatch.symbols) ? universePatch.symbols : this.state.universe.symbols,
+      },
+      botConfig: nextBotConfig,
+      executionProfile,
+    });
+
+    const prevResolved = this.get();
+    this.state = nextState;
+    const nextResolved = this.get();
+    const universeChanged =
+      JSON.stringify(prevResolved.universe.symbols) !== JSON.stringify(nextResolved.universe.symbols) ||
+      prevResolved.universe.selectedId !== nextResolved.universe.selectedId ||
+      prevResolved.universe.klineTfMin !== nextResolved.universe.klineTfMin;
+    this.emit("change", nextResolved, { universeChanged });
+    return nextResolved;
+  }
 }
 
-const defaults: RuntimeConfig = runtimeConfigSchema.parse({
-  universe: { selectedId: "", symbols: Array.from(CONFIG.symbols), klineTfMin: CONFIG.klineTfMin },
-  fundingCooldown: CONFIG.fundingCooldown,
-  signals: CONFIG.signals,
-  execution: { mode: "paper" },
-  paper: CONFIG.paper,
-  riskLimits: CONFIG.riskLimits,
-});
-
-let initial: RuntimeConfig = defaults;
+let initialState = defaultState();
 try {
   const loaded = tryLoadFromDisk();
-  if (loaded) initial = loaded;
+  if (loaded) initialState = loaded;
 } catch {
   quarantineBadConfigFile();
-  initial = defaults;
+  initialState = defaultState();
 }
 
-export const configStore = new ConfigStore(initial);
+export const configStore = new ConfigStore(initialState);
 export const RUNTIME_CONFIG_FILE = CONFIG_FILE_PATH;

@@ -267,13 +267,13 @@ export default function DatasetTargetCard() {
   }
 
   return (
-    <Card className="mb-2">
+      <Card className="mb-2">
       <Card.Header>
         <b>Dataset Target</b>
       </Card.Header>
       <Card.Body>
-        <Row className="g-2 align-items-end">
-          <Col xl={3} lg={3} md={6} sm={6} xs={12}>
+        <Row className="g-2 align-items-start">
+          <Col style={{ flex: 1, minWidth: 220 }}>
             <Form.Group>
               <Form.Label style={{ fontSize: 12 }}>Universe</Form.Label>
               <Form.Select
@@ -289,10 +289,11 @@ export default function DatasetTargetCard() {
                   <option key={u.id} value={u.id}>{u.name}</option>
                 ))}
               </Form.Select>
+              <Form.Text muted style={{ display: "block", minHeight: 38 }}>Select the symbol set for which history should be received.</Form.Text>
             </Form.Group>
           </Col>
 
-          <Col xl={2} lg={2} md={6} sm={6} xs={12}>
+          <Col style={{ flex: 1, minWidth: 220 }}>
             <Form.Group>
               <Form.Label style={{ fontSize: 12 }}>Range mode</Form.Label>
               <Form.Select
@@ -314,11 +315,12 @@ export default function DatasetTargetCard() {
                 <option value="preset">Preset</option>
                 <option value="manual">Manual</option>
               </Form.Select>
+              <Form.Text muted style={{ display: "block", minHeight: 38 }}>Preset uses a predefined period, manual mode lets you set exact dates.</Form.Text>
             </Form.Group>
           </Col>
 
-          {draft.rangeKind === "preset" ? (
-            <Col xl={2} lg={2} md={6} sm={6} xs={12}>
+          <Col style={{ flex: 2, minWidth: 460 }}>
+            {draft.rangeKind === "preset" ? (
               <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>Preset</Form.Label>
                 <Form.Select
@@ -332,53 +334,60 @@ export default function DatasetTargetCard() {
                 >
                   {PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
                 </Form.Select>
+                <Form.Text muted style={{ display: "block", minHeight: 38 }}>Historical window duration used for data receiving.</Form.Text>
               </Form.Group>
-            </Col>
-          ) : (
-            <>
-              <Col xl={2} lg={2} md={6} sm={6} xs={12}>
-                <Form.Group>
-                  <Form.Label style={{ fontSize: 12 }}>Start</Form.Label>
-                  <Form.Control
-                    type="datetime-local"
-                    value={draft.manualStart}
-                    onChange={(e) => {
-                      const value = e?.currentTarget?.value ?? "";
-                      setDraft((prev) => ({ ...prev, manualStart: value }));
-                    }}
-                    disabled={receiveRunning}
-                  />
-                </Form.Group>
-              </Col>
-              <Col xl={2} lg={2} md={6} sm={6} xs={12}>
-                <Form.Group>
-                  <Form.Label style={{ fontSize: 12 }}>End</Form.Label>
-                  <Form.Control
-                    type="datetime-local"
-                    value={draft.manualEnd}
-                    onChange={(e) => {
-                      const value = e?.currentTarget?.value ?? "";
-                      setDraft((prev) => ({ ...prev, manualEnd: value }));
-                    }}
-                    disabled={receiveRunning}
-                  />
-                </Form.Group>
-              </Col>
-            </>
-          )}
+            ) : (
+              <Row className="g-2">
+                <Col style={{ minWidth: 220 }}>
+                  <Form.Group>
+                    <Form.Label style={{ fontSize: 12 }}>Start</Form.Label>
+                    <Form.Control
+                      type="datetime-local"
+                      value={draft.manualStart}
+                      onChange={(e) => {
+                        const value = e?.currentTarget?.value ?? "";
+                        setDraft((prev) => ({ ...prev, manualStart: value }));
+                      }}
+                      disabled={receiveRunning}
+                    />
+                    <Form.Text muted style={{ display: "block", minHeight: 38 }}>Start date and time for the historical range.</Form.Text>
+                  </Form.Group>
+                </Col>
+                <Col style={{ minWidth: 220 }}>
+                  <Form.Group>
+                    <Form.Label style={{ fontSize: 12 }}>End</Form.Label>
+                    <Form.Control
+                      type="datetime-local"
+                      value={draft.manualEnd}
+                      onChange={(e) => {
+                        const value = e?.currentTarget?.value ?? "";
+                        setDraft((prev) => ({ ...prev, manualEnd: value }));
+                      }}
+                      disabled={receiveRunning}
+                    />
+                    <Form.Text muted style={{ display: "block", minHeight: 38 }}>End date and time for the historical range.</Form.Text>
+                  </Form.Group>
+                </Col>
+              </Row>
+            )}
+          </Col>
 
-          <Col xl={3} lg={3} md={12} sm={12} xs={12}>
-            <div className="d-flex gap-2">
-              <Button variant="primary" onClick={() => void onReceiveData()} disabled={receiveRunning || loadingInit}>
-                {receiveRunning ? <Spinner size="sm" animation="border" className="me-2" /> : null}
-                Receive Data
-              </Button>
-              {(receiveJob?.status === "queued" || receiveJob?.status === "running") ? (
-                <Button variant="outline-secondary" onClick={() => void onCancelReceive()}>
-                  Cancel
+          <Col xs="auto">
+            <Form.Group>
+              <Form.Label style={{ fontSize: 12, visibility: "hidden" }}>Action</Form.Label>
+              <div className="d-flex gap-2">
+                <Button variant="primary" onClick={() => void onReceiveData()} disabled={receiveRunning || loadingInit}>
+                  {receiveRunning ? <Spinner size="sm" animation="border" className="me-2" /> : null}
+                  Receive Data
                 </Button>
-              ) : null}
-            </div>
+                {(receiveJob?.status === "queued" || receiveJob?.status === "running") ? (
+                  <Button variant="outline-secondary" onClick={() => void onCancelReceive()}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+              <Form.Text muted style={{ display: "block", minHeight: 38 }}>&nbsp;</Form.Text>
+            </Form.Group>
           </Col>
         </Row>
         <div style={{ marginTop: 10, minHeight: 48 }}>
@@ -390,9 +399,10 @@ export default function DatasetTargetCard() {
             {formatReceiveProgressLine(receiveJob)}
           </div>
         </div>
-        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>Bybit history retrieval is throttled in backend (~500 req / 5s) with incremental progress updates.</div>
+        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>Bybit history retrieval is throttled in backend (~500 requests / 5 sec) with incremental progress updates.</div>
         {error ? <div style={{ color: "#b02a37", marginTop: 8, fontSize: 12 }}>{error}</div> : null}
       </Card.Body>
     </Card>
   );
 }
+

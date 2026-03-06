@@ -11,10 +11,54 @@ export type StatusResponse = {
 };
 
 export type RuntimeConfig = {
+  selectedBotId?: string;
+  selectedBotPresetId?: string;
+  selectedExecutionProfileId?: string;
   universe: {
     selectedId?: string;
     symbols: string[];
     klineTfMin: number;
+  };
+  botConfig?: {
+    fundingCooldown: {
+      beforeMin: number;
+      afterMin: number;
+    };
+    signals: {
+      priceThresholdPct: number;
+      oivThresholdPct: number;
+      requireFundingSign: boolean;
+      dailyTriggerMin: number;
+      dailyTriggerMax: number;
+    };
+    strategy: {
+      klineTfMin: number;
+      entryOffsetPct: number;
+      entryTimeoutSec: number;
+      tpRoiPct: number;
+      slRoiPct: number;
+      rearmDelayMs: number;
+      applyFunding: boolean;
+    };
+  };
+  executionProfile?: {
+    execution: {
+      mode: "paper" | "demo" | "empty";
+    };
+    paper: {
+      enabled: boolean;
+      directionMode: "both" | "long" | "short";
+      marginUSDT: number;
+      leverage: number;
+      makerFeeRate: number;
+      maxDailyLossUSDT: number;
+    };
+    riskLimits: {
+      maxTradesPerDay: number;
+      maxLossPerDayUsdt: number | null;
+      maxLossPerSessionUsdt: number | null;
+      maxConsecutiveErrors: number;
+    };
   };
   fundingCooldown: {
     beforeMin: number;
@@ -47,6 +91,12 @@ export type RuntimeConfig = {
 
     rearmDelayMs: number;
     maxDailyLossUSDT: number;
+  };
+  riskLimits?: {
+    maxTradesPerDay: number;
+    maxLossPerDayUsdt: number | null;
+    maxLossPerSessionUsdt: number | null;
+    maxConsecutiveErrors: number;
   };
 };
 

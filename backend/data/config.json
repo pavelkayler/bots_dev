@@ -1,4 +1,7 @@
 {
+  "selectedBotId": "oi-momentum-v1",
+  "selectedBotPresetId": "default",
+  "selectedExecutionProfileId": "default",
   "universe": {
     "selectedId": "8m_5pct",
     "symbols": [
@@ -62,41 +65,47 @@
       "SKRUSDT",
       "HOLOUSDT",
       "BERAUSDT"
-    ],
-    "klineTfMin": 1
+    ]
   },
-  "fundingCooldown": {
-    "beforeMin": 5,
-    "afterMin": 5
+  "botConfig": {
+    "fundingCooldown": {
+      "beforeMin": 5,
+      "afterMin": 5
+    },
+    "signals": {
+      "priceThresholdPct": 2.6,
+      "oivThresholdPct": 2.2,
+      "requireFundingSign": true,
+      "dailyTriggerMin": 1,
+      "dailyTriggerMax": 999
+    },
+    "strategy": {
+      "klineTfMin": 15,
+      "entryOffsetPct": 0.919,
+      "entryTimeoutSec": 218,
+      "tpRoiPct": 26.7,
+      "slRoiPct": 18.9,
+      "rearmDelayMs": 1650000,
+      "applyFunding": true
+    }
   },
-  "signals": {
-    "priceThresholdPct": 0.001,
-    "oivThresholdPct": 0.001,
-    "requireFundingSign": true,
-    "dailyTriggerMin": 1,
-    "dailyTriggerMax": 999
-  },
-  "execution": {
-    "mode": "demo"
-  },
-  "paper": {
-    "enabled": true,
-    "directionMode": "both",
-    "marginUSDT": 10,
-    "leverage": 5,
-    "entryOffsetPct": 3,
-    "entryTimeoutSec": 30,
-    "tpRoiPct": 2,
-    "slRoiPct": 2.5,
-    "makerFeeRate": 0.0002,
-    "applyFunding": true,
-    "rearmDelayMs": 1000,
-    "maxDailyLossUSDT": 0
-  },
-  "riskLimits": {
-    "maxTradesPerDay": 2,
-    "maxLossPerDayUsdt": null,
-    "maxLossPerSessionUsdt": null,
-    "maxConsecutiveErrors": 10
+  "executionProfile": {
+    "execution": {
+      "mode": "demo"
+    },
+    "paper": {
+      "enabled": true,
+      "directionMode": "both",
+      "marginUSDT": 10,
+      "leverage": 5,
+      "makerFeeRate": 0.0002,
+      "maxDailyLossUSDT": 0
+    },
+    "riskLimits": {
+      "maxTradesPerDay": 2,
+      "maxLossPerDayUsdt": null,
+      "maxLossPerSessionUsdt": null,
+      "maxConsecutiveErrors": 10
+    }
   }
 }

@@ -3,10 +3,13 @@ export type UniverseMeta = {
   name: string;
   minTurnoverUsd: number;
   minVolatilityPct: number;
+  metricsRange?: "24h" | "48h" | "1w" | "2w" | "1mo";
   createdAt: number;
   updatedAt: number;
   count: number;
 };
+
+export type UniverseMetricsRange = "24h" | "48h" | "1w" | "2w" | "1mo";
 
 export type UniverseFile = {
   meta: UniverseMeta;
@@ -25,4 +28,19 @@ export type UniverseCreateResponse = {
     matchedSymbols: number;
     symbols: string[];
   };
+};
+
+export type UniverseSymbolSummaryRow = {
+  symbol: string;
+  high: number | null;
+  low: number | null;
+  priceChangePct: number | null;
+  openInterestValue: number | null;
+  openInterestChangePct: number | null;
+};
+
+export type UniverseSymbolSummaryResponse = {
+  universeId: string;
+  range: UniverseMetricsRange;
+  rows: UniverseSymbolSummaryRow[];
 };

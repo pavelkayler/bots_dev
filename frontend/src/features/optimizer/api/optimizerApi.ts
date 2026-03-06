@@ -129,6 +129,7 @@ export type OptimizerJobHistoryRecord = {
   mode?: "loop" | "single";
   endedAtMs: number;
   status: "done" | "cancelled" | "stopped" | "error";
+  hasSettings?: boolean;
   runPayload: {
     datasetHistoryIds?: string[] | null;
     optTfMin?: number;
@@ -196,6 +197,8 @@ export async function getStatus(): Promise<{ dataSource: "receive_data_cache" }>
 }
 
 export async function runOptimizationJob(payload: {
+  selectedBotId?: string;
+  selectedBotPresetId?: string;
   datasetMode?: "snapshot" | "followTail";
   timeRangeFromTs?: number | null;
   timeRangeToTs?: number | null;
@@ -309,6 +312,8 @@ export async function resumeCurrentJob(): Promise<{ ok: true }> {
 
 
 export async function startOptimizerLoop(payload: {
+  selectedBotId?: string;
+  selectedBotPresetId?: string;
   datasetMode?: "snapshot" | "followTail";
   timeRangeFromTs?: number | null;
   timeRangeToTs?: number | null;

@@ -3,6 +3,8 @@ import path from "node:path";
 
 export type OptimizerLoopRunPayload = {
   [key: string]: unknown;
+  selectedBotId?: string;
+  selectedBotPresetId?: string;
   datasetHistoryIds: string[];
   candidates: number;
   seed: number;

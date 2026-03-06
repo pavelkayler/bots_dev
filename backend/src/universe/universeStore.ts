@@ -7,6 +7,7 @@ export type UniverseMeta = {
 
   minTurnoverUsd: number;
   minVolatilityPct: number;
+  metricsRange?: "24h" | "48h" | "1w" | "2w" | "1mo";
 
   createdAt: number;
   updatedAt: number;
@@ -75,11 +76,15 @@ export function deleteUniverse(id: string): void {
   fs.unlinkSync(fp);
 }
 
-export function formatUniverseName(minTurnoverUsd: number, minVolatilityPct: number): { id: string; name: string } {
+export function formatUniverseName(
+  minTurnoverUsd: number,
+  minVolatilityPct: number,
+  metricsRange: "24h" | "48h" | "1w" | "2w" | "1mo" = "24h",
+): { id: string; name: string } {
   const t = formatTurnover(minTurnoverUsd);
   const v = formatVol(minVolatilityPct);
-  const name = `${t}/${v}`;
-  const id = sanitizeId(`${t}_${v.replace("%", "pct")}`);
+  const name = `${t}/${v} [${metricsRange}]`;
+  const id = sanitizeId(`${t}_${v.replace("%", "pct")}_${metricsRange}`);
   return { id, name };
 }
 

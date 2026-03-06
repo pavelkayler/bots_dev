@@ -1,5 +1,5 @@
 import { Badge, Card } from "react-bootstrap";
-import { fmtMoney, fmtNum, formatFee } from "../../../shared/utils/format";
+import { fmtMoney, formatFee } from "../../../shared/utils/format";
 import type { BotStats } from "../../../shared/types/domain";
 
 type Props = {
@@ -9,7 +9,8 @@ type Props = {
 };
 
 function pct(v: number): string {
-  return `${fmtNum(v)}%`;
+  if (!Number.isFinite(v)) return "-";
+  return `${v.toFixed(2)}%`;
 }
 
 function timeAgo(tsMs: number): string {
@@ -73,7 +74,7 @@ export function BotSummaryBar({ sessionState, botStats, uptimeText }: Props) {
           ) : (
             <>
               <div>
-                <div style={{ opacity: 0.75, fontSize: 12 }}>Paper positions</div>
+                <div style={{ opacity: 0.75, fontSize: 12 }}>Positions</div>
                 <div>open: {botStats.openPositions} · pending: {botStats.pendingOrders}</div>
               </div>
 

@@ -36,10 +36,10 @@ export function TablePaginationControls({ tableId, page, totalRows, pageSize, on
 
   return (
     <Stack direction="horizontal" className="justify-content-between align-items-center gap-3 flex-wrap mt-2">
-      <small className="text-muted">Showing {start}-{end} of {totalRows}</small>
+      <small className="text-muted">Rows {start}-{end} / {totalRows}</small>
       <Stack direction="horizontal" className="gap-3 align-items-center">
         <Stack direction="horizontal" className="align-items-center gap-2">
-          <span>Rows per page</span>
+          <span>Page size</span>
           <Form.Select
             size="sm"
             value={pageSize}

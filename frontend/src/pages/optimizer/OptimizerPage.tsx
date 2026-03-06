@@ -1,4 +1,4 @@
-import { Fragment, memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { Fragment, memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, ButtonGroup, Card, Col, Collapse, Container, Form, Row, Table } from "react-bootstrap";
 import { TablePaginationControls, useStoredPageSize } from "../../shared/ui/TablePaginationControls";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
@@ -36,6 +36,7 @@ import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataRe
 import { useInterval } from "../../shared/hooks/useInterval";
 import { getDatasetHistoryIds, getHistoryRunPayloadValue } from "../../features/optimizer/utils/historyPayload";
 import { OPTIMIZER_TF_ENABLED_VALUES, OPTIMIZER_TF_OPTIONS } from "../../features/optimizer/utils/timeframes";
+import { BotExecutionSelectors } from "../../features/bots/components/BotExecutionSelectors";
 
 type OptimizerResultRow = OptimizationResult;
 type LoopOptimizerResultRow = OptimizerResultRow & { __runJobId: string };
@@ -64,8 +65,6 @@ const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
 const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
 const SIM_MARGIN_STORAGE_KEY = "bots_dev.optimizer.sim.marginPerTrade";
 const SIM_LEVERAGE_STORAGE_KEY = "bots_dev.optimizer.sim.leverage";
-const SIM_FEE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.feeBps";
-const SIM_SLIPPAGE_BPS_STORAGE_KEY = "bots_dev.optimizer.sim.slippageBps";
 const EXECUTION_MODEL_STORAGE_KEY = "bots_dev.optimizer.executionModel";
 const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
 const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
@@ -73,8 +72,6 @@ const FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY = "bots_dev.optimizer.filterValPn
 const FILTER_VAL_NET_PNL_POS_STORAGE_KEY = "bots_dev.optimizer.filterValNetPnlPos";
 const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
-const TOP_RESULTS_SINGLE_STORAGE_KEY = "bots_dev.optimizer.topResults.single";
-const LOOP_RESULTS_DRAFT_STORAGE_KEY = "optimizerLoopResultsDraft";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
@@ -83,6 +80,7 @@ const DATASET_HISTORY_POLL_MS = 2000;
 const DEBUG_PROGRESS_LOG_MIN_INTERVAL_MS = 500;
 const LIVE_ROWS_SORT_THROTTLE_MS = 200;
 const LOOP_EMPTY_RESULTS_WARNING_DELAY_MS = 5000;
+const MAKER_FEE_BPS_FIXED = "2";
 
 const DATASET_INTERVAL_ORDER: Record<string, number> = {
   "1": 1,
@@ -302,20 +300,6 @@ function loadStoredPositiveInt(key: string, fallback: string, min: number): stri
   }
 }
 
-function safeJsonParse<T>(raw: string | null): T | null {
-  if (!raw) return null;
-  try { return JSON.parse(raw) as T; } catch { return null; }
-}
-function saveJson(key: string, value: unknown) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-}
-
-const OPTIMIZER_SORT_KEYS: OptimizerSortKeyExtended[] = [
-  "pnlPerTrade", "trainNetPnl", "trainTrades", "valNetPnl", "valTrades", "valPnlPerTrade", "netPnl", "trades", "winRatePct", "priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmMs",
-  "expectancy", "profitFactor", "maxDrawdownUsdt", "ordersPlaced", "ordersFilled", "ordersExpired",
-  "longsCount", "longsPnl", "longsWinRatePct", "shortsCount", "shortsPnl", "shortsWinRatePct", "direction",
-];
-
 const n = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 const readValPnlPerTrade = (row: Pick<OptimizationResult, "valPnlPerTrade" | "valTrades" | "valNetPnl">): number => {
   const direct = Number(row.valPnlPerTrade);
@@ -332,10 +316,6 @@ const fmtInt = (v: unknown): string => {
   const x = n(v);
   return x === undefined ? "0" : String(Math.trunc(x));
 };
-
-function isOptimizerSortKeyExtended(value: unknown): value is OptimizerSortKeyExtended {
-  return typeof value === "string" && OPTIMIZER_SORT_KEYS.includes(value as OptimizerSortKeyExtended);
-}
 
 function normalizeOptimizerRow<T extends OptimizationResult>(row: T): T {
   const rowAny = row as any;
@@ -560,6 +540,7 @@ const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePr
 });
 
 export function OptimizerPage() {
+  const [botSelection, setBotSelection] = useState<{ selectedBotId: string; selectedBotPresetId: string; selectedExecutionProfileId: string } | null>(null);
   const { conn, lastMsg, lastServerTime, wsUrl, streams } = useWsFeedLite();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
@@ -582,8 +563,6 @@ export function OptimizerPage() {
   const [minTrades, setMinTrades] = useState("1");
   const [simMarginPerTrade, setSimMarginPerTrade] = useState(() => localStorage.getItem(SIM_MARGIN_STORAGE_KEY) ?? "10");
   const [simLeverage, setSimLeverage] = useState(() => localStorage.getItem(SIM_LEVERAGE_STORAGE_KEY) ?? "5");
-  const [simFeeBps, setSimFeeBps] = useState(() => localStorage.getItem(SIM_FEE_BPS_STORAGE_KEY) ?? "0");
-  const [simSlippageBps, setSimSlippageBps] = useState(() => localStorage.getItem(SIM_SLIPPAGE_BPS_STORAGE_KEY) ?? "0");
   const [executionModel, setExecutionModel] = useState<OptimizerExecutionModel>(() => {
     const raw = localStorage.getItem(EXECUTION_MODEL_STORAGE_KEY);
     return raw === "conservativeOhlc" ? "conservativeOhlc" : "closeOnly";
@@ -605,58 +584,14 @@ export function OptimizerPage() {
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
 
-  const [singleResultsState, setSingleResultsState] = useState<OptimizerSingleResultsState>(() => {
-    const storedRows = safeJsonParse<OptimizationResult[]>(localStorage.getItem(TOP_RESULTS_SINGLE_STORAGE_KEY)) ?? [];
-    const normalizedRows = storedRows.map((row) => normalizeOptimizerRow(row));
-    const rowsById = new Map<string, OptimizationResult>();
-    const order: string[] = [];
-    for (const row of normalizedRows) {
-      const rowId = resolveRowId(row);
-      if (!rowsById.has(rowId)) order.push(rowId);
-      rowsById.set(rowId, row);
-    }
-    return { rowsById, order, version: 1 };
-  });
-  const [loopAggState, setLoopAggState] = useState<LoopAggState>(() => {
-    const storedDraft = safeJsonParse<unknown>(localStorage.getItem(LOOP_RESULTS_DRAFT_STORAGE_KEY));
-    const draftRows = Array.isArray(storedDraft)
-      ? storedDraft
-      : (Array.isArray((storedDraft as any)?.rows) ? (storedDraft as any).rows : []);
-    const normalizedRows = draftRows.map((row: unknown) => normalizeOptimizerRow(row as LoopOptimizerResultRow));
-    const hasSchemaVersion = typeof (storedDraft as any)?.schemaVersion === "number";
-    const sortDirRaw = (storedDraft as any)?.sortDir;
-    const sortKeyRaw = (storedDraft as any)?.sortKey;
-    const sortDirNormalized: OptimizerSortDir = sortDirRaw === "asc" || sortDirRaw === "desc" ? sortDirRaw : "desc";
-    const sortKeyNormalized: OptimizerSortKeyExtended = isOptimizerSortKeyExtended(sortKeyRaw) ? sortKeyRaw : "netPnl";
-    if (!hasSchemaVersion || !Array.isArray(storedDraft) || sortDirRaw !== sortDirNormalized || sortKeyRaw !== sortKeyNormalized) {
-      saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, { schemaVersion: 1, rows: normalizedRows, sortKey: sortKeyNormalized, sortDir: sortDirNormalized });
-    }
-    const runOrder: string[] = [];
-    const byRunId: Record<string, LoopRunStore> = {};
-    for (const row of normalizedRows) {
-      const runId = String(row.__runJobId ?? "");
-      if (!runId) continue;
-      if (!byRunId[runId]) {
-        byRunId[runId] = { rowsById: new Map(), order: [], version: 1 };
-        runOrder.push(runId);
-      }
-      const rowId = resolveRowId(row);
-      const store = byRunId[runId];
-      if (!store.rowsById.has(rowId)) store.order.push(rowId);
-      store.rowsById.set(rowId, row);
-    }
-    return { runOrder, byRunId, version: 1 };
-  });
+  const [singleResultsState, setSingleResultsState] = useState<OptimizerSingleResultsState>({ rowsById: new Map(), order: [], version: 1 });
+  const [loopAggState, setLoopAggState] = useState<LoopAggState>({ runOrder: [], byRunId: {}, version: 1 });
 
   const singleRowsForRender = useMemo(() => (
     singleResultsState.order
       .map((rowId) => singleResultsState.rowsById.get(rowId))
       .filter((row): row is OptimizationResult => row != null)
   ), [singleResultsState.order, singleResultsState.version]);
-
-  useEffect(() => {
-    saveJson(TOP_RESULTS_SINGLE_STORAGE_KEY, singleRowsForRender);
-  }, [singleRowsForRender]);
 
   const syncDatasetCache = useCallback(() => {
     setDatasetCache(localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
@@ -727,11 +662,6 @@ export function OptimizerPage() {
     });
     return aggregateLoopRowsByCandidate(rows);
   }, [loopAggState.version]);
-
-useEffect(() => {
-  saveJson(LOOP_RESULTS_DRAFT_STORAGE_KEY, { schemaVersion: 1, rows: loopAggRowsForRender });
-}, [loopAggRowsForRender]);
-
   const [page, setPage] = useState(1);
   const [resultsPageSize, setResultsPageSize] = useStoredPageSize("optimizer-results", 25);
   const [totalRows, setTotalRows] = useState(0);
@@ -752,9 +682,11 @@ useEffect(() => {
   const [jobHistorySortDir, setJobHistorySortDir] = useState<OptimizerSortDir>("desc");
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
   const [historyResults, setHistoryResults] = useState<Record<string, OptimizationResult[]>>({});
+  const [historyDetailsSortByJobId, setHistoryDetailsSortByJobId] = useState<Record<string, { key: OptimizerSortKeyExtended; dir: OptimizerSortDir }>>({});
   const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
   const [historyCompactMode, setHistoryCompactMode] = useState(() => window.innerWidth < HISTORY_COMPACT_BREAKPOINT_PX);
   const [historyTransferMessage, setHistoryTransferMessage] = useState<string | null>(null);
+  const historySelectAllRef = useRef<HTMLInputElement | null>(null);
   const rangesSaveTimerRef = useRef<number | null>(null);
   const lastStatusFetchRef = useRef<{ jobId: string | null; ts: number }>({ jobId: null, ts: 0 });
   const prevLoopJobIdRef = useRef<string | null>(null);
@@ -763,7 +695,7 @@ useEffect(() => {
   const lastPctByJobIdRef = useRef<Record<string, number>>({});
   const pauseFreezeAtMsRef = useRef<number | null>(null);
   const startedAtByJobIdRef = useRef<Record<string, number>>({});
-  const lastTableSourceRef = useRef<"loop" | "single">("single");
+  const lastTableSourceRef = useRef<"loop" | "single">(loopAggState.runOrder.length > 0 ? "loop" : "single");
   const historyImportInputRef = useRef<HTMLInputElement | null>(null);
   const completedLoopRunIdsRef = useRef<Record<string, boolean>>({});
   const hydratedLoopRunIdsRef = useRef<Record<string, boolean>>({});
@@ -1031,14 +963,6 @@ useEffect(() => {
   }, [simLeverage]);
 
   useEffect(() => {
-    localStorage.setItem(SIM_FEE_BPS_STORAGE_KEY, simFeeBps);
-  }, [simFeeBps]);
-
-  useEffect(() => {
-    localStorage.setItem(SIM_SLIPPAGE_BPS_STORAGE_KEY, simSlippageBps);
-  }, [simSlippageBps]);
-
-  useEffect(() => {
     localStorage.setItem(EXECUTION_MODEL_STORAGE_KEY, executionModel);
   }, [executionModel]);
 
@@ -1139,7 +1063,6 @@ useEffect(() => {
     setDone(0);
     setTotal(0);
     setPage(1);
-    localStorage.removeItem(LOOP_RESULTS_DRAFT_STORAGE_KEY);
   }, [logAppendOnlyDebug]);
 
   const debugLoopStart = useCallback((stage: "before_request" | "error", data: { payloadKeys?: string[]; errorMessage?: string }) => {
@@ -1202,6 +1125,8 @@ useEffect(() => {
       }
 
       const loopPayload = {
+        ...(botSelection?.selectedBotId ? { selectedBotId: botSelection.selectedBotId } : {}),
+        ...(botSelection?.selectedBotPresetId ? { selectedBotPresetId: botSelection.selectedBotPresetId } : {}),
         datasetHistoryIds: selectedHistoryIds,
         candidates: Number(candidates),
         seed: Number(seed),
@@ -1213,8 +1138,8 @@ useEffect(() => {
         sim: {
           marginPerTrade,
           leverage,
-          feeBps: Number(simFeeBps) || 0,
-          slippageBps: Number(simSlippageBps) || 0,
+          feeBps: Number(MAKER_FEE_BPS_FIXED),
+          slippageBps: 0,
         },
         executionModel,
         ranges: Object.keys(rangePayload).length ? rangePayload : undefined,
@@ -1350,10 +1275,19 @@ useEffect(() => {
   const historyPageClamped = Math.max(1, Math.min(historyPage, historyPages));
   const historyRowsPaged = historyRowsSorted.slice((historyPageClamped - 1) * historyPageSize, historyPageClamped * historyPageSize);
   const historySourceKey = useMemo(() => historyRowsSorted.map((row) => row.id).join("|"), [historyRowsSorted]);
+  const historyAllIds = useMemo(() => historyRowsSorted.map((row) => row.id), [historyRowsSorted]);
+  const historySelectedCount = useMemo(() => historyAllIds.filter((id) => selectedHistoryIds.includes(id)).length, [historyAllIds, selectedHistoryIds]);
+  const historyAllChecked = historyAllIds.length > 0 && historySelectedCount === historyAllIds.length;
+  const historyAnyChecked = historySelectedCount > 0;
 
   useEffect(() => {
     if (historyPage !== historyPageClamped) setHistoryPage(historyPageClamped);
   }, [historyPage, historyPageClamped]);
+
+  useEffect(() => {
+    if (!historySelectAllRef.current) return;
+    historySelectAllRef.current.indeterminate = historyAnyChecked && !historyAllChecked;
+  }, [historyAllChecked, historyAnyChecked]);
 
   useEffect(() => {
     setHistoryPage(1);
@@ -1362,6 +1296,19 @@ useEffect(() => {
   const toggleHistory = useCallback((id: string) => {
     setSelectedHistoryIds((prev) => prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]);
   }, []);
+
+  const toggleAllHistory = useCallback(() => {
+    setSelectedHistoryIds((prev) => {
+      if (!historyAllIds.length) return prev;
+      const allSelected = historyAllIds.every((id) => prev.includes(id));
+      if (allSelected) {
+        return prev.filter((id) => !historyAllIds.includes(id));
+      }
+      const merged = new Set<string>(prev);
+      historyAllIds.forEach((id) => merged.add(id));
+      return Array.from(merged);
+    });
+  }, [historyAllIds]);
 
   const toggleHistorySort = useCallback((key: keyof DatasetHistoryRecord | "rangeMs" | "universeLabel") => {
     setHistoryPage(1);
@@ -1592,6 +1539,20 @@ useEffect(() => {
         [key]: { ...prev[key], [bound]: nextValue },
       }));
     };
+
+  const entryTimeoutMin = useMemo(() => {
+    const timeoutSec = Math.max(60, Math.floor(Number(ranges.timeoutSec.max) || 300));
+    return Math.max(1, Math.round(timeoutSec / 60));
+  }, [ranges.timeoutSec.max]);
+
+  const onEntryTimeoutMinChange = useCallback((value: string) => {
+    const minutes = Math.max(1, Math.floor(Number(value) || 1));
+    const timeoutSec = minutes * 60;
+    setRanges((prev) => ({
+      ...prev,
+      timeoutSec: { min: String(timeoutSec), max: String(timeoutSec) },
+    }));
+  }, []);
 
   useEffect(() => {
     if (rangeError) return;
@@ -1934,8 +1895,14 @@ useEffect(() => {
         sortKey: jobHistorySortKey,
         sortDir: jobHistorySortDir,
       });
-      setJobHistory(Array.isArray(res.items) ? res.items : []);
-      setJobHistoryTotal(Number(res.total) || 0);
+      const incoming = Array.isArray(res.items) ? res.items : [];
+      const visible = incoming.filter((row) => {
+        const hasPositive = Number(row?.summary?.rowsPositive ?? 0) > 0;
+        const hasSettings = row?.hasSettings !== false;
+        return hasPositive && hasSettings;
+      });
+      setJobHistory(visible);
+      setJobHistoryTotal(visible.length);
     } catch {
       return;
     }
@@ -1955,6 +1922,14 @@ useEffect(() => {
       setHistoryLoading((prev) => ({ ...prev, [jobId]: false }));
     }
   }
+
+  const onHistoryDetailsSort = useCallback((jobId: string, key: OptimizerSortKeyExtended) => {
+    setHistoryDetailsSortByJobId((prev) => {
+      const current = prev[jobId];
+      const dir: OptimizerSortDir = current?.key === key && current.dir === "desc" ? "asc" : "desc";
+      return { ...prev, [jobId]: { key, dir } };
+    });
+  }, []);
 
 
 
@@ -2041,13 +2016,14 @@ useEffect(() => {
     });
     return map;
   }, [jobHistory]);
-  const historyColumnCount = historyCompactMode ? 12 : 19;
-  const historyRunIdCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 80 } : HISTORY_CELL_STYLE;
+  const historyColumnCount = historyCompactMode ? 10 : 14;
   const historyEndedAtCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 120 } : HISTORY_CELL_STYLE;
   const historyStatusCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 90 } : HISTORY_CELL_STYLE;
   const historyBestNetCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 90 } : HISTORY_CELL_STYLE;
   const historyRowsTotalCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 80 } : HISTORY_CELL_STYLE;
-  const historyViewCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 70 } : HISTORY_CELL_STYLE;
+  const historyViewCellStyle = historyCompactMode
+    ? { ...HISTORY_CELL_STYLE, width: 70, maxWidth: 70, textAlign: "center" as const }
+    : { ...HISTORY_CELL_STYLE, width: "1%", maxWidth: 76, textAlign: "center" as const };
 
   useEffect(() => {
     setPage((prev) => Math.min(prev, totalPages));
@@ -2098,6 +2074,11 @@ useEffect(() => {
         ? (pauseFreezeAtMsRef.current ?? (loopStatus?.loop?.updatedAtMs ?? loopStartMs))
         : (loopStatus?.loop?.finishedAtMs ?? loopStatus?.loop?.updatedAtMs ?? loopStartMs);
   const loopElapsedSec = loopStartMs == null || loopEndMs == null ? null : Math.max(0, (loopEndMs - loopStartMs) / 1000);
+  const loopRunActive = loopRunning || loopPaused;
+  const progressPctForDisplay = loopRunActive ? pct : 0;
+  const elapsedSecForDisplay = loopRunActive ? (elapsedSec ?? 0) : 0;
+  const etaSecForDisplay = loopRunActive ? (etaSec ?? null) : 0;
+  const loopElapsedSecForDisplay = loopRunActive ? (loopElapsedSec ?? 0) : 0;
 
   const loopOrJobRunning = jobStatus === "running" || jobStatus === "paused" || Boolean(loopStatus?.loop?.isRunning) || Boolean(loopStatus?.loop?.isPaused);
   useEffect(() => {
@@ -2131,6 +2112,9 @@ useEffect(() => {
       />
 
       <Container fluid className="py-2 px-2">
+        <div className="mb-2">
+          <BotExecutionSelectors compact onChange={setBotSelection} />
+        </div>
         <Card>
           <Card.Header className="d-flex align-items-center justify-content-between">
             <b>Optimizer</b>
@@ -2152,11 +2136,27 @@ useEffect(() => {
                 <div className="d-flex align-items-center gap-2 mb-2" style={{ fontSize: 12 }}>
                   <div>Selected: <b>{selectedHistoryIds.length}</b></div>
                 </div>
+                <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#f8f9fa", border: "1px solid #dee2e6", borderRadius: 6 }}>
+                  <div><b>Dataset history columns legend</b></div>
+                  <div>`from / to` are historical period boundaries.</div>
+                  <div>`range` is the period duration.</div>
+                  <div>`tf` is the candle timeframe used in this dataset.</div>
+                  <div>`loop runs` is how many times this dataset was used in loop optimization.</div>
+                </div>
                 <div style={{ overflowX: "auto" }}>
                   <Table size="sm" bordered hover className="mb-2" style={{ minWidth: 980 }}>
                     <thead>
                       <tr>
-                        <th style={{ width: 36 }}></th>
+                        <th style={{ width: 36 }} className="text-center">
+                          <input
+                            ref={historySelectAllRef}
+                            type="checkbox"
+                            checked={historyAllChecked}
+                            onChange={() => toggleAllHistory()}
+                            disabled={historyAllIds.length === 0}
+                            aria-label="Select all dataset histories"
+                          />
+                        </th>
                         <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("startMs")}>from</th>
                         <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("endMs")}>to</th>
                         <th style={{ cursor: "pointer" }} onClick={() => toggleHistorySort("rangeMs")}>range</th>
@@ -2210,45 +2210,65 @@ useEffect(() => {
 
             <fieldset disabled={false}>
             <h6>Optimization</h6>
-            <Row className="g-2 align-items-end mb-2">
-              <Col md={2} sm={4} xs={6}>
+            <Row className="g-2 align-items-start mb-2">
+              <Col xl={2} lg={2} md={4} sm={6} xs={12}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>candidates</Form.Label>
+                <Form.Label style={{ fontSize: 12 }}>Candidates</Form.Label>
                 <Form.Control value={candidates} onChange={(e) => setCandidates(e.currentTarget.value)} type="number" min={1} max={2000} />
+                <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>How many parameter sets to test in one run.</Form.Text>
                 </Form.Group>
               </Col>
-              <Col md={2} sm={4} xs={6}>
+              <Col xl={2} lg={2} md={4} sm={6} xs={12}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>seed</Form.Label>
+                <Form.Label style={{ fontSize: 12 }}>Seed</Form.Label>
                 <Form.Control value={seed} onChange={(e) => setSeed(e.currentTarget.value)} type="number" />
+                <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>Initial random seed for candidate generation.</Form.Text>
                 </Form.Group>
               </Col>
-              <Col md={2} sm={4} xs={6}>
+              <Col xl={2} lg={2} md={4} sm={6} xs={12}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>direction</Form.Label>
+                <Form.Label style={{ fontSize: 12 }}>Direction</Form.Label>
                 <Form.Select value={directionMode} onChange={(e) => setDirectionMode(e.currentTarget.value as "both" | "long" | "short")}>
                   <option value="both">Both</option>
                   <option value="long">Long</option>
                   <option value="short">Short</option>
                 </Form.Select>
+                <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>Restricts trade side used in the test.</Form.Text>
                 </Form.Group>
               </Col>
-              <Col md={2} sm={4} xs={6}>
+              <Col xl={2} lg={2} md={4} sm={6} xs={12}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>signal window (min)</Form.Label>
+                <Form.Label style={{ fontSize: 12 }}>Signal window (min)</Form.Label>
                   <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(String(Math.max(15, Math.floor(Number(e.currentTarget.value) || 15))))}>
                     {OPTIMIZER_TF_OPTIONS.map((tf) => (
                       <option key={tf.value} value={String(tf.value)} disabled={tf.disabled}>{tf.value}</option>
                     ))}
                   </Form.Select>
+                <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>Timeframe used to build strategy signals.</Form.Text>
                 </Form.Group>
               </Col>
-              <Col md={2} sm={4} xs={6}>
+              <Col xl={2} lg={2} md={4} sm={6} xs={12}>
                 <Form.Group>
-                <Form.Label style={{ fontSize: 12 }}>runsCount</Form.Label>
+                <Form.Label style={{ fontSize: 12 }}>Runs count</Form.Label>
                 <Form.Control value={loopRunsCount} onChange={(e) => setLoopRunsCount(e.currentTarget.value)} type="number" min={1} step={1} disabled={loopInfinite} />
+                <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>How many times to repeat the optimization cycle.</Form.Text>
                 </Form.Group>
               </Col>
+              <Col xl={2} lg={2} md={4} sm={6} xs={12}>
+                <Form.Group>
+                  <Form.Label style={{ fontSize: 12 }}>Entry timeout (min)</Form.Label>
+                  <Form.Control
+                    value={String(entryTimeoutMin)}
+                    onChange={(e) => onEntryTimeoutMinChange(e.currentTarget.value)}
+                    type="number"
+                    min={1}
+                    step={1}
+                  />
+                  <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>Minutes after which an unfilled entry order is canceled.</Form.Text>
+                </Form.Group>
+              </Col>
+            </Row>
+            <Row className="g-2 mb-2">
               <Col xs={12}>
                 <div className="d-flex flex-wrap gap-3">
                   <Form.Group>
@@ -2261,37 +2281,37 @@ useEffect(() => {
               </Col>
             </Row>
             <Row className="g-2 align-items-end mb-2">
-              <Col md={2} sm={4} xs={6}>
+              <Col xl={2} lg={2} md={6} sm={6} xs={12}>
                 <Form.Group>
-                  <Form.Label style={{ fontSize: 12 }}>marginPerTrade</Form.Label>
+                  <Form.Label style={{ fontSize: 12 }}>Margin per trade</Form.Label>
                   <Form.Control value={simMarginPerTrade} onChange={(e) => setSimMarginPerTrade(e.currentTarget.value)} type="number" min={0.0001} step={0.1} />
+                  <Form.Text muted style={{ fontSize: 11 }}>Base capital allocated to each simulated trade.</Form.Text>
                 </Form.Group>
               </Col>
-              <Col md={2} sm={4} xs={6}>
+              <Col xl={2} lg={2} md={6} sm={6} xs={12}>
                 <Form.Group>
-                  <Form.Label style={{ fontSize: 12 }}>leverage</Form.Label>
+                  <Form.Label style={{ fontSize: 12 }}>Leverage</Form.Label>
                   <Form.Control value={simLeverage} onChange={(e) => setSimLeverage(e.currentTarget.value)} type="number" min={1} step={0.1} />
+                  <Form.Text muted style={{ fontSize: 11 }}>Leverage used in simulation.</Form.Text>
                 </Form.Group>
               </Col>
-              <Col md={2} sm={4} xs={6}>
+              <Col xl={2} lg={2} md={6} sm={6} xs={12}>
                 <Form.Group>
-                  <Form.Label style={{ fontSize: 12 }}>feeBps</Form.Label>
-                  <Form.Control value={simFeeBps} onChange={(e) => setSimFeeBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
+                  <Form.Label style={{ fontSize: 12 }}>Fee model</Form.Label>
+                  <div style={{ fontSize: 14, padding: "6px 0" }}>
+                    Maker fee fixed: <b>2 bps</b> (0.02%) per side.
+                  </div>
+                  <Form.Text muted style={{ fontSize: 11 }}>Round-trip (entry + passive exit) is 4 bps. If an order removes liquidity, taker fee applies on that leg.</Form.Text>
                 </Form.Group>
               </Col>
-              <Col md={2} sm={4} xs={6}>
+              <Col xl={4} lg={4} md={12} sm={12} xs={12}>
                 <Form.Group>
-                  <Form.Label style={{ fontSize: 12 }}>slippageBps</Form.Label>
-                  <Form.Control value={simSlippageBps} onChange={(e) => setSimSlippageBps(e.currentTarget.value)} type="number" min={0} step={0.01} />
-                </Form.Group>
-              </Col>
-              <Col md={3} sm={6} xs={12}>
-                <Form.Group>
-                  <Form.Label style={{ fontSize: 12 }}>execution</Form.Label>
+                  <Form.Label style={{ fontSize: 12 }}>Execution model</Form.Label>
                   <Form.Select value={executionModel} onChange={(e) => setExecutionModel(e.currentTarget.value as OptimizerExecutionModel)}>
                     <option value="closeOnly">Close-only (safe)</option>
                     <option value="conservativeOhlc">Conservative OHLC</option>
                   </Form.Select>
+                  <Form.Text muted style={{ fontSize: 11 }}>Modeling rule for entry and exit behavior inside candles.</Form.Text>
                 </Form.Group>
               </Col>
             </Row>
@@ -2308,17 +2328,17 @@ useEffect(() => {
               </Col>
             </Row>
 
-            <h6>Ranges</h6>
+            <h6>Parameter ranges</h6>
             <Table bordered size="sm" className="mb-2" style={{ maxWidth: 620 }}>
               <thead>
                 <tr>
-                  <th>Param</th>
+                  <th>Parameter</th>
                   <th>Min</th>
                   <th>Max</th>
                 </tr>
               </thead>
               <tbody>
-                {(["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmSec"] as RangeKey[]).map((key) => (
+                {(["priceTh", "oivTh", "tp", "sl", "offset", "rearmSec"] as RangeKey[]).map((key) => (
                   <tr key={key}>
                     <td>{key}</td>
                     <td>
@@ -2349,15 +2369,15 @@ useEffect(() => {
               Loop: <b>{loopActive ? (loopPaused ? "paused" : "running") : "stopped"}</b>
               {loopExists && loopStatus?.loop ? ` · Run ${loopStatus.runsCompleted ?? loopStatus.loop.runIndex}/${loopStatus.runsTotal == null ? "∞" : loopStatus.runsTotal}` : ""}
             </div>
-            <div style={{ fontSize: 12, marginBottom: 8 }}>Loop elapsed: <b>{formatDuration(loopElapsedSec)}</b></div>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>Loop elapsed: <b>{formatDuration(loopElapsedSecForDisplay)}</b></div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             </div>
 
             {showProgressBlock ? <>
-              <CenteredProgressBar now={pct} showPercent title={`progress ${Math.floor(pct)} / ${Math.round(total)}`} className="mb-2" />
+              <CenteredProgressBar now={progressPctForDisplay} showPercent title={`progress ${Math.floor(progressPctForDisplay)} / ${Math.round(total)}`} className="mb-2" />
               <div style={{ fontSize: 12, marginBottom: 8 }}>
-                Elapsed: <b>{formatDuration(elapsedSec)}</b>
-                {etaSec != null ? <> · ETA: <b>{formatEta(etaSec)}</b></> : null}
+                Elapsed: <b>{formatDuration(elapsedSecForDisplay)}</b>
+                {etaSecForDisplay != null ? <> · ETA: <b>{formatEta(etaSecForDisplay)}</b></> : null}
               </div>
               <div style={{ fontSize: 12, marginBottom: 8 }}>Hide negative: <b>{hideNegativeNetPnl ? "ON" : "OFF"}</b></div>
             </> : null}
@@ -2389,50 +2409,60 @@ useEffect(() => {
             </div>
             {historyTransferMessage ? <div style={{ fontSize: 12, marginBottom: 8 }}>{historyTransferMessage}</div> : null}
 
-            {showLoopNoRowsWarning ? <div style={{ fontSize: 12, marginBottom: 8, color: "#a86d00" }}>No result rows received yet. If this persists, enable debugOptimizerRows.</div> : null}
-            {!showLoopNoRowsWarning && rawRowsCount > 0 && displayedRowsCount === 0 ? <div style={{ fontSize: 12, marginBottom: 8, color: "#6c757d" }}>Rows exist but are hidden by active display filters.</div> : null}
+            {showLoopNoRowsWarning ? <div style={{ fontSize: 12, marginBottom: 8, color: "#a86d00" }}>No results yet. If state does not change, enable debugOptimizerRows.</div> : null}
+            {!showLoopNoRowsWarning && rawRowsCount > 0 && displayedRowsCount === 0 ? <div style={{ fontSize: 12, marginBottom: 8, color: "#6c757d" }}>Rows exist but are hidden by active filters.</div> : null}
+            <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#f8f9fa", border: "1px solid #dee2e6", borderRadius: 6 }}>
+              <div><b>Results columns legend</b></div>
+              <div>`train` means metrics on the training data slice.</div>
+              <div>`val` means metrics on the validation data slice.</div>
+              <div>`pnl/trades` means net profit per trade.</div>
+              <div>`placed / filled / expired` means placed / filled / timed-out orders.</div>
+              <div>`priceTh / oivTh / tp / sl / offset / timeoutSec / rearmSec` are strategy and order parameters.</div>
+            </div>
             <div className="d-flex align-items-center gap-2 mb-2 flex-wrap" style={{ fontSize: 12 }}>
-              <span>minTrades</span>
+              <span>Min trades</span>
               <Form.Control size="sm" value={minTrades} onChange={(e) => setMinTrades(e.currentTarget.value)} type="number" min={0} step={1} style={{ width: 90 }} />
               <Form.Check style={{ fontSize: 12 }} type="checkbox" label="Hide negative netPnl" checked={hideNegativeNetPnl} onChange={(e) => setHideNegativeNetPnl(e.currentTarget.checked)} />
               <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val pnl/trade > 0" checked={filterValPnlPerTradePos} onChange={(e) => setFilterValPnlPerTradePos(e.currentTarget.checked)} />
               <Form.Check style={{ fontSize: 12 }} type="checkbox" label="val netPnl > 0" checked={filterValNetPnlPos} onChange={(e) => setFilterValNetPnlPos(e.currentTarget.checked)} />
             </div>
-            <Table striped bordered hover size="sm" style={{ tableLayout: "auto" }}>
-              <thead>
-                <tr>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("pnlPerTrade")}>pnl/trades</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trainNetPnl")}>train pnl/trades</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("valNetPnl")}>val pnl/trades</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("valPnlPerTrade")}>val pnl/trade</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trades")}>trades</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("winRatePct")}>winRate</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("direction")}>direction</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("longsPnl")}>Longs</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("shortsPnl")}>Shorts</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersPlaced")}>placed</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersFilled")}>filled</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersExpired")}>expired</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("priceTh")}>priceTh</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("oivTh")}>oivTh</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("tp")}>tp</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("sl")}>sl</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("offset")}>offset</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("timeoutSec")}>timeoutSec</th>
-                  <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("rearmMs")}>rearmSec</th>
-                  <th style={{ whiteSpace: "nowrap" }}>action</th>
-                </tr>
-              </thead>
-              <OptimizerResultsBody
-                rows={loopDisplayRows}
-                activePrecision={activePrecision}
-                isLoopDisplay={isLoopDisplay}
-                debugTrackedRowIds={loopDebugTrackedRowIds}
-                onCopyToSettings={copyToSettings}
-                onExportTrades={onExportTrades}
-              />
-            </Table>
+            <div style={{ overflowX: "auto", width: "100%" }}>
+              <Table striped bordered hover size="sm" style={{ tableLayout: "auto", minWidth: 1580 }}>
+                <thead>
+                  <tr>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("pnlPerTrade")}>pnl/trades</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trainNetPnl")}>train pnl/trades</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("valNetPnl")}>val pnl/trades</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("valPnlPerTrade")}>val pnl/trade</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("netPnl")}>netPnl</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("trades")}>trades</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("winRatePct")}>winRate</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("direction")}>direction</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("longsPnl")}>longs</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("shortsPnl")}>shorts</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersPlaced")}>placed</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersFilled")}>filled</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersExpired")}>expired</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("priceTh")}>priceTh</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("oivTh")}>oivTh</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("tp")}>tp</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("sl")}>sl</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("offset")}>offset</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("timeoutSec")}>timeoutSec</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("rearmMs")}>rearmSec</th>
+                    <th style={{ whiteSpace: "nowrap" }}>action</th>
+                  </tr>
+                </thead>
+                <OptimizerResultsBody
+                  rows={loopDisplayRows}
+                  activePrecision={activePrecision}
+                  isLoopDisplay={isLoopDisplay}
+                  debugTrackedRowIds={loopDebugTrackedRowIds}
+                  onCopyToSettings={copyToSettings}
+                  onExportTrades={onExportTrades}
+                />
+              </Table>
+            </div>
             <TablePaginationControls
               tableId="optimizer-results"
               page={Math.min(page, totalPages)}
@@ -2447,61 +2477,58 @@ useEffect(() => {
         <Card>
           <Card.Header><b>Completed / Stopped runs</b></Card.Header>
           <Card.Body>
+            <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#f8f9fa", border: "1px solid #dee2e6", borderRadius: 6 }}>
+              <div><b>Run history columns legend</b></div>
+              <div>`dataset` is the number of selected dataset-history rows.</div>
+              <div>`sim` shows simulation parameters (margin, leverage, fee).</div>
+              <div>`best*` is the best metric across run candidates.</div>
+              <div>`rowsPositive / rowsTotal` means positive results / total results.</div>
+            </div>
             <Table striped bordered hover size="sm" style={HISTORY_TABLE_STYLE}>
               <thead>
                 <tr>
-                  <th style={{ ...historyRunIdCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("jobId")}>runId</th>
                   <th style={{ ...historyEndedAtCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
                   <th style={{ ...historyStatusCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("mode")}>mode</th> : null}
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("datasets")}>dataset</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("candidates")}>candidates</th>
                   <th style={HISTORY_CELL_STYLE}>sim</th>
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("seed")}>seed</th> : null}
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("direction")}>direction</th>
                   <th style={HISTORY_CELL_STYLE}>hours</th>
                   <th style={{ ...historyBestNetCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("bestNetPnl")}>bestNetPnl</th>
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestTrades")}>bestTrades</th> : null}
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestWinRate")}>bestWinRate</th> : null}
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestProfitFactor")}>bestProfitFactor</th> : null}
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestMaxDD")}>bestMaxDD</th> : null}
                   {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rowsPositive")}>rowsPositive</th> : null}
                   <th style={{ ...historyRowsTotalCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("rowsTotal")}>rowsTotal</th>
-                  <th style={historyViewCellStyle}>View</th>
+                  <th style={historyViewCellStyle}>view</th>
                 </tr>
               </thead>
               <tbody>
                 {jobHistory.map((row) => {
                   const isOpen = Boolean(expandedHistory[row.jobId]);
                   const detailsRows = historyResults[row.jobId] ?? [];
+                  const detailsSort = historyDetailsSortByJobId[row.jobId] ?? { key: "netPnl" as OptimizerSortKeyExtended, dir: "desc" as OptimizerSortDir };
+                  const detailsRowsSorted = sortOptimizerRows(detailsRows, detailsSort.key, detailsSort.dir);
                   const datasetHistoryIds = getDatasetHistoryIds((row as any).runPayload);
                   const optTfMin = getHistoryRunPayloadValue<number | string | null>((row as any).runPayload, "optTfMin", null);
-                  const candidates = getHistoryRunPayloadValue<number | string>((row as any).runPayload, "candidates", "-");
-                  const seed = getHistoryRunPayloadValue<number | string>((row as any).runPayload, "seed", "-");
                   const direction = getHistoryRunPayloadValue<string>((row as any).runPayload, "directionMode", "-");
                   return (
                     <Fragment key={row.jobId}>
                       <tr>
-                        <td style={historyRunIdCellStyle} title={row.jobId}>{row.jobId.slice(0, 7)}</td>
                         <td style={historyEndedAtCellStyle} title={new Date(row.endedAtMs).toISOString()}><span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{formatHistoryEndedAt(row.endedAtMs)}</span></td>
                         <td style={historyStatusCellStyle}>{row.status.toUpperCase()}</td>
-                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.mode ?? "-"}</td> : null}
                         <td style={HISTORY_CELL_STYLE} title={datasetHistoryIds.join(",") || "-"}>{datasetHistoryIds.length || "-"}</td>
                         <td style={HISTORY_CELL_STYLE}>{optTfMin ?? "-"}</td>
-                        <td style={HISTORY_CELL_STYLE}>{candidates}</td>
                         <td style={HISTORY_CELL_STYLE}>{formatSimSummary((row.runPayload as any).sim)}</td>
-                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{seed}</td> : null}
                         <td style={HISTORY_CELL_STYLE}>{direction}</td>
                         <td style={HISTORY_CELL_STYLE}>{historyHoursByJobId[row.jobId] ?? "-"}</td>
                         <td style={historyBestNetCellStyle}>{row.summary.bestNetPnl == null ? "-" : row.summary.bestNetPnl.toFixed(4)}</td>
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestTrades ?? "-"}</td> : null}
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestWinRate == null ? "-" : `${row.summary.bestWinRate.toFixed(2)}%`}</td> : null}
-                        {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestProfitFactor == null ? "-" : row.summary.bestProfitFactor.toFixed(4)}</td> : null}
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestMaxDD == null ? "-" : row.summary.bestMaxDD.toFixed(4)}</td> : null}
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.rowsPositive}</td> : null}
                         <td style={historyRowsTotalCellStyle}>{row.summary.rowsTotal}</td>
-                        <td style={historyViewCellStyle}><Button size="sm" variant="outline-secondary" onClick={() => void toggleHistoryRow(row.jobId)}>{isOpen ? "Hide" : "View"}</Button></td>
+                        <td style={historyViewCellStyle}><Button size="sm" variant="outline-secondary" onClick={() => void toggleHistoryRow(row.jobId)}>{isOpen ? "Hide" : "Open"}</Button></td>
                       </tr>
                       <tr>
                         <td colSpan={historyColumnCount} style={HISTORY_DETAILS_CELL_STYLE}>
@@ -2516,16 +2543,42 @@ useEffect(() => {
                                 <Table striped bordered hover size="sm" className="mb-0" style={{ marginTop: 8, marginLeft: 8 }}>
                                   <thead>
                                     <tr>
-                                      <th>netPnl</th><th>trades</th><th>winRate</th><th>direction</th><th>expectancy</th><th>profitFactor</th><th>maxDD</th>
-                                      <th>placed</th><th>filled</th><th>expired</th><th>priceTh</th><th>oivTh</th><th>tp</th><th>sl</th><th>offset</th><th>timeoutSec</th><th>rearmSec</th><th>action</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "netPnl")}>netPnl</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "trades")}>trades</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "winRatePct")}>winRate</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "direction")}>direction</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "expectancy")}>expectancy</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "profitFactor")}>profitFactor</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "maxDrawdownUsdt")}>maxDD</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "ordersPlaced")}>placed</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "ordersFilled")}>filled</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "ordersExpired")}>expired</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "priceTh")}>priceTh</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "oivTh")}>oivTh</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "tp")}>tp</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "sl")}>sl</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "offset")}>offset</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "timeoutSec")}>timeoutSec</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "rearmMs")}>rearmSec</th>
+                                      <th>action</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {detailsRows.map((r, i) => (
+                                    {detailsRowsSorted.map((r, i) => (
                                       <tr key={`${row.jobId}-${r.netPnl}-${r.trades}-${r.params.priceThresholdPct}-${r.params.oivThresholdPct}-${i}`}>
                                         <td>{r.netPnl.toFixed(4)}</td><td>{r.trades}</td><td>{r.winRatePct.toFixed(2)}%</td><td>{String(r.directionMode ?? "both").toLowerCase()}</td><td>{r.expectancy.toFixed(4)}</td><td>{r.profitFactor.toFixed(3)}</td><td>{r.maxDrawdownUsdt.toFixed(4)}</td>
                                         <td>{r.ordersPlaced}</td><td>{r.ordersFilled}</td><td>{r.ordersExpired}</td><td>{r.params.priceThresholdPct.toFixed(activePrecision.priceTh)}</td><td>{r.params.oivThresholdPct.toFixed(activePrecision.oivTh)}</td><td>{r.params.tpRoiPct.toFixed(activePrecision.tp)}</td><td>{r.params.slRoiPct.toFixed(activePrecision.sl)}</td><td>{r.params.entryOffsetPct.toFixed(activePrecision.offset)}</td><td>{r.params.timeoutSec.toFixed(activePrecision.timeoutSec)}</td><td>{(r.params.rearmMs / 1000).toFixed(activePrecision.rearmMs)}</td>
-                                        <td><Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy</Button></td>
+                                        <td style={{ whiteSpace: "nowrap" }}>
+                                          <Button size="sm" variant="outline-secondary" onClick={() => copyToSettings(r)}>Copy</Button>
+                                          <Button
+                                            size="sm"
+                                            variant="outline-secondary"
+                                            style={{ marginLeft: 6 }}
+                                            onClick={() => window.open(getJobTradesExportUrl(row.jobId, Math.max(1, Math.floor(Number(r.rank) || (i + 1)))), "_blank", "noopener,noreferrer")}
+                                          >
+                                            Export
+                                          </Button>
+                                        </td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -2563,6 +2616,7 @@ useEffect(() => {
     </>
   );
 }
+
 
 
 

@@ -40,6 +40,11 @@ const HISTORY_ROOT = path.resolve(process.cwd(), "data", "history");
 const INDEX_PATH = path.join(HISTORY_ROOT, "index.json");
 const MANIFEST_ROOT = path.resolve(process.cwd(), "data", "cache", "manifests");
 
+function normalizeHistoryInterval(input: unknown): BybitKlineInterval {
+  const normalized = normalizeBybitKlineInterval(input);
+  return normalized === "1" ? "5" : normalized;
+}
+
 function ensureRoot() {
   fs.mkdirSync(HISTORY_ROOT, { recursive: true });
 }
@@ -76,8 +81,8 @@ function readIndex(): DatasetHistoryRecord[] {
       const startMs = Number(it.startMs);
       const endMs = Number(it.endMs);
       const receivedAtMs = Number(it.receivedAtMs);
-      const interval = normalizeBybitKlineInterval(it.interval);
-      const paramsKey = String(it.paramsKey ?? "").trim() || `${universeId}|${startMs}|${endMs}|${interval}`;
+      const interval = normalizeHistoryInterval(it.interval);
+      const paramsKey = `${universeId}|${startMs}|${endMs}|${interval}`;
       const receivedSymbols = Array.isArray(it.receivedSymbols)
         ? it.receivedSymbols.filter((s: any) => typeof s === "string" && s.trim())
         : [];
@@ -160,12 +165,12 @@ export function readDatasetHistory(id: string): DatasetHistoryRecord {
   const manifest = normalizeManifestSummary((parsed as any).manifest);
   const normalized: DatasetHistoryRecord = {
     id: String(parsed.id),
-    paramsKey: String(parsed.paramsKey ?? "").trim() || `${parsed.universeId}|${parsed.startMs}|${parsed.endMs}|${normalizeBybitKlineInterval((parsed as any).interval)}`,
+    paramsKey: `${parsed.universeId}|${parsed.startMs}|${parsed.endMs}|${normalizeHistoryInterval((parsed as any).interval)}`,
     universeId: String(parsed.universeId),
     universeName: String(parsed.universeName),
     startMs: Number(parsed.startMs),
     endMs: Number(parsed.endMs),
-    interval: normalizeBybitKlineInterval((parsed as any).interval),
+    interval: normalizeHistoryInterval((parsed as any).interval),
     receivedAtMs: Number(parsed.receivedAtMs),
     receivedSymbols: Array.isArray(parsed.receivedSymbols) ? parsed.receivedSymbols : [],
     receivedSymbolsCount: Math.max(0, Math.floor(Number(parsed.receivedSymbolsCount) || 0)),
@@ -195,7 +200,7 @@ export function upsertLatestDatasetHistory(input: {
   const universeName = String(input.universeName ?? "").trim();
   const startMs = Number(input.startMs);
   const endMs = Number(input.endMs);
-  const interval = normalizeBybitKlineInterval(input.interval);
+  const interval = normalizeHistoryInterval(input.interval);
   const receivedAtMs = Number(input.receivedAtMs);
   const receivedSymbols = Array.isArray(input.receivedSymbols)
     ? input.receivedSymbols.filter((s) => typeof s === "string" && s.trim())

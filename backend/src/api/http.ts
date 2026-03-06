@@ -5,12 +5,16 @@ import path from "node:path";
 import { runtime } from "../runtime/runtime.js";
 import { CONFIG } from "../config.js";
 import { configStore } from "../runtime/configStore.js";
+import { DEFAULT_BOT_ID, getBotDefinition, listBots } from "../bots/registry.js";
 import { deleteUniverse, listUniverses, readUniverse, writeUniverse, formatUniverseName } from "../universe/universeStore.js";
-import { buildUniverseByTickersWs } from "../universe/universeBuilder.js";
+import { buildUniverseByAverageMetrics, normalizeUniverseMetricsRange } from "../universe/universeAverageBuilder.js";
+import { buildUniverseSymbolRangeSummary } from "../universe/universeSymbolSummary.js";
 import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
 type SessionSummaryResponse = any;
 import { deletePreset, listPresets, putPreset, readPreset } from "../presets/presetStore.js";
+import { DEFAULT_BOT_PRESET_ID, deleteBotPreset, ensureDefaultBotPreset, listBotPresets, putBotPreset, readBotPreset } from "../presets/botPresetStore.js";
+import { deleteExecutionProfile, listExecutionProfiles, putExecutionProfile, readExecutionProfile } from "../presets/executionProfileStore.js";
 import { readLoopState, recoverLoopStateOnBoot, type OptimizerLoopProgressState, type OptimizerLoopRunPayload, type OptimizerLoopState, writeLoopState } from "../optimizer/loopStore.js";
 import {
   DEFAULT_OPTIMIZER_PRECISION,
@@ -90,6 +94,8 @@ type OptimizerJobHistoryRecord = {
   endedAtMs: number;
   status: "done" | "cancelled" | "error" | "stopped";
   runPayload: {
+    selectedBotId?: string;
+    selectedBotPresetId?: string;
     datasetHistoryIds: string[];
     optTfMin?: number;
     timeRangeFromTs?: number;
@@ -192,6 +198,8 @@ function toHistoryRunPayload(runPayload: Record<string, unknown> | null): Optimi
   const rawDatasetHistoryIds = Array.isArray((runPayload as any)?.datasetHistoryIds) ? (runPayload as any).datasetHistoryIds : [];
   const datasetHistoryIds = rawDatasetHistoryIds.map((id: unknown) => String(id ?? "")).filter(Boolean);
   return {
+    ...(typeof (runPayload as any)?.selectedBotId === "string" ? { selectedBotId: String((runPayload as any).selectedBotId) } : {}),
+    ...(typeof (runPayload as any)?.selectedBotPresetId === "string" ? { selectedBotPresetId: String((runPayload as any).selectedBotPresetId) } : {}),
     datasetHistoryIds,
     ...(Number.isFinite(Number((runPayload as any)?.optTfMin)) ? { optTfMin: Math.floor(Number((runPayload as any)?.optTfMin)) } : {}),
     ...(Number.isFinite(Number((runPayload as any)?.timeRangeFromTs)) ? { timeRangeFromTs: Math.floor(Number((runPayload as any)?.timeRangeFromTs)) } : {}),
@@ -481,6 +489,75 @@ function restoreLatestJobSnapshot() {
   } catch {
     return false;
   }
+}
+
+function ensureDefaultBotPresetSelected(botId?: string): string {
+  const cfg = configStore.get();
+  const resolvedBotId = botId ? getBotDefinition(botId).id : cfg.selectedBotId;
+  const fallbackConfig = cfg.selectedBotId === resolvedBotId
+    ? cfg.botConfig
+    : getBotDefinition(resolvedBotId).defaults;
+  ensureDefaultBotPreset(resolvedBotId, fallbackConfig);
+  const selectedNow = configStore.get();
+  if (selectedNow.selectedBotId === resolvedBotId && selectedNow.selectedBotPresetId !== DEFAULT_BOT_PRESET_ID) {
+    configStore.setSelections({ selectedBotPresetId: DEFAULT_BOT_PRESET_ID });
+    configStore.persist();
+  }
+  return DEFAULT_BOT_PRESET_ID;
+}
+
+function tryReadOptimizerJobSnapshot(jobId: string): OptimizerJobSnapshot | null {
+  const trimmed = String(jobId ?? "").trim();
+  if (!trimmed) return null;
+  const snapshotPath = optimizerJobSnapshotPath(trimmed);
+  if (!fs.existsSync(snapshotPath)) return null;
+  try {
+    const raw = fs.readFileSync(snapshotPath, "utf8");
+    const parsed = JSON.parse(raw) as OptimizerJobSnapshot;
+    if (!parsed?.jobId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function hydrateJobFromSnapshot(snapshot: OptimizerJobSnapshot): OptimizerJob {
+  const wasRunning = snapshot.status === "running";
+  const now = Date.now();
+  const restoredPct = snapshot.status === "done" ? 100 : 0;
+  return {
+    status: wasRunning ? "paused" : snapshot.status,
+    total: 100,
+    done: restoredPct,
+    lastPct: restoredPct,
+    cancelRequested: false,
+    pauseRequested: false,
+    paused: wasRunning || snapshot.status === "paused",
+    resumeRequested: false,
+    results: Array.isArray(snapshot.results) ? snapshot.results : [],
+    minTrades: Math.max(0, Math.floor(Number((snapshot.runPayload as any)?.minTrades) || 0)),
+    startedAtMs: Number(snapshot.startedAtMs) || now,
+    updatedAtMs: Number(snapshot.updatedAtMs) || now,
+    processedCandidates: 0,
+    totalCandidates: Math.max(0, Math.floor(Number((snapshot.runPayload as any)?.candidates) || 0)),
+    excludeNegative: Boolean((snapshot.runPayload as any)?.excludeNegative),
+    rememberNegatives: Boolean((snapshot.runPayload as any)?.rememberNegatives),
+    runKey: `datasets=${Array.isArray((snapshot.runPayload as any)?.datasetHistoryIds) ? [...(snapshot.runPayload as any).datasetHistoryIds].sort().join(",") : ""}|dir=${String((snapshot.runPayload as any)?.directionMode ?? "both")}|tf=${Number((snapshot.runPayload as any)?.optTfMin ?? 0) || 0}`,
+    finishedAtMs: typeof snapshot.finishedAtMs === "number" ? snapshot.finishedAtMs : null,
+    runPayload: snapshot.runPayload,
+    ...(typeof snapshot.message === "string" ? { message: snapshot.message } : {}),
+  };
+}
+
+function resolveOptimizerJob(jobId: string): OptimizerJob | null {
+  const inMemory = optimizerJobs.get(jobId);
+  if (inMemory) return inMemory;
+  const snapshot = tryReadOptimizerJobSnapshot(jobId);
+  if (!snapshot) return null;
+  const hydrated = hydrateJobFromSnapshot(snapshot);
+  optimizerJobs.set(jobId, hydrated);
+  rememberOptimizerJob(jobId);
+  return hydrated;
 }
 
 function rememberOptimizerJob(jobId: string) {
@@ -914,6 +991,8 @@ function computeDatasetHoursFromHistories(histories: Array<{ startMs: number; en
 }
 
 function buildDatasetRunKey(input: {
+  selectedBotId?: string;
+  selectedBotPresetId?: string;
   datasetHistoryIds: string[];
   directionMode: string;
   optTfMin: number | undefined;
@@ -923,6 +1002,8 @@ function buildDatasetRunKey(input: {
 }) {
   const normalizedHistoryIds = [...input.datasetHistoryIds].map((id) => String(id ?? "").trim()).filter(Boolean).sort();
   const raw = [
+    `bot=${input.selectedBotId ?? DEFAULT_BOT_ID}`,
+    `botPreset=${input.selectedBotPresetId ?? "default"}`,
     `hist=${normalizedHistoryIds.join(",")}`,
     `dir=${input.directionMode}`,
     `tf=${input.optTfMin ?? 0}`,
@@ -1015,6 +1096,42 @@ export function registerHttpRoutes(app: FastifyInstance) {
 
   app.get("/api/session/status", async () => runtime.getStatus());
 
+  app.get("/api/bots", async () => {
+    return { bots: listBots(), selectedBotId: configStore.get().selectedBotId };
+  });
+
+  app.get("/api/config/selections", async () => {
+    ensureDefaultBotPresetSelected();
+    const cfg = configStore.get();
+    return {
+      selectedBotId: cfg.selectedBotId,
+      selectedBotPresetId: cfg.selectedBotPresetId,
+      selectedExecutionProfileId: cfg.selectedExecutionProfileId,
+    };
+  });
+
+  app.post("/api/config/selections", async (req, reply) => {
+    const body = safeBody((req as any).body) as Record<string, unknown>;
+    try {
+      const selectionPatch: { selectedBotId?: string; selectedBotPresetId?: string; selectedExecutionProfileId?: string } = {};
+      if (typeof body.selectedBotId === "string") selectionPatch.selectedBotId = body.selectedBotId;
+      if (typeof body.selectedBotPresetId === "string") selectionPatch.selectedBotPresetId = body.selectedBotPresetId;
+      if (typeof body.selectedExecutionProfileId === "string") selectionPatch.selectedExecutionProfileId = body.selectedExecutionProfileId;
+      const next = configStore.setSelections(selectionPatch);
+      ensureDefaultBotPresetSelected(next.selectedBotId);
+      configStore.persist();
+      const cfg = configStore.get();
+      return {
+        selectedBotId: cfg.selectedBotId,
+        selectedBotPresetId: cfg.selectedBotPresetId,
+        selectedExecutionProfileId: cfg.selectedExecutionProfileId,
+      };
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "invalid_config_selection", message: String(e?.message ?? e) };
+    }
+  });
+
 
   setOptimizerSnapshotProvider(() => {
     const jobId = resolveCurrentOptimizerJobId();
@@ -1073,7 +1190,29 @@ export function registerHttpRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post("/api/session/start", async (_req, reply) => {
+  app.post("/api/session/start", async (req, reply) => {
+    const body = safeBody((req as any).body) as Record<string, unknown>;
+    const selectedBotId = typeof body.selectedBotId === "string" ? body.selectedBotId : undefined;
+    const selectedBotPresetId = typeof body.selectedBotPresetId === "string" ? body.selectedBotPresetId : undefined;
+    const selectedExecutionProfileId = typeof body.selectedExecutionProfileId === "string" ? body.selectedExecutionProfileId : undefined;
+    if (selectedBotId || selectedBotPresetId || selectedExecutionProfileId) {
+      const selectionPatch: { selectedBotId?: string; selectedBotPresetId?: string; selectedExecutionProfileId?: string } = {};
+      if (selectedBotId) selectionPatch.selectedBotId = selectedBotId;
+      if (selectedBotPresetId) selectionPatch.selectedBotPresetId = selectedBotPresetId;
+      if (selectedExecutionProfileId) selectionPatch.selectedExecutionProfileId = selectedExecutionProfileId;
+      configStore.setSelections(selectionPatch);
+    }
+    ensureDefaultBotPresetSelected(selectedBotId);
+    const selections = configStore.get();
+    if (selections.selectedBotPresetId) {
+      const preset = readBotPreset(selections.selectedBotId, selections.selectedBotPresetId);
+      configStore.applyProfiles({ botConfig: preset.botConfig });
+    }
+    if (selections.selectedExecutionProfileId) {
+      const profile = readExecutionProfile(selections.selectedExecutionProfileId);
+      configStore.applyProfiles({ executionProfile: profile.executionProfile });
+    }
+    configStore.persist();
     const cfg = configStore.get();
     const id = String((cfg as any)?.universe?.selectedId ?? "");
     const symbols = Array.isArray((cfg as any)?.universe?.symbols) ? (cfg as any).universe.symbols : [];
@@ -1277,6 +1416,7 @@ app.get("/api/config", async () => {
     const body = safeBody((req as any).body) as any;
     const minTurnoverUsd = Number(body?.minTurnoverUsd);
     const minVolatilityPct = Number(body?.minVolatilityPct);
+    const metricsRange = normalizeUniverseMetricsRange(body?.metricsRange);
 
     if (!Number.isFinite(minTurnoverUsd) || minTurnoverUsd < 0) {
       reply.code(400);
@@ -1287,17 +1427,17 @@ app.get("/api/config", async () => {
       return { error: "invalid_minVolatilityPct" };
     }
 
-    const { id, name } = formatUniverseName(minTurnoverUsd, minVolatilityPct);
+    const { id, name } = formatUniverseName(minTurnoverUsd, minVolatilityPct, metricsRange);
 
     try {
       const symbols = await seedLinearUsdtPerpSymbols({ restBaseUrl: "https://api.bybit.com" });
 
-      const res = await buildUniverseByTickersWs({
-        wsUrl: CONFIG.bybit.wsUrl,
+      const res = await buildUniverseByAverageMetrics({
+        restBaseUrl: "https://api.bybit.com",
         symbols,
         minTurnoverUsd,
         minVolatilityPct,
-        collectMs: 5000
+        range: metricsRange,
       });
       const now = Date.now();
       let createdAt = now;
@@ -1312,6 +1452,7 @@ app.get("/api/config", async () => {
           name,
           minTurnoverUsd,
           minVolatilityPct,
+          metricsRange,
           createdAt,
           updatedAt: now,
           count: res.symbols.length
@@ -1345,6 +1486,122 @@ app.get("/api/config", async () => {
     } catch {
       reply.code(404);
       return { error: "universe_not_found" };
+    }
+  });
+
+  app.get("/api/universes/:id/symbol-summary", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    try {
+      const universe = readUniverse(id);
+      const selectedRange = normalizeUniverseMetricsRange((req.query as any)?.range ?? universe.meta.metricsRange ?? "24h");
+      const summary = await buildUniverseSymbolRangeSummary({
+        restBaseUrl: "https://api.bybit.com",
+        symbols: universe.symbols,
+        range: selectedRange,
+      });
+      return { universeId: id, range: summary.range, rows: summary.rows };
+    } catch (e: any) {
+      reply.code(404);
+      return { error: "universe_not_found", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.get("/api/bot-presets", async (req, reply) => {
+    const botId = String((req.query as any)?.botId ?? configStore.get().selectedBotId ?? DEFAULT_BOT_ID);
+    try {
+      ensureDefaultBotPresetSelected(botId);
+      return {
+        presets: listBotPresets(botId)
+          .filter((p) => p.id === DEFAULT_BOT_PRESET_ID)
+          .map((p) => ({ id: p.id, botId: p.botId, name: p.name, updatedAt: p.updatedAt })),
+      };
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "bot_presets_list_failed", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.get("/api/bot-presets/:id", async (req, reply) => {
+    const botId = String((req.query as any)?.botId ?? configStore.get().selectedBotId ?? DEFAULT_BOT_ID);
+    const id = String((req.params as any).id ?? "");
+    try {
+      ensureDefaultBotPresetSelected(botId);
+      return readBotPreset(botId, id);
+    } catch (e: any) {
+      reply.code(404);
+      return { error: "bot_preset_not_found", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.put("/api/bot-presets/:id", async (req, reply) => {
+    const botId = String((req.query as any)?.botId ?? configStore.get().selectedBotId ?? DEFAULT_BOT_ID);
+    const id = String((req.params as any).id ?? "");
+    const body = safeBody((req as any).body) as any;
+    const name = String(body?.name ?? "").trim();
+    const botConfig = body?.botConfig;
+    if (!name || !botConfig || typeof botConfig !== "object") {
+      reply.code(400);
+      return { error: "invalid_bot_preset_payload" };
+    }
+    try {
+      return putBotPreset(botId, id, name, botConfig);
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "bot_preset_save_failed", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.delete("/api/bot-presets/:id", async (req, reply) => {
+    const botId = String((req.query as any)?.botId ?? configStore.get().selectedBotId ?? DEFAULT_BOT_ID);
+    const id = String((req.params as any).id ?? "");
+    try {
+      deleteBotPreset(botId, id);
+      return { ok: true as const };
+    } catch (e: any) {
+      reply.code(404);
+      return { error: "bot_preset_not_found", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.get("/api/execution-profiles", async () => {
+    return { profiles: listExecutionProfiles().map((p) => ({ id: p.id, name: p.name, updatedAt: p.updatedAt })) };
+  });
+
+  app.get("/api/execution-profiles/:id", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    try {
+      return readExecutionProfile(id);
+    } catch (e: any) {
+      reply.code(404);
+      return { error: "execution_profile_not_found", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.put("/api/execution-profiles/:id", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    const body = safeBody((req as any).body) as any;
+    const name = String(body?.name ?? "").trim();
+    const executionProfile = body?.executionProfile;
+    if (!name || !executionProfile || typeof executionProfile !== "object") {
+      reply.code(400);
+      return { error: "invalid_execution_profile_payload" };
+    }
+    try {
+      return putExecutionProfile(id, name, executionProfile);
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "execution_profile_save_failed", message: String(e?.message ?? e) };
+    }
+  });
+
+  app.delete("/api/execution-profiles/:id", async (req, reply) => {
+    const id = String((req.params as any).id ?? "");
+    try {
+      deleteExecutionProfile(id);
+      return { ok: true as const };
+    } catch (e: any) {
+      reply.code(404);
+      return { error: "execution_profile_not_found", message: String(e?.message ?? e) };
     }
   });
 
@@ -1398,6 +1655,23 @@ app.get("/api/config", async () => {
 
   app.post("/api/optimizer/run", async (req, reply) => {
     const body = safeBody((req as any).body) as any;
+    const requestedBotId = typeof body?.selectedBotId === "string" ? body.selectedBotId : undefined;
+    const requestedBotPresetId = typeof body?.selectedBotPresetId === "string" ? body.selectedBotPresetId : undefined;
+    if (requestedBotId || requestedBotPresetId) {
+      const selectionPatch: { selectedBotId?: string; selectedBotPresetId?: string } = {};
+      if (requestedBotId) selectionPatch.selectedBotId = requestedBotId;
+      if (requestedBotPresetId) selectionPatch.selectedBotPresetId = requestedBotPresetId;
+      configStore.setSelections(selectionPatch);
+    }
+    ensureDefaultBotPresetSelected(requestedBotId);
+    const currentCfg = configStore.get();
+    if (currentCfg.selectedBotPresetId) {
+      const preset = readBotPreset(currentCfg.selectedBotId, currentCfg.selectedBotPresetId);
+      configStore.applyProfiles({ botConfig: preset.botConfig });
+      configStore.persist();
+    }
+    const selectedBotId = configStore.get().selectedBotId;
+    const selectedBotPresetId = configStore.get().selectedBotPresetId;
 
     const datasetHistoryIds: string[] = Array.isArray(body?.datasetHistoryIds)
       ? (body.datasetHistoryIds as any[]).map((v) => String(v ?? "").trim()).filter(Boolean)
@@ -1468,6 +1742,8 @@ app.get("/api/config", async () => {
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
     const runKey = buildDatasetRunKey({
+      selectedBotId,
+      selectedBotPresetId,
       datasetHistoryIds,
       directionMode,
       optTfMin,
@@ -1531,6 +1807,8 @@ app.get("/api/config", async () => {
     const runPayload = {
       jobId,
       runId: jobId,
+      selectedBotId,
+      selectedBotPresetId,
       datasetHistoryIds,
       cacheDatasets,
       interval,
@@ -1688,6 +1966,23 @@ app.get("/api/config", async () => {
     }
 
     const body = safeBody((req as any).body) as any;
+    const requestedBotId = typeof body?.selectedBotId === "string" ? body.selectedBotId : undefined;
+    const requestedBotPresetId = typeof body?.selectedBotPresetId === "string" ? body.selectedBotPresetId : undefined;
+    if (requestedBotId || requestedBotPresetId) {
+      const selectionPatch: { selectedBotId?: string; selectedBotPresetId?: string } = {};
+      if (requestedBotId) selectionPatch.selectedBotId = requestedBotId;
+      if (requestedBotPresetId) selectionPatch.selectedBotPresetId = requestedBotPresetId;
+      configStore.setSelections(selectionPatch);
+    }
+    ensureDefaultBotPresetSelected(requestedBotId);
+    const currentCfg = configStore.get();
+    if (currentCfg.selectedBotPresetId) {
+      const preset = readBotPreset(currentCfg.selectedBotId, currentCfg.selectedBotPresetId);
+      configStore.applyProfiles({ botConfig: preset.botConfig });
+      configStore.persist();
+    }
+    const selectedBotId = configStore.get().selectedBotId;
+    const selectedBotPresetId = configStore.get().selectedBotPresetId;
 
     const datasetHistoryIds: string[] = Array.isArray(body?.datasetHistoryIds)
       ? (body.datasetHistoryIds as any[]).map((v) => String(v ?? "").trim()).filter(Boolean)
@@ -1741,6 +2036,8 @@ app.get("/api/config", async () => {
     }
     const payload: OptimizerLoopRunPayload = {
       ...body,
+      selectedBotId,
+      selectedBotPresetId,
       datasetHistoryIds,
       cacheDatasets,
       interval,
@@ -1934,7 +2231,7 @@ app.get("/api/config", async () => {
 
   app.get("/api/optimizer/jobs/:jobId/status", async (req, reply) => {
     const jobId = String((req.params as any).jobId ?? "");
-    const job = optimizerJobs.get(jobId);
+    const job = resolveOptimizerJob(jobId);
     if (!job) {
       reply.code(404);
       return { error: "optimizer_job_not_found" };
@@ -1955,7 +2252,7 @@ app.get("/api/config", async () => {
   app.get("/api/optimizer/jobs/:jobId/results", async (req, reply) => {
     const jobId = String((req.params as any).jobId ?? "");
     const query = (req.query ?? {}) as any;
-    const job = optimizerJobs.get(jobId);
+    const job = resolveOptimizerJob(jobId);
     if (!job) {
       reply.code(404);
       return { error: "optimizer_job_not_found" };
@@ -2026,8 +2323,14 @@ app.get("/api/config", async () => {
       const cmp = String(av).localeCompare(String(bv));
       return sortDir === "asc" ? cmp : -cmp;
     });
-    const items = sorted.slice(offset, offset + limit);
-    return { total: sorted.length, items };
+    const filtered = sorted.filter((row) => (
+      Number(row.summary?.rowsPositive ?? 0) > 0
+      && (Boolean(optimizerJobs.get(row.jobId)) || Boolean(tryReadOptimizerJobSnapshot(row.jobId)))
+    ));
+    const items = filtered
+      .slice(offset, offset + limit)
+      .map((row) => ({ ...row, hasSettings: true }));
+    return { total: filtered.length, items };
   });
 
   app.get("/api/optimizer/history/export", async (req, reply) => {
@@ -2100,7 +2403,7 @@ app.get("/api/config", async () => {
       return { error: "invalid_rank" };
     }
 
-    const job = optimizerJobs.get(jobId);
+    const job = resolveOptimizerJob(jobId);
     if (!job) {
       reply.code(404);
       return { error: "optimizer_job_not_found" };
@@ -2155,7 +2458,7 @@ app.get("/api/config", async () => {
     const jobId = String((req.params as any).jobId ?? "");
     const query = (req.query ?? {}) as any;
     const format = String(query.format ?? "json").toLowerCase() === "csv" ? "csv" : "json";
-    const job = optimizerJobs.get(jobId);
+    const job = resolveOptimizerJob(jobId);
     if (!job) {
       reply.code(404);
       return { error: "optimizer_job_not_found" };
@@ -2187,7 +2490,7 @@ app.get("/api/config", async () => {
     }
     const query = (req.query ?? {}) as any;
     const format = String(query.format ?? "json").toLowerCase() === "csv" ? "csv" : "json";
-    const job = optimizerJobs.get(jobId);
+    const job = resolveOptimizerJob(jobId);
     if (!job) {
       reply.code(404);
       return { error: "optimizer_job_not_found" };

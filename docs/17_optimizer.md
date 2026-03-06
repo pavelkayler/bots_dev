@@ -5,6 +5,7 @@ Last update: 2026-03-04
 This document describes the Optimizer feature used to tune paper-trading parameters via cached historical market data and deterministic replay.
 
 Tape-based optimizer inputs are removed. All optimizer runs use dataset histories/cache only.
+Optimizer is bot-aware through `selectedBotId` + `selectedBotPresetId` (current registry has one bot).
 
 ## Goals
 - Record market dataset histories (JSONL) while runtime session is **RUNNING**.
@@ -37,6 +38,8 @@ Main sections:
 
 ## Optimization run
 ### Core inputs
+- `selectedBotId`: bot definition used for strategy semantics
+- `selectedBotPresetId`: bot parameter preset resolved before run
 - `candidates`: how many candidates to evaluate
 - `seed`: RNG seed (base seed)
 - `directionMode`: `both | long | short`

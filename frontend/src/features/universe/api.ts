@@ -1,6 +1,6 @@
 import { getApiBase } from "../../shared/config/env";
 import { deleteJson, getJson } from "../../shared/api/http";
-import type { UniverseCreateResponse, UniverseFile, UniversesListResponse } from "./types";
+import type { UniverseCreateResponse, UniverseFile, UniverseMetricsRange, UniverseSymbolSummaryResponse, UniversesListResponse } from "./types";
 
 export async function listUniverses(): Promise<UniversesListResponse> {
   const base = getApiBase();
@@ -12,12 +12,22 @@ export async function readUniverse(id: string): Promise<UniverseFile> {
   return await getJson<UniverseFile>(`${base}/api/universes/${encodeURIComponent(id)}`);
 }
 
-export async function createUniverse(minTurnoverUsd: number, minVolatilityPct: number, signal?: AbortSignal): Promise<UniverseCreateResponse> {
+export async function readUniverseSymbolSummary(id: string, range: UniverseMetricsRange): Promise<UniverseSymbolSummaryResponse> {
+  const base = getApiBase();
+  return await getJson<UniverseSymbolSummaryResponse>(`${base}/api/universes/${encodeURIComponent(id)}/symbol-summary?range=${encodeURIComponent(range)}`);
+}
+
+export async function createUniverse(
+  minTurnoverUsd: number,
+  minVolatilityPct: number,
+  metricsRange: UniverseMetricsRange,
+  signal?: AbortSignal,
+): Promise<UniverseCreateResponse> {
   const base = getApiBase();
   const res = await fetch(`${base}/api/universes/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ minTurnoverUsd, minVolatilityPct }),
+    body: JSON.stringify({ minTurnoverUsd, minVolatilityPct, metricsRange }),
     signal,
   });
   if (!res.ok) {

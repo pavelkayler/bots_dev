@@ -61,6 +61,10 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
   - resets on Start (new run)
   - loads on Stop
   - trades table supports global sort + shared pagination (10/25/50)
+- UI split for bot growth:
+  - `/bots` page handles strategy/bot settings
+  - `/` dashboard focuses on operator execution/start controls
+  - `/optimizer` is bot-aware (bot + bot preset selection)
 
 ### Config + Presets
 - Config is edited as **draft** and applied via **Apply**.
@@ -71,11 +75,16 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
   - disabled if invalid
 
 Apply-and-Run / record controls are removed. Optimizer uses dataset histories/cache only.
+- Runtime is bot-aware via `selectedBotId` with a minimal registry (current bot: `oi-momentum-v1`).
+- Config is split into:
+  - bot config (strategy semantics, includes TP/SL)
+  - shared execution profile (execution/session/risk controls only)
+  - resolved runtime config (compatibility shape used by runtime and ws/optimizer)
 - Presets:
-  - selector + Save (overwrite) + Remove
-  - option label includes timeframe: `... [tf=<klineTfMin>m]`
-  - preset selection best-effort auto-selects Universe by matching the bracket token (e.g. `[10m/6%]`) to saved universe name
-  - presets stored in `backend/data/presets/*.json`
+  - legacy runtime presets remain compatible in `backend/data/presets/*.json`
+  - bot presets are separate and keyed by botId (`backend/data/bot_presets/*.json`)
+  - execution profiles are separate (`backend/data/execution_profiles/*.json`)
+  - TP/SL lives in bot presets, not in execution profiles
 
 ### Funding sign gating (requireFundingSign)
 - `signals.requireFundingSign` is forced **always true** (in backend normalization/migration/back-compat).
@@ -115,6 +124,7 @@ High-level:
   - Receive Data progress includes backend ETA (`etaSec`) and UI shows `ETA: ~Xm Ys`
 
 - Optimization:
+  - run payload supports `selectedBotId` and `selectedBotPresetId`
   - job-based API with **pause/resume/cancel**
   - runs heavy compute in a **worker thread** (main server stays responsive)
   - progress is reported in percent and displayed in UI as integer 0..100

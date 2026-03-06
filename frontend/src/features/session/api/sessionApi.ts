@@ -7,9 +7,9 @@ export async function fetchStatus(): Promise<StatusResponse> {
   return getJson<StatusResponse>(`${api}/api/session/status`);
 }
 
-export async function startSession(): Promise<StatusResponse> {
+export async function startSession(payload?: Partial<{ selectedBotId: string; selectedBotPresetId: string; selectedExecutionProfileId: string }>): Promise<StatusResponse> {
   const api = getApiBase();
-  return postJson<StatusResponse>(`${api}/api/session/start`, {});
+  return postJson<StatusResponse>(`${api}/api/session/start`, payload ?? {});
 }
 
 export async function stopSession(): Promise<StatusResponse> {

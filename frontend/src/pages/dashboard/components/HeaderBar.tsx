@@ -1,5 +1,6 @@
 import { Badge, Button, Container, Nav, Navbar, Spinner } from "react-bootstrap";
 import { Link } from "react-router-dom";
+import { APP_NAME, APP_UPDATED_DATE, APP_VERSION } from "../../../app/appMeta";
 import type { ConnStatus, SessionState, StreamsState } from "../../../shared/types/domain";
 
 type Props = {
@@ -30,9 +31,10 @@ export function HeaderBar(props: Props) {
   return (
     <Navbar bg="light">
       <Container fluid>
-        <Navbar.Brand>Bybit Bots (skeleton)</Navbar.Brand>
+        <Navbar.Brand>{APP_NAME}</Navbar.Brand>
         <Nav className="me-2">
           <Nav.Link as={Link} to="/">Dashboard</Nav.Link>
+          <Nav.Link as={Link} to="/bots">Bots</Nav.Link>
           <Nav.Link as={Link} to="/universe">Universe</Nav.Link>
           <Nav.Link as={Link} to="/optimizer">Optimizer</Nav.Link>
         </Nav>
@@ -40,7 +42,9 @@ export function HeaderBar(props: Props) {
           <Badge bg={connVariant}>{conn}</Badge>
           <Badge bg={streamsVariant}>{streamsText}</Badge>
           <Badge bg={sessionVariant}>Session: {sessionState}</Badge>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>WS: {wsUrl} · Last tick: {lastServerTime ? new Date(lastServerTime).toLocaleTimeString() : "-"}</div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>
+            WS: {wsUrl} | Last tick: {lastServerTime ? new Date(lastServerTime).toLocaleTimeString() : "-"} | ver. {APP_VERSION}, updated {APP_UPDATED_DATE}
+          </div>
           <div className="ms-auto d-flex align-items-center gap-2">
             <Button size="sm" variant="success" onClick={onStart} disabled={!canStart}>{busy === "start" ? <Spinner animation="border" size="sm" /> : "Start"}</Button>
             <Button size="sm" variant="warning" onClick={onPause} disabled={!canPause}>{busy === "pause" ? <Spinner animation="border" size="sm" /> : "Pause"}</Button>

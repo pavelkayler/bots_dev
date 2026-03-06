@@ -1,24 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, Container, Form, Table } from "react-bootstrap";
+﻿import { useEffect, useMemo, useState } from "react";
+import { Badge, Button, Card, Container, Form } from "react-bootstrap";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
 import { LiveRowsTable } from "../../features/market/components/LiveRowsTable";
 import { EventsTail } from "../../features/events/components/EventsTail";
-import { RawWsMessage } from "../../features/raw/components/RawWsMessage";
 import { HeaderBar } from "./components/HeaderBar";
 import { SessionMetaBar } from "./components/SessionMetaBar";
 import { BotSummaryBar } from "./components/BotSummaryBar";
 import type { SymbolRow } from "../../shared/types/domain";
-import { ConfigPanel } from "../../features/config/components/ConfigPanel";
+import { ExecutionPanel } from "../../features/config/components/ExecutionPanel";
 import { SessionSummaryPanel } from "../../features/summary/components/SessionSummaryPanel";
 import { TradeStatsTabs } from "../../features/stats/components/TradeStatsTabs";
+import { BotExecutionSelectors } from "../../features/bots/components/BotExecutionSelectors";
 
 export function DashboardPage() {
   const {
     conn,
     rows,
     lastServerTime,
-    lastMsg,
     wsUrl,
     wsSessionState,
     wsSessionId,
@@ -34,7 +33,7 @@ export function DashboardPage() {
 
   const [activeOnly, setActiveOnly] = useState(true);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const [draftKlineTfMin, setDraftKlineTfMin] = useState(1);
+  const [draftKlineTfMin] = useState(1);
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
@@ -50,28 +49,6 @@ export function DashboardPage() {
       return paperActive || hasSignal;
     });
   }, [rows, activeOnly]);
-
-  const signalBreakdown = useMemo(() => {
-    let longSignals = 0;
-    let shortSignals = 0;
-    const noSignalReasons = new Map<string, number>();
-    for (const row of rows) {
-      if (row.signal === "LONG") {
-        longSignals += 1;
-        continue;
-      }
-      if (row.signal === "SHORT") {
-        shortSignals += 1;
-        continue;
-      }
-      const reason = String(row.signalReason ?? "unknown");
-      noSignalReasons.set(reason, (noSignalReasons.get(reason) ?? 0) + 1);
-    }
-    const topReasons = Array.from(noSignalReasons.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8);
-    return { longSignals, shortSignals, topReasons };
-  }, [rows]);
 
   function parseSessionStartTs(sessionId: string | null): number | null {
     if (!sessionId) return null;
@@ -141,7 +118,8 @@ export function DashboardPage() {
 
         <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} executionMode={botStats.executionMode ?? "paper"} suppressStopRefresh={false} />
 
-        <ConfigPanel sessionState={status.sessionState} onDraftKlineTfMinChange={setDraftKlineTfMin} />
+        <BotExecutionSelectors />
+        <ExecutionPanel />
 
         <Card className="mb-3">
           <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
@@ -169,42 +147,9 @@ export function DashboardPage() {
           </Card.Body>
         </Card>
 
-        <Card className="mb-3">
-          <Card.Header>
-            <b>Why no trade / signal breakdown</b>
-          </Card.Header>
-          <Card.Body>
-            <div style={{ fontSize: 12, marginBottom: 8 }}>
-              LONG signals: <b>{signalBreakdown.longSignals}</b> · SHORT signals: <b>{signalBreakdown.shortSignals}</b>
-            </div>
-            <Table size="sm" bordered>
-              <thead>
-                <tr>
-                  <th>Reason</th>
-                  <th>Count</th>
-                </tr>
-              </thead>
-              <tbody>
-                {signalBreakdown.topReasons.map(([reason, count]) => (
-                  <tr key={reason}>
-                    <td>{reason}</td>
-                    <td>{count}</td>
-                  </tr>
-                ))}
-                {!signalBreakdown.topReasons.length ? (
-                  <tr>
-                    <td colSpan={2} style={{ opacity: 0.75 }}>No no-signal rows.</td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </Table>
-          </Card.Body>
-        </Card>
-
         <EventsTail enabled={status.sessionState === "RUNNING"} events={events} onRequestTail={requestEventsTail} />
-
-        <RawWsMessage value={lastMsg} />
       </Container>
     </>
   );
 }
+

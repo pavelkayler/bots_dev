@@ -924,6 +924,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
 
     const universe = readUniverse(target.universeId);
     const baseKlineInterval: BybitKlineInterval = "1";
+    const datasetHistoryInterval: BybitKlineInterval = "5";
     const symbols = Array.isArray(universe.symbols) ? universe.symbols.filter((s) => typeof s === "string" && s.trim()) : [];
 
     const klineWindowsBySymbol = new Map<string, Array<{ startMs: number; endMs: number }>>();
@@ -1293,7 +1294,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         startMs: resolvedRange.startMs,
         endMs: resolvedRange.endMs,
         receivedAtMs: job.finishedAtMs ?? Date.now(),
-        interval: baseKlineInterval,
+        interval: datasetHistoryInterval,
         receivedSymbols: okSymbols,
         hasOi: hasAnyOi,
         hasFunding: hasAnyFunding,

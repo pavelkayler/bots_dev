@@ -25,4 +25,14 @@ describe("config normalization", () => {
     const next = configStore.get();
     expect(["both", "long", "short"]).toContain(next.paper.directionMode);
   });
+
+  test("keeps TP/SL inside botConfig strategy after migration", () => {
+    const next = configStore.get();
+    expect(next.selectedBotId).toBeTruthy();
+    expect(next.botConfig?.strategy.tpRoiPct).toBeTypeOf("number");
+    expect(next.botConfig?.strategy.slRoiPct).toBeTypeOf("number");
+    expect(next.executionProfile?.paper).toBeTruthy();
+    expect((next.executionProfile?.paper as any).tpRoiPct).toBeUndefined();
+    expect((next.executionProfile?.paper as any).slRoiPct).toBeUndefined();
+  });
 });

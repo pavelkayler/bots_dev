@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Button, Card, Container, Form, Modal, Spinner, Table } from "react-bootstrap";
+﻿import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Badge, Button, Card, Container, Form, Spinner, Table } from "react-bootstrap";
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
-import { createUniverse, deleteUniverse, listUniverses, readUniverse } from "../../features/universe/api";
-import type { UniverseFile, UniverseMeta } from "../../features/universe/types";
+import { createUniverse, deleteUniverse, listUniverses, readUniverse, readUniverseSymbolSummary } from "../../features/universe/api";
+import type { UniverseFile, UniverseMeta, UniverseMetricsRange, UniverseSymbolSummaryRow } from "../../features/universe/types";
 import { fmtNum, fmtTime } from "../../shared/utils/format";
 import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
 import { TablePaginationControls, useStoredPageSize } from "../../shared/ui/TablePaginationControls";
 
 const CREATE_JOB_STORAGE_KEY = "universeCreateJob";
+const RANGE_OPTIONS: Array<{ value: UniverseMetricsRange; label: string }> = [
+  { value: "24h", label: "24 hours" },
+  { value: "48h", label: "48 hours" },
+  { value: "1w", label: "1 week" },
+  { value: "2w", label: "2 weeks" },
+  { value: "1mo", label: "1 month" },
+];
 
 type UniverseCreateJobState = {
   status: "running";
@@ -18,8 +25,16 @@ type UniverseCreateJobState = {
   pendingSinceMs: number;
 };
 
-function joinSymbols(symbols: string[]) {
-  return symbols.join("\n");
+type SymbolSummarySortKey = "index" | "symbol" | "high" | "low" | "openInterestValue" | "priceChangePct" | "openInterestChangePct";
+type SymbolSummarySortDir = "asc" | "desc";
+
+function compareNullableNumber(a: number | null | undefined, b: number | null | undefined): number {
+  const an = typeof a === "number" && Number.isFinite(a);
+  const bn = typeof b === "number" && Number.isFinite(b);
+  if (!an && !bn) return 0;
+  if (!an) return 1;
+  if (!bn) return -1;
+  return (a as number) - (b as number);
 }
 
 export function UniversePage() {
@@ -28,6 +43,7 @@ export function UniversePage() {
 
   const [minTurnoverUsd, setMinTurnoverUsd] = useState<string>("10000000");
   const [minVolPct, setMinVolPct] = useState<string>("10");
+  const [metricsRange, setMetricsRange] = useState<UniverseMetricsRange>("24h");
 
   const [items, setItems] = useState<UniverseMeta[]>([]);
   const [loading, setLoading] = useState(false);
@@ -38,10 +54,13 @@ export function UniversePage() {
   const [lastCreated, setLastCreated] = useState<UniverseMeta | null>(null);
   const [stats, setStats] = useState<any | null>(null);
 
-  const [showModal, setShowModal] = useState(false);
-  const [modalUniverse, setModalUniverse] = useState<UniverseFile | null>(null);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [modalError, setModalError] = useState<string | null>(null);
+  const [expandedUniverseId, setExpandedUniverseId] = useState<string | null>(null);
+  const [expandedLoading, setExpandedLoading] = useState(false);
+  const [expandedError, setExpandedError] = useState<string | null>(null);
+  const [expandedById, setExpandedById] = useState<Record<string, UniverseFile>>({});
+  const [summaryById, setSummaryById] = useState<Record<string, UniverseSymbolSummaryRow[]>>({});
+  const [summarySortById, setSummarySortById] = useState<Record<string, { key: SymbolSummarySortKey; dir: SymbolSummarySortDir }>>({});
+
   const [savedPage, setSavedPage] = useState(1);
   const [savedPageSize, setSavedPageSize] = useStoredPageSize("universe-saved", 25);
   const createAbortRef = useRef<AbortController | null>(null);
@@ -101,7 +120,7 @@ export function UniversePage() {
           const matched = (res.universes ?? []).find(
             (u) => u.minTurnoverUsd === createJob.minTurnoverUsd
               && u.minVolatilityPct === createJob.minVolatilityPct
-              && Number(u.updatedAt) >= createJob.pendingSinceMs
+              && Number(u.updatedAt) >= createJob.pendingSinceMs,
           );
           if (matched) {
             setLastCreated(matched);
@@ -168,7 +187,7 @@ export function UniversePage() {
       persistCreateJob(nextJob);
       createAbortRef.current?.abort();
       createAbortRef.current = new AbortController();
-      const res = await createUniverse(parsedTurnover, parsedVol, createAbortRef.current.signal);
+      const res = await createUniverse(parsedTurnover, parsedVol, metricsRange, createAbortRef.current.signal);
       setLastCreated(res.universe.meta);
       setStats(res.stats);
       await refresh();
@@ -200,19 +219,26 @@ export function UniversePage() {
     return pct;
   }, [createJob, createProgressNowMs]);
 
-  async function onViewSymbols(id: string) {
-    setModalError(null);
-    setModalLoading(true);
-    setModalUniverse(null);
-    setShowModal(true);
-
+  async function onToggleSymbols(id: string) {
+    if (expandedUniverseId === id) {
+      setExpandedUniverseId(null);
+      setExpandedError(null);
+      return;
+    }
+    setExpandedUniverseId(id);
+    setExpandedError(null);
+    if (expandedById[id] && summaryById[id]) return;
+    setExpandedLoading(true);
     try {
       const uni = await readUniverse(id);
-      setModalUniverse(uni);
+      setExpandedById((prev) => ({ ...prev, [id]: uni }));
+      const effectiveRange = (uni.meta.metricsRange ?? "24h") as UniverseMetricsRange;
+      const summary = await readUniverseSymbolSummary(id, effectiveRange);
+      setSummaryById((prev) => ({ ...prev, [id]: summary.rows ?? [] }));
     } catch (e: any) {
-      setModalError(String(e?.message ?? e));
+      setExpandedError(String(e?.message ?? e));
     } finally {
-      setModalLoading(false);
+      setExpandedLoading(false);
     }
   }
 
@@ -221,9 +247,44 @@ export function UniversePage() {
     try {
       await deleteUniverse(id);
       await refresh();
+      if (expandedUniverseId === id) {
+        setExpandedUniverseId(null);
+        setExpandedError(null);
+      }
     } catch (e: any) {
       setError(String(e?.message ?? e));
     }
+  }
+
+  function toggleSummarySort(universeId: string, key: SymbolSummarySortKey) {
+    setSummarySortById((prev) => {
+      const current = prev[universeId];
+      const nextDir: SymbolSummarySortDir = current?.key === key && current.dir === "asc" ? "desc" : "asc";
+      return { ...prev, [universeId]: { key, dir: nextDir } };
+    });
+  }
+
+  function sortSummaryRows(universeId: string, rows: UniverseSymbolSummaryRow[]): UniverseSymbolSummaryRow[] {
+    const sort = summarySortById[universeId] ?? { key: "index" as SymbolSummarySortKey, dir: "asc" as SymbolSummarySortDir };
+    const sign = sort.dir === "asc" ? 1 : -1;
+    return rows
+      .map((row, idx) => ({ row, idx }))
+      .sort((a, b) => {
+        if (sort.key === "index") return sign * (a.idx - b.idx);
+        if (sort.key === "symbol") return sign * a.row.symbol.localeCompare(b.row.symbol);
+        if (sort.key === "high") return sign * compareNullableNumber(a.row.high, b.row.high);
+        if (sort.key === "low") return sign * compareNullableNumber(a.row.low, b.row.low);
+        if (sort.key === "openInterestValue") return sign * compareNullableNumber(a.row.openInterestValue, b.row.openInterestValue);
+        if (sort.key === "priceChangePct") return sign * compareNullableNumber(a.row.priceChangePct, b.row.priceChangePct);
+        return sign * compareNullableNumber(a.row.openInterestChangePct, b.row.openInterestChangePct);
+      })
+      .map((x) => x.row);
+  }
+
+  function sortMarker(universeId: string, key: SymbolSummarySortKey): string {
+    const sort = summarySortById[universeId];
+    if (!sort || sort.key !== key) return "";
+    return sort.dir === "asc" ? " ▲" : " ▼";
   }
 
   return (
@@ -247,153 +308,203 @@ export function UniversePage() {
 
       <Container fluid className="py-2 px-2">
         <Card className="mb-3">
-        <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
-          <b>Universe builder</b>
-          <span style={{ opacity: 0.75, fontSize: 12 }}>
-            Builds one-off universe from Bybit tickers and saves it.
-          </span>
+          <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
+            <b>Universe Builder</b>
+            <span style={{ opacity: 0.75, fontSize: 12 }}>
+              Builds a one-off universe from Bybit tickers and saves it.
+            </span>
+          </Card.Header>
 
-        </Card.Header>
+          <Card.Body>
+            {error ? <div style={{ color: "#b00020", marginBottom: 8 }}>{error}</div> : null}
 
-        <Card.Body>
-          {error ? <div style={{ color: "#b00020", marginBottom: 8 }}>{error}</div> : null}
+            <Form className="mb-3">
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, minmax(0, 1fr)) auto",
+                  gap: 16,
+                  alignItems: "start",
+                }}
+              >
+                <Form.Group style={{ minWidth: 0 }}>
+                  <Form.Label>Min average turnover (USD)</Form.Label>
+                  <Form.Control
+                    type="number"
+                    value={minTurnoverUsd}
+                    onChange={(e) => setMinTurnoverUsd(e.currentTarget.value)}
+                    min={0}
+                  />
+                  <Form.Text muted>Threshold for average turnover across the selected period.</Form.Text>
+                </Form.Group>
 
-          <Form className="mb-3">
-            <div className="d-flex gap-3 flex-wrap">
-              <Form.Group style={{ width: 240 }}>
-                <Form.Label>Min turnover 24h (USD)</Form.Label>
-                <Form.Control
-                  type="number"
-                  value={minTurnoverUsd}
-                  onChange={(e) => setMinTurnoverUsd(e.currentTarget.value)}
-                  min={0}
-                />
-              </Form.Group>
+                <Form.Group style={{ minWidth: 0 }}>
+                  <Form.Label>Min average volatility (%)</Form.Label>
+                  <Form.Control
+                    type="number"
+                    value={minVolPct}
+                    onChange={(e) => setMinVolPct(e.currentTarget.value)}
+                    min={0}
+                  />
+                  <Form.Text muted>Threshold for average volatility across the selected period.</Form.Text>
+                </Form.Group>
 
-              <Form.Group style={{ width: 240 }}>
-                <Form.Label>Min volatility 24h (%)</Form.Label>
-                <Form.Control
-                  type="number"
-                  value={minVolPct}
-                  onChange={(e) => setMinVolPct(e.currentTarget.value)}
-                  min={0}
-                />
-              </Form.Group>
+                <Form.Group style={{ minWidth: 0 }}>
+                  <Form.Label>Range</Form.Label>
+                  <Form.Select value={metricsRange} onChange={(e) => setMetricsRange(e.currentTarget.value as UniverseMetricsRange)}>
+                    {RANGE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </Form.Select>
+                  <Form.Text muted>Window used to calculate the average metrics.</Form.Text>
+                </Form.Group>
 
-              <div className="d-flex align-items-end">
-                <Button variant="primary" onClick={() => void onCreate()} disabled={!canCreate || creating}>
-                  {creating ? <Spinner animation="border" size="sm" /> : "Create"}
-                </Button>
+                <Form.Group style={{ minWidth: 0, paddingTop: 31 }}>
+                  <Button variant="primary" onClick={() => void onCreate()} disabled={!canCreate || creating}>
+                    {creating ? <Spinner animation="border" size="sm" /> : "Create"}
+                  </Button>
+                </Form.Group>
               </div>
-            </div>
-          </Form>
+            </Form>
 
-          <div style={{ marginBottom: 10, minHeight: 44 }}>
+            <div style={{ marginBottom: 10, minHeight: 44 }}>
               <CenteredProgressBar
                 now={createJob ? createProgress : creating ? 99 : 0}
                 showPercent={Boolean(createJob || creating)}
                 label={createJob || creating ? undefined : "0%"}
               />
-          </div>
-
-          {lastCreated ? (
-            <div className="d-flex align-items-center gap-2 flex-wrap mb-2" style={{ fontSize: 12 }}>
-              <Badge bg="success">Saved</Badge>
-              <span><b>{lastCreated.name}</b></span>
-              <span>count: {lastCreated.count}</span>
-              {stats ? (
-                <span style={{ opacity: 0.75 }}>
-                  seeded: {stats.seededSymbols} · subscribed: {stats.subscribedSymbols} · received: {stats.receivedSymbols} · collectMs: {stats.collectMs}
-                </span>
-              ) : null}
             </div>
-          ) : null}
 
-          <h6 className="mb-2">Saved universes</h6>
-          {loading ? (
-            <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
-              <Spinner animation="border" size="sm" /> loading…
-            </div>
-          ) : !items.length ? (
-            <div style={{ opacity: 0.75 }}>No universes yet. Click Create.</div>
-          ) : (
-            <>
-              <Table striped bordered hover size="sm" style={{ tableLayout: "fixed", width: "100%" }}>
-                <thead>
-                  <tr>
-                    <th style={{ width: "26%", fontSize: 12 }}>Name</th>
-                    <th style={{ width: "10%", fontSize: 12 }}>Count</th>
-                    <th style={{ width: "16%", fontSize: 12 }}>Min turnover</th>
-                    <th style={{ width: "14%", fontSize: 12 }}>Min vol</th>
-                    <th style={{ width: "18%", fontSize: 12 }}>Updated</th>
-                    <th style={{ width: "16%", fontSize: 12 }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagedItems.map((u) => (
-                    <tr key={u.id}>
-                      <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.name}</td>
-                      <td style={{ fontSize: 12 }}>{u.count}</td>
-                      <td style={{ fontSize: 12 }}>{fmtNum(u.minTurnoverUsd)}</td>
-                      <td style={{ fontSize: 12 }}>{fmtNum(u.minVolatilityPct)}%</td>
-                      <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(u.updatedAt)}</td>
-                      <td style={{ fontSize: 12 }}>
-                        <div className="d-flex align-items-center gap-2">
-                          <Button size="sm" variant="outline-secondary" onClick={() => void onViewSymbols(u.id)}>
-                            View symbols
-                          </Button>
-                          <Button size="sm" variant="outline-danger" onClick={() => void onDelete(u.id)}>
-                            Delete
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-              <TablePaginationControls
-                tableId="universe-saved"
-                page={savedPageClamped}
-                totalRows={items.length}
-                pageSize={savedPageSize}
-                onPageChange={setSavedPage}
-                onPageSizeChange={(size) => {
-                  setSavedPageSize(size);
-                  setSavedPage(1);
-                }}
-              />
-            </>
-          )}
-        </Card.Body>
-        </Card>
-
-        <Modal show={showModal} onHide={() => setShowModal(false)} size="lg">
-        <Modal.Header closeButton>
-          <Modal.Title>Universe symbols</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          {modalLoading ? (
-            <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
-              <Spinner animation="border" size="sm" /> loading…
-            </div>
-          ) : modalError ? (
-            <div style={{ color: "#b00020" }}>{modalError}</div>
-          ) : !modalUniverse ? (
-            <div style={{ opacity: 0.75 }}>No data.</div>
-          ) : (
-            <>
+            {lastCreated ? (
               <div className="d-flex align-items-center gap-2 flex-wrap mb-2" style={{ fontSize: 12 }}>
-                <Badge bg="secondary">{modalUniverse.meta.name}</Badge>
-                <span>count: {modalUniverse.symbols.length}</span>
-                <span style={{ opacity: 0.75 }}>updated: {fmtTime(modalUniverse.meta.updatedAt)}</span>
+                <Badge bg="success">Saved</Badge>
+                <span><b>{lastCreated.name}</b></span>
+                <span>count: {lastCreated.count}</span>
+                {stats ? (
+                  <span style={{ opacity: 0.75 }}>
+                    seeded for check: {stats.seededSymbols} | subscribed: {stats.subscribedSymbols} | received: {stats.receivedSymbols} | collect time, ms: {stats.collectMs}
+                  </span>
+                ) : null}
               </div>
+            ) : null}
 
-              <Form.Control as="textarea" rows={18} readOnly value={joinSymbols(modalUniverse.symbols)} />
-            </>
-          )}
-        </Modal.Body>
-        </Modal>
+            <h6 className="mb-2">Saved universes</h6>
+            {loading ? (
+              <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
+                <Spinner animation="border" size="sm" /> loading...
+              </div>
+            ) : !items.length ? (
+              <div style={{ opacity: 0.75 }}>No universes yet. Click Create.</div>
+            ) : (
+              <>
+                <Table striped bordered hover size="sm" style={{ tableLayout: "fixed", width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: "26%", fontSize: 12 }}>Name</th>
+                      <th style={{ width: "10%", fontSize: 12 }}>Count</th>
+                      <th style={{ width: "16%", fontSize: 12 }}>Min turnover</th>
+                      <th style={{ width: "14%", fontSize: 12 }}>Min vol</th>
+                      <th style={{ width: "10%", fontSize: 12 }}>Range</th>
+                      <th style={{ width: "18%", fontSize: 12 }}>Updated</th>
+                      <th style={{ width: "16%", fontSize: 12 }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedItems.map((u) => {
+                      const summaryRows = summaryById[u.id] ?? [];
+                      const sortedSummaryRows = sortSummaryRows(u.id, summaryRows);
+                      return (
+                        <Fragment key={u.id}>
+                          <tr key={u.id}>
+                            <td style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.name}</td>
+                            <td style={{ fontSize: 12 }}>{u.count}</td>
+                            <td style={{ fontSize: 12 }}>{fmtNum(u.minTurnoverUsd)}</td>
+                            <td style={{ fontSize: 12 }}>{fmtNum(u.minVolatilityPct)}%</td>
+                            <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{u.metricsRange ?? "24h"}</td>
+                            <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{fmtTime(u.updatedAt)}</td>
+                            <td style={{ fontSize: 12 }}>
+                              <div className="d-flex align-items-center gap-2">
+                                <Button size="sm" variant="outline-secondary" onClick={() => void onToggleSymbols(u.id)}>
+                                  {expandedUniverseId === u.id ? "Hide symbols" : "View symbols"}
+                                </Button>
+                                <Button size="sm" variant="outline-danger" onClick={() => void onDelete(u.id)}>
+                                  Delete
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                          {expandedUniverseId === u.id ? (
+                            <tr key={`${u.id}-expanded`}>
+                              <td colSpan={7} style={{ background: "#fafafa" }}>
+                                {expandedLoading && !summaryById[u.id] ? (
+                                  <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
+                                    <Spinner animation="border" size="sm" /> Loading symbols...
+                                  </div>
+                                ) : expandedError ? (
+                                  <div style={{ color: "#b00020", fontSize: 12 }}>{expandedError}</div>
+                                ) : (
+                                  <>
+                                    <div style={{ fontSize: 12, marginBottom: 8, opacity: 0.8 }}>
+                                      Symbols summary: {summaryRows.length}
+                                    </div>
+                                    <Table bordered size="sm" className="mb-0">
+                                      <thead>
+                                        <tr>
+                                          <th style={{ width: 60, cursor: "pointer" }} onClick={() => toggleSummarySort(u.id, "index")}>#{sortMarker(u.id, "index")}</th>
+                                          <th style={{ cursor: "pointer" }} onClick={() => toggleSummarySort(u.id, "symbol")}>Symbol{sortMarker(u.id, "symbol")}</th>
+                                          <th style={{ cursor: "pointer" }} onClick={() => toggleSummarySort(u.id, "high")}>High{sortMarker(u.id, "high")}</th>
+                                          <th style={{ cursor: "pointer" }} onClick={() => toggleSummarySort(u.id, "low")}>Low{sortMarker(u.id, "low")}</th>
+                                          <th style={{ cursor: "pointer" }} onClick={() => toggleSummarySort(u.id, "openInterestValue")}>OI value{sortMarker(u.id, "openInterestValue")}</th>
+                                          <th style={{ cursor: "pointer" }} onClick={() => toggleSummarySort(u.id, "priceChangePct")}>Price change{sortMarker(u.id, "priceChangePct")}</th>
+                                          <th style={{ cursor: "pointer" }} onClick={() => toggleSummarySort(u.id, "openInterestChangePct")}>OI change{sortMarker(u.id, "openInterestChangePct")}</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {sortedSummaryRows.map((row, idx) => (
+                                          <tr key={`${u.id}-${row.symbol}-${idx}`}>
+                                            <td>{idx + 1}</td>
+                                            <td>{row.symbol}</td>
+                                            <td>{row.high == null ? "-" : fmtNum(row.high)}</td>
+                                            <td>{row.low == null ? "-" : fmtNum(row.low)}</td>
+                                            <td>{row.openInterestValue == null ? "-" : fmtNum(row.openInterestValue)}</td>
+                                            <td style={row.priceChangePct == null ? undefined : { color: row.priceChangePct > 0 ? "#1f7a1f" : row.priceChangePct < 0 ? "#b00020" : "#6c757d" }}>
+                                              {row.priceChangePct == null ? "-" : `${row.priceChangePct.toFixed(2)}%`}
+                                            </td>
+                                            <td style={row.openInterestChangePct == null ? undefined : { color: row.openInterestChangePct > 0 ? "#1f7a1f" : row.openInterestChangePct < 0 ? "#b00020" : "#6c757d" }}>
+                                              {row.openInterestChangePct == null ? "-" : `${row.openInterestChangePct.toFixed(2)}%`}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </Table>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+
+                <TablePaginationControls
+                  tableId="universe-saved"
+                  page={savedPageClamped}
+                  totalRows={items.length}
+                  pageSize={savedPageSize}
+                  onPageChange={setSavedPage}
+                  onPageSizeChange={(size) => {
+                    setSavedPageSize(size);
+                    setSavedPage(1);
+                  }}
+                />
+              </>
+            )}
+          </Card.Body>
+        </Card>
       </Container>
     </>
   );
 }
+
