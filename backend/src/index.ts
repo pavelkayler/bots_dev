@@ -38,22 +38,27 @@ function loadEnvFile(filePath: string) {
 
 // Load env early (Node does not load .env automatically)
 (() => {
-  // Prefer backend/.env if running from backend folder; fallback to repo root .env
+  // Prefer backend/.env, then fallback to repo root .env
   const cwd = process.cwd();
-  const candidates = [
-    path.resolve(cwd, ".env"),
-    path.resolve(cwd, "..", ".env"),
-  ];
-
-  // Also support resolving relative to this file location in case cwd is different
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  candidates.push(
-    path.resolve(__dirname, "..", "..", ".env"), // backend/.env when running from dist or different cwd
-    path.resolve(__dirname, "..", "..", "..", ".env") // repo root .env
-  );
 
-  for (const p of candidates) loadEnvFile(p);
+  const candidates = [
+    path.resolve(cwd, ".env"),
+    path.resolve(cwd, "backend", ".env"),
+    path.resolve(cwd, "..", ".env"),
+    path.resolve(cwd, "..", "backend", ".env"),
+    path.resolve(__dirname, "..", ".env"),
+    path.resolve(__dirname, "..", "..", ".env"),
+  ];
+
+  const seen = new Set<string>();
+  for (const p of candidates) {
+    const k = path.normalize(p);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    loadEnvFile(k);
+  }
 })();
 
 import Fastify from "fastify";

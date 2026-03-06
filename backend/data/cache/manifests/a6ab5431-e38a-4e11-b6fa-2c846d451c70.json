@@ -1,0 +1,2081 @@
+{
+  "historyId": "a6ab5431-e38a-4e11-b6fa-2c846d451c70",
+  "universe": "8m/5%",
+  "range": {
+    "startMs": 1772153423304,
+    "endMs": 1772758223304
+  },
+  "generatedAtMs": 1772758364539,
+  "symbols": {
+    "ETHUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "bd74248186fd7474192dd7fa76690c4c88a178e8377ab7ec73c986f7c2f1d7e6"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 73,
+        "coveragePct": 3.62,
+        "missing": [
+          [
+            1772153700000,
+            1772734200000
+          ],
+          [
+            1772756400000,
+            1772758200000
+          ]
+        ],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 2,
+        "minTs": 1772734500000,
+        "maxTs": 1772756100000,
+        "sha256": "5966a0d0db7960688cb751c111ade16cdc506390a3bc9ff2dcb8a512bf37149a"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "daaeb688921d145c33693d76207e1c651dd1f898ac73bf7d8d15ace1ace3096e"
+      }
+    },
+    "SOLUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "1d602489c5723cb6e8830c9f8d4abde5ef7e223937e50e468ab8bd8cf066b0ef"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 73,
+        "coveragePct": 3.62,
+        "missing": [
+          [
+            1772153700000,
+            1772734200000
+          ],
+          [
+            1772756400000,
+            1772758200000
+          ]
+        ],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 2,
+        "minTs": 1772734500000,
+        "maxTs": 1772756100000,
+        "sha256": "617c4a1b6ff1c1ede0bdfcde1f0ad4e55c9eac15a684a0bb82e5f196296a0012"
+      },
+      "funding": {
+        "points": 1,
+        "minTs": 1772755200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 20,
+        "sha256": "ef2a73a38b9fc540072e4fe5bb8f5273739a8d5e70470c074c600264bbddc295"
+      }
+    },
+    "BARDUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "356f2ca0f061607bfe61d974c59c5befa4350b6aede82e3a6fbcd155edb34bad"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "040865552f4ba1515cb3e10dd1fbd118f47a26818bc9b82eb02a7e601eca91d7"
+      },
+      "funding": {
+        "points": 105,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "496efaef23535b9aafd74588e6b23b5d87d38f5899fa6354841191d856eb5260"
+      }
+    },
+    "DOGEUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "4fa1704228abe9a4e006bad337ab54996cfb6862c5598e013ea467e230183969"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "0f3fb62df5b0c2564d7a8129284eb7a2a6c32549ccb809115cb0006c2366b067"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "8988e43ba70b4ca2fbd3634fd8e4d303f354478571f3b0742587085dea600497"
+      }
+    },
+    "HYPEUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "5107e9a177edc40c4c90e2dc5a5a7d45c7dc740b4ca1c6808af5eb238630cc50"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "b54eb6156373cd0c31fd1d94e0a4174da2d42e4473d0280e18951b854fc663cf"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "26fb7bd1f12679f27d3891e6604d3b863da82b5bb91967270b3a4a6864b33818"
+      }
+    },
+    "1000PEPEUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "6f5432e771866ce1d15d986d7f14e01e6679d169c0c22797332593d116fcef5a"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "0048befa1401e8e1d05acd756838d3e4418977869a98092d55bf71c1beb25851"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "adb14928f9ce532c764b0618c1cf657e880dec91242179e4e925a555b2826354"
+      }
+    },
+    "RIVERUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "59bb48cf6a217008e91ebde5cf0c66a7a4a134cba752ea7fe70c2cdc5302b5bf"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "dfa85b49dfbd6a27710f846dd4c1c37bc6a26d074a50754b7f4f797ec23060c3"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "32fd785661464801af7bfd98a232df0124328f91d27c18cdfd98c9f762edbd0b"
+      }
+    },
+    "OKBUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "315f91c77b992127d3d163dc7dcdbe6a265272102ad368faaeaec18a6f026cd9"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "a1f205640b91a1b985c2e7c372f59269feeba2fdd6d1e7d9e8d0263630201ceb"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "3d48737d868d4f787a4ba1ba26b06ed042c7391d201b997e89c6a386d50fec96"
+      }
+    },
+    "SUIUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "67c5ef34f5b33870d7b4af9b3afb4fbe2440c059d2aa9b3e379684e61650f3de"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "41630115e758c9099c61a8c14c34a4c5712b5793a7a81997fc47c65a16b83b6e"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "68a26864581e9d592f978e5843580b002f64be71dd42b0464baefbdc77cf7096"
+      }
+    },
+    "FARTCOINUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "25fe39b2593b15d3b886be33fa4dfb4293cdda896ca929ea525732d77cb47e96"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "9805d2ec22e5e91638b2b386bf8c12bfc3d47d9de0e27dc97674eee484ae3ecc"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "3d48737d868d4f787a4ba1ba26b06ed042c7391d201b997e89c6a386d50fec96"
+      }
+    },
+    "NEARUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "e9e77292b3dfd21f9311b7ccec80e3038b2f1b823e5f07755239f0d394e39eab"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "2de924bd1e2809493f9d7e6b3a84b37a0cc1e8135624c1c8bd95bc93c25cd53d"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "34e25f90269fc13b7f7910deea5577c01126608fa9a3576d5f750339809ca8a0"
+      }
+    },
+    "PIPPINUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "15c93a5239fc5db01bf268d11680cef6c8b9289b32f51592936e5341bbb4b2c3"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "4a9b367a87009bb57b3e8275b4d49769101c0a5bc9700c7ab7a05da6202b60ae"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "36e1a6aa2fb538e73c56c0f1c6fa680cb3df2a62ed74563db8c45d352598a2b0"
+      }
+    },
+    "POWERUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "4273e44d0552704f86c5c24a80b24fdfc6e4463f9595e3cff14dbc4dbb6cf706"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "68f9f999fbe20abb1a4de4cb3b15e00c7ccd1abface89a1e21596d605925a1d3"
+      },
+      "funding": {
+        "points": 154,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "6d68e86f60fb7a3cbb016e1f699980c6ddc66517cd80f830569b79fffd5ea901"
+      }
+    },
+    "ASTERUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "fef12da9ec25f3bc7ada2b9d0d4525b03b0686c63b2b86de573640a22d1403b0"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "d87d6a73444303da09ead459dd9209fbbe6ffd8dae4f4918d3c7208013d77b4e"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "13a3ac0ba6586f30b7cc37980a2cdc94505730d0e73d31711a9b2931e16a5589"
+      }
+    },
+    "AAVEUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "cf6481c6399d158c225acf6c125693efe87e274a9f9eadc8f4f467b11a7e9519"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "93eb391a63ebe8a4b63cceae247f7abc072c61e087f89427545caecb19943e04"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "314a4debccdbc286db9004ffc0552c2c38c51e0d12b26c10d87b78dc9c2e052e"
+      }
+    },
+    "VVVUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "46b3d3bd62c6e304df4c18bff0f97353a75c4dfbd3512897b0a40c1aa9d33e11"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "26fd1a29954fe803542703fefd9f1c4fecb271fa99a2138f081df8c143f405f1"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "0700860ce4a22702f41a040c69a06968faa0e0c5d231283a2c26a548d6282970"
+      }
+    },
+    "PHAUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "105977757dc1213c342f931bf8ad5377dbc381094c77cbb56e1bcc1b510699d4"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "1ee6fa135dfa983215832f1180044121fccf3bc2d3449e96fba381480ef65c88"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "93eb889aaa46a44cf5821dfe2a0b979d52757faa5dd1c8e78ff2ad2d99749b40"
+      }
+    },
+    "ENAUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "bf04ed600dc3aac6e2f98b2f2e44ccda835941d60bb1d102ef9edaf901a6dc49"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "bfe90f273810fc5eb9f30c49092ea0b2a2cc43672bf3894085caa27c46048991"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "52e516944fb7f1494db2cdbeca75a5f8e9e7422f2a0341674be6bb41f87a1882"
+      }
+    },
+    "TAOUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "6d83de33e20aba6638e505fcd314191dcfee52c0c36949081ecdd86b72120fad"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "beec1c39bbe2d4ae8c902f2179d1df7ade16dab7a4210393b089c927c1ef5bb9"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "84d8be435b2c7ea807f2770a887dc438797bd2637f295936524c3f6c222907b4"
+      }
+    },
+    "ZECUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "3ca5d6262345e658076d1bc1f9d033c9599f2feedc1f05ae7c4d3ebe01c0035a"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "f093c1586b8c26eda16177dc609c278b31e1a793f9d64c1c33ce88dbc1226920"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "7e46fb37021ba404cbbebeeba122cc22afda13893f858d3929231638397ccc47"
+      }
+    },
+    "SIRENUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "1ebc2afa209459646006616934028efec309cedbc1810b4a3fd136fac9365dbb"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "246a278d7dd9c63e71b2c17be6a87fbbdaa78a99ebe093e8692e47a1119852f3"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "fd7558eb0179d636eaf5cf15a6bd259a999b578c428d70a017f9f32606a32a2a"
+      }
+    },
+    "DOTUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "3ba8bc62d1419a1977ee87bacd8cdff2c059c35494c196dc617f6732454e33b2"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "f055c6eaffc172201b5135677ee97e95432e33b66ed752309e7f67e72c39193c"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "9dc84ddcafffef917fc4a2fd655fbaa310b5291d38d329984cb4418e8106eb53"
+      }
+    },
+    "KITEUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "253847c536fb67daea99c4d1a35742e52c16c2fdbf57916197103d5a55b1d14f"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "9d9bfa405449db7a443bf0994aa7f46d0410f759615379e39b3ee31a18a53733"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "f2de9099e6eb58f1f934eb9e340b1ddb4efbe5b6cf527096ab50d995a33da50d"
+      }
+    },
+    "ARBUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "326f721c0a8c79f5355cee62d1068b012f0693e56db9d1fe882d716d10aeb83b"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "5f7fc231abfe3e81045490bde49d9a65eff99e57ff26386e77ea568f2b6fd808"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "8561030c35522e533aecb0613d26a53804d789ea4372c960adc59dc0cad23fc4"
+      }
+    },
+    "SAHARAUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "cfac3819a29ce9d00df0b9f19fb8744fb5258edb8be566c1bebb334bf0f14442"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "62d3a9278e0480eea2fc45b9f2f42c4fec7c9eff53ad0bb449f87b460d53f70d"
+      },
+      "funding": {
+        "points": 90,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "1ba09045cfaa0d3eedf2a2ce9c983b85d96d9606c534b65c4576cd83674f23cf"
+      }
+    },
+    "ORCAUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "9970039898cee165660ac347be5b3b2bec9d6f706c65dec86f40f36bae4f3bf1"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "abad7c29e04787dcabaf0cbebce2f435205b783adee20c73489855a6dfed3312"
+      },
+      "funding": {
+        "points": 63,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "5efb42b520038049091fa582fbd936d36cdac9a1d352d67d525c30696a105be9"
+      }
+    },
+    "XPLUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "97e36452b09577bbb6add89eacde023b6624d4b953078de40945cdb0c5336a3f"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "5792fedf59d5c5f252983024714ef2e94ec7c20527f9e8afeef6950eb72cd0b4"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "adbad565abaf90954aa0f7fd7177d976037ae3ffbc1fc90bbac9a40631c1d355"
+      }
+    },
+    "WIFUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "3121c920673f3d7b693fc0756694759f71533631f5507bbe3e869b949880b6e2"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "fd36af367dc946470437bb948b885e90ec6f2863b75177fb3e585460694aaefe"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "0fbe36d3d354ed9fc9f0e3bb2b910956d4fd78b281098627e603b3badc632fa5"
+      }
+    },
+    "VIRTUALUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "d91d21455c8153a102a79d848995a367ffe427c1f1ca6c415f8dbcda56c60818"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "3518bab0bf7f65099fd0f4e016ccdbe94f473e0ff9384baf93900312437faf2c"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "940d439889d5c21a5dcd036a8af1444914e6b086d943049ecd246ea76f642788"
+      }
+    },
+    "PUMPFUNUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "4684083b898a77d2f94dbd3841edc3dd0b5c9ea4e97e047e9a8dfa643a348a81"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "612372a2ab82fae3ad06a1432eb1e7248f7c30a62bb087b1540d38a6813947e7"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "7be5a024003ba0e527678d07b7d13037ececefe890a191bd1185fca06f0287b9"
+      }
+    },
+    "OPNUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "388957193a8fb16ae5705be7ad62eab396d43700cf1561cb4aa4650a2561f8b2"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "b61e61d5e83c56944530fb425120a6166ee78f8d28be5f1eaeb48504aed2395c"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "a809349918b7495b967991a5fbbedfd191f8a77489a69df8dd54350f85894357"
+      }
+    },
+    "WLFIUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "58c14f275c59589071363928b29c22d96fee30c246171acc7d68183c2a917c6b"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "f22b81ddc02507b3f46f59bfacc6f3f2595cb08e553c9c1620dd6c842f6ce84f"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "4f81df6984dad9242902350ad1422057f69b3191c9fbe1959e442846308d123b"
+      }
+    },
+    "HUMAUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "5c846bd9953e596664929bc6b19b1d13394c907c16af3cbfcdf85c33ebfed70c"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "ae7a3a12a21247dab9663d0da696510df06bd3be9e4771e8cd178cc47ad1dfc7"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "e7b4ab7b182ccccb96ac6b2210a39ab69ae42476aa4c46d8ac0db4fa2c8d7268"
+      }
+    },
+    "PENGUUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "17b62eb39cf08d99cc2178d56511e494a440741a32f1a04b8c153030edf05cf3"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "3f96c03e87be9a2d61241593f2da2f22051b9ab2cb3a49e3863b312183e87c7c"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "9c89600b5397a80aa3120eac6878b26e337b6e90cef2aac3d43751d2686e5496"
+      }
+    },
+    "XMRUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "ebd626c4f7573093df570fdf3fe7703f9a89ddbd4f5fb483bd314543affdb900"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "faa0179850392ad5294609bb81f90674af34271e281a7d578f89ace215a01d2d"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "a589df3e720258e275da6e608b06dde7b042b426350b6d8b3019569fa3d78b0b"
+      }
+    },
+    "APTUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "4bf089cfb2bc31b5f45c27d7ea46ae24be35af7d3810ad5d75ccf43529cf3f19"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "5c8b002f99863fc61ccff0f44b311d407653fdbeae62ab24f0416c83140bf6d3"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "e4066a6826d3fb18edf429741cde283569fd32140204a734849b5965089a53ef"
+      }
+    },
+    "ROBOUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "cc3d89a6517c124f786c5e8b8af0c63c446690b6b477bfacbc33b6e537b35cc9"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "c9ca79bb43a83115979acda109f5ad67c4566a946202aca8b3956c1c666f2065"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "56e1e4ccb6543b13a2d376581fafc5758f716f17b93fd1b581e86124ae6150d0"
+      }
+    },
+    "ESPUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "7fab043f97a2b128323b96ac52318d6d87a3a582edd2c2fc6039b4ee5fa8d057"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "e13b47819386ae5f63ee298fa4ddc05a2e4850a3ab9e06ad5c32ac7c91a9d8d6"
+      },
+      "funding": {
+        "points": 154,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "4b9f482df96392f400cdce5da4eb7dcaf01bc0b91819799f481a20df207944ca"
+      }
+    },
+    "ENSOUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "5f0acfba18511b750a9fa5c0d2b696e909115658e0cb7a3cadeaf7632e620383"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "5a7311301ebd0c4b8d3889e7304ed682aaef8a8139efb20a9999aeae28e775ed"
+      },
+      "funding": {
+        "points": 90,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "7074f6049d6041a0559de2af8a82732015d12719299dea9845a33a9272f5b250"
+      }
+    },
+    "TONUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "9a9a32980a4b51bad7b3c70e25459552e41ac1148b2f61d38e80e0d914c08352"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "72d6e3f378b3d13e3f2c1a963bb90e4ed33bd9d3e23b175de4a4d61c43d06945"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "4c08a45185c425ff3d2d8196c26fc70acb9d9503f585ac93c47c741bf046a5d4"
+      }
+    },
+    "TRUMPUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "0d94d1804bb3b43a7ff9f8efbce860dc5896a72dc9f4cdd77e53686d53e2813a"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "193cb5f8b6c9ee6298b176cb6324f4817b513e9e1f5d8b0140add79c84740d2d"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "0dfdffcff7f0829959b0c15be46aec220b335f03fc9825fe6816fe40aa9b0c6c"
+      }
+    },
+    "GALAUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "80d5bc39c66cfd9b4bdd6036829015f5d9ae481878a77371a792248c68d83e35"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "d85a9806bc424d6d243cf1781c016db3637597485ba509bb4434e43595eb741a"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "b1ee779a39159aab25055c8fbbf4609020fc2473ef032964d007a0bc9600c526"
+      }
+    },
+    "IPUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "ff4c4d85a8aa44b37e2ddc1097aa328d3d92012180a7a3a9dd34bab979ab68ac"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "04cb1170afec903df67152caf18308ff280803412dfe4bd96bc9745a56a57f0b"
+      },
+      "funding": {
+        "points": 90,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "d8d6ea3c80752aa9eb674596e9362b9ae629638bd0fe0c2d642719cf71762ce7"
+      }
+    },
+    "MYXUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "01c73533956866a0ceca0f17f5d94971b3ac24b6dc3c67c0dc865f546b4ea7c6"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "48bc781ee2d02124b133e72156ff7d9592193601d7ea637911a0c2315e12e72f"
+      },
+      "funding": {
+        "points": 90,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "9552e4a51d4fd0acbb042dd9dae1f1d7357795ad384d01551cab55d3faf4c691"
+      }
+    },
+    "AGLDUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "3f8387843feaef086503c702172a668cbeb028f4b0d456b8c76108a9a4ad24b7"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "88d46a1c79b1948983f8aea5245d4965fe7763aa098e23f9f7d8c22127e8b4ab"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "7e7d85b2bf87cdf6fd362ecf67f0824d0a714ab88e5db11531f99d4d2920a344"
+      }
+    },
+    "ZROUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "985730421f95a2be96e6cf697462d5c41c4796eda4d95a30746b43dffd9e0f88"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "fe889a42c37087ebb5926170191d994b6f092999f04f9a4d676233bc1be9ddb1"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "076c8ae0d9ff39bbc6e66cd5e80af8c9393f20cd915c24ed9244eba89983e070"
+      }
+    },
+    "AXSUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "395efaf76bda4ca402182c9d74f890a9c3a077eb171662c68aac486df6c35ccb"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "67ec163c74c2fb83353e63e7af3db62fa9e07ba8c3d6ffd98026b136f51b6fd3"
+      },
+      "funding": {
+        "points": 91,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "cb8647024f7034c48c7220c8acecd69fe696cc928dc76e057898ffa58e0b27b5"
+      }
+    },
+    "MNTUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "d93249e64c8a826ba0019ae820094d239d7727367778ad8e4ae44f2a61792970"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "74ceb3cbfb4159e004ef296a6b7b302dc9d747d828665bdd6e73889625d153cc"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "6120ec0545c79856d84ad375a26618911c8a7d1a97953d2b8acbc38e7fcf92fb"
+      }
+    },
+    "ONDOUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "2939a12981e2587caef1da10c6a60129a221bc8828901d2d516a268325580bec"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "100bd25cbad34f8cead5842b0fbd3fa6e507974303e6280ad2f73a46f7ab1e0e"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "dd34c2a3299ee5846c4b5b2f509a03c5a08176768d208b0bfa77079d72ae6230"
+      }
+    },
+    "OPUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "dd8d52370aaa65bee748472ec1c33c700cda784a47625ccd5841025493038353"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "834c0b37ab0e86e54383f288726ca75f681f84392dd1fcabf27e3068bc804fe1"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "b5cca9ab7f2c7279a36668118ca082ece4a84e4dece95ec08e25e0d5bd867a0f"
+      }
+    },
+    "SIGNUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "603ecf4db8b23c87aab0cd8030174e37fab5750183cca354fbbbd8b19ecc6c8c"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "dedb68ead2008f6b18b5b44875810f6bc647d4a6b394c3abc6cd5d8f44eb5f68"
+      },
+      "funding": {
+        "points": 90,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "cfc77bdb472dd186f3ecca7ede6badd5d697c0e981121094cd85022c8db4de6e"
+      }
+    },
+    "LITUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "74aac79c9fdba3947615352fb8671621bfa5c2e5b82b026d57abb48e13f66162"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "e73fa6c2820c3bd608619ee62d14bba9ef7031148aa0f5c01d99f5552ceaa173"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "52c5014b6c402647142f38d2459c1ae09dcd30359be5d807d88d83d370de4add"
+      }
+    },
+    "SHIB1000USDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "5da0750df996f94ee1d89717e7ef1c19965b50795ec4d35eb98df409965601b6"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "6588840eed349f25bdabaa7837a4e23146eef676a040703a12ebbcb1a4fdedc8"
+      },
+      "funding": {
+        "points": 21,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "8c2ddff556728daffdd7455dcd430823edf6e413766970b01ddcbcdf58959b6f"
+      }
+    },
+    "CYSUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "fddefc3c0fedc0c80d977f77bba8ee85ea8158b7bfea9005dad477463ee28f2a"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "17040950103f1eebc5f11304570c407573711a197da35f5c83e3e9408d6f209f"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "d5282ceb14799d6f90c79498afd6809bdeea35081ab739162cf08edb9a435f8d"
+      }
+    },
+    "AIXBTUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "1af891fe8b4f5f032831c71ef78a32242b9ad68250fcfcb610e55626f9b44115"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "65e4e22fb6be6da65c346f79f55617758ed97d19251ddf9dc944fe55643c4b9c"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "b4e50cfe61d6129d36c1dfc11bd80b4585a3b2462747fff938ebdede56b6a6ab"
+      }
+    },
+    "1000BONKUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "a4e1a5b9c81b8c6b52808454382ec745475e7624ec600c8e42aa62213a306516"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "802879a72b1c9c01204b3df81c6a0a956a42fcbc6b08b08de1e51766a1f0f4de"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "f9d91e085e2550829cbbfabc9a43d2282b17640746faad7083236dabc75ccc19"
+      }
+    },
+    "POLUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "6eeb19ca42ffc209c4a827aa91533def7fb9d51800d1d5eb79ff71107bffb88e"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "d6b418b6e0cfaac72b080b8b32346aa03fc70fb3d3d858b856190bd20fa23479"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "9feffc2a6a4db8914ca41c77306e94dc3bd6ac8ec377e95492ffd0a81c6eac5c"
+      }
+    },
+    "SKRUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "f11b9e94302cdf6c1bc4a3f9dcb4e1d936ec2c2981827dab38bc63c51a7f5ade"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "8622642a44a140a156efd4a0889a31d72d497ef81e7dc4b0a7b1215f7d8df753"
+      },
+      "funding": {
+        "points": 51,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "289ec383f31339aad21d9d14e9c50e9bb18cfe46763387cfabc0a8281b864e90"
+      }
+    },
+    "HOLOUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "b2110f987a1bd566ecd1f6f3c8ff44a86e0d139f989446239eb22434a0dd57b1"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "374b8ddef7083120e555dfa4e15ba9ac9c866d777f343dfdbe3633377bb70852"
+      },
+      "funding": {
+        "points": 40,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "ee5c8a3343503a56e8ab521f636f94e12935683dbde9e0fa17170e34b0ef8960"
+      }
+    },
+    "BERAUSDT": {
+      "kline1m": {
+        "expected": 10080,
+        "present": 10080,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153460000,
+        "maxTs": 1772758200000,
+        "sha256": "167e0e026dc3f3d8068580cf7332e121ac287d265412eddfeb3b261106b818e4"
+      },
+      "oi5m": {
+        "expected": 2016,
+        "present": 2016,
+        "coveragePct": 100,
+        "missing": [],
+        "duplicates": 0,
+        "outOfOrder": 0,
+        "gaps": 0,
+        "minTs": 1772153700000,
+        "maxTs": 1772758200000,
+        "sha256": "30ca8832ab8ed6957dae47fc0a0c4978e03b7cc47cbfa1b706149aa9c1ed5b30"
+      },
+      "funding": {
+        "points": 57,
+        "minTs": 1772179200000,
+        "maxTs": 1772755200000,
+        "coverageNote": "last-known held between fundingRateTimestamp points",
+        "missingPoints": 0,
+        "sha256": "e10b8646cdf60a068414719565c2628bb4d50ef6744b589b4dd1b8130b488fed"
+      }
+    }
+  },
+  "summary": {
+    "symbols": 60,
+    "kline1mCoveragePct": 100,
+    "oi5mCoveragePct": 96.79,
+    "status": "bad",
+    "coveragePct": 99.46,
+    "missing1mCandlesTotal": 0,
+    "missingOi5mPointsTotal": 3886,
+    "missingFundingPointsTotal": 0,
+    "duplicatesTotal": 0,
+    "outOfOrderTotal": 0
+  }
+}

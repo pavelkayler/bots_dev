@@ -1618,7 +1618,13 @@ useEffect(() => {
     options?: { keepPreviousIfEmpty?: boolean; pageSize?: 10 | 25 | 50 }
   ) {
     const fetchSize = options?.pageSize ?? resultsPageSize;
-    const res = await getJobResults(activeJobId, { page: nextPage, sortKey: nextSortKey, sortDir: nextSortDir, pageSize: fetchSize });
+    const res = await getJobResults(activeJobId, {
+      page: nextPage,
+      sortKey: nextSortKey,
+      sortDir: nextSortDir,
+      pageSize: fetchSize,
+      positiveOnly: hideNegativeNetPnl,
+    });
     const nextResults = res.results ?? [];
     if (loopActive) {
       return;
@@ -2007,8 +2013,8 @@ useEffect(() => {
   const minTradesLimit = Math.max(0, Math.floor(Number(minTrades) || 0));
   const rawRows = isLoopDisplay ? loopAggRowsForRender : singleRowsForRender;
   const rowsForDisplay = rawRows.filter((row) => minTradesLimit <= 0 || row.trades >= minTradesLimit);
-  const baseDisplayRows = isLoopDisplay
-    ? (hideNegativeNetPnl ? rowsForDisplay.filter((row) => row.netPnl >= 0) : rowsForDisplay)
+  const baseDisplayRows = hideNegativeNetPnl
+    ? rowsForDisplay.filter((row) => row.netPnl >= 0)
     : rowsForDisplay;
   const displayedRows = baseDisplayRows.filter((row) => {
     if (filterValPnlPerTradePos && readValPnlPerTrade(row) <= 0) return false;

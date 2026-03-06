@@ -405,6 +405,10 @@ function writeFundingCache(symbol: string, rows: Map<number, string>) {
   fs.writeFileSync(fundingCachePath(symbol), body ? `${body}\n` : "", "utf8");
 }
 
+function warnCachePersistSkipped(scope: string, symbol: string, error: unknown) {
+  console.warn(`[receiveData] cache persist skipped (${scope}, ${symbol}): ${String((error as any)?.message ?? error)}`);
+}
+
 function alignToStep(ms: number, stepMs: number): number {
   return Math.floor(ms / stepMs) * stepMs;
 }
@@ -1058,7 +1062,11 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         completedSteps += 1;
         updateProgress({ completedSteps, currentSymbol: symbol, message: `Receiving ${symbol}` });
       }
-      writeOiCache(symbol, oiMap);
+      try {
+        writeOiCache(symbol, oiMap);
+      } catch (e: any) {
+        warnCachePersistSkipped("oi", symbol, e);
+      }
 
       const fundingMap = fundingBySymbol.get(symbol) ?? loadFundingCache(symbol);
       const fundingMissingWindows = fundingWindowsBySymbol.get(symbol) ?? [];
@@ -1075,7 +1083,11 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         completedSteps += 1;
         updateProgress({ completedSteps, currentSymbol: symbol, message: `Receiving ${symbol}` });
       }
-      writeFundingCache(symbol, fundingMap);
+      try {
+        writeFundingCache(symbol, fundingMap);
+      } catch (e: any) {
+        warnCachePersistSkipped("funding", symbol, e);
+      }
       if (fundingMap.size > 0) hasAnyFunding = true;
     };
 
@@ -1110,7 +1122,11 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
           bybitOi5m: oiMap,
         });
         if (candleRows.some((row) => typeof row?.oi === "string" && row.oi)) hasAnyOi = true;
-        writeSymbolCache(symbol, baseKlineInterval, merged);
+        try {
+          writeSymbolCache(symbol, baseKlineInterval, merged);
+        } catch (e: any) {
+          warnCachePersistSkipped(`kline_${baseKlineInterval}`, symbol, e);
+        }
         coinGlassStateBySymbol.set(symbol, "completed");
         await waitImmediate();
         return;
@@ -1180,7 +1196,11 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         coinGlassStateBySymbol.set(symbol, "retrying");
         updateProgress({ completedSteps, currentSymbol: symbol, message: `CoinGlass backfill ${symbol}` });
       }
-      writeCoinGlassOiCache(symbol, coinGlassMap);
+      try {
+        writeCoinGlassOiCache(symbol, coinGlassMap);
+      } catch (e: any) {
+        warnCachePersistSkipped("coinglass_oi", symbol, e);
+      }
 
       const candleRows = Array.from(merged.values())
         .filter((row) => Number(row?.startMs) >= resolvedRange.startMs && Number(row?.startMs) <= resolvedRange.endMs)
@@ -1198,7 +1218,11 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         return;
       }
       if (candleRows.some((row) => typeof row?.oi === "string" && row.oi)) hasAnyOi = true;
-      writeSymbolCache(symbol, baseKlineInterval, merged);
+      try {
+        writeSymbolCache(symbol, baseKlineInterval, merged);
+      } catch (e: any) {
+        warnCachePersistSkipped(`kline_${baseKlineInterval}`, symbol, e);
+      }
       coinGlassStateBySymbol.set(symbol, "completed");
       await waitImmediate();
     };
@@ -1297,7 +1321,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
 
 export type StartReceiveDataJobResult =
   | { jobId: string }
-  | { error: "universe_not_selected" | "invalid_range" | "dataset_target_error"; message?: string };
+  | { error: "universe_not_selected" | "invalid_range"; message?: string };
 
 export function startReceiveDataJob(input?: Partial<DatasetTarget>): StartReceiveDataJobResult {
   const persisted = readDatasetTarget();
@@ -1317,10 +1341,7 @@ export function startReceiveDataJob(input?: Partial<DatasetTarget>): StartReceiv
   try {
     writeDatasetTarget(target);
   } catch (e: any) {
-    return {
-      error: "dataset_target_error",
-      message: String(e?.message ?? "Failed to persist dataset target."),
-    };
+    console.warn(`[receiveData] dataset target persist skipped: ${String(e?.message ?? e)}`);
   }
 
   const id = randomUUID();

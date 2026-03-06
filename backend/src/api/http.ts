@@ -1148,10 +1148,6 @@ export function registerHttpRoutes(app: FastifyInstance) {
       return { error: "receive_start_failed", message: String(e?.message ?? "Failed to start receive job.") };
     }
     if ("error" in started) {
-      if (started.error === "dataset_target_error") {
-        reply.code(500);
-        return { error: started.error, ...(started.message ? { message: started.message } : {}) };
-      }
       reply.code(400);
       return { error: started.error };
     }

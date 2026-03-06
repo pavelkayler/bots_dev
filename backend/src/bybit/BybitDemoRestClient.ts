@@ -153,26 +153,26 @@ export class BybitDemoRestClient {
 
     let retried = retried10006;
     while (true) {
-      const signed = buildSignedHeaders({
-        apiKey: this.apiKey,
-        apiSecret: this.apiSecret,
-        recvWindow: this.recvWindow,
-        timestamp: nowMs(),
-        method,
-        queryString: q,
-        bodyString,
-      });
-
-      const headers: Record<string, string> = {
-        ...signed,
-        "Content-Type": "application/json",
-      };
-
-      const init: RequestInit = { method, headers };
-      if (method === "POST") init.body = bodyString;
-
       await this.acquire();
       try {
+        const signed = buildSignedHeaders({
+          apiKey: this.apiKey,
+          apiSecret: this.apiSecret,
+          recvWindow: this.recvWindow,
+          timestamp: nowMs(),
+          method,
+          queryString: q,
+          bodyString,
+        });
+
+        const headers: Record<string, string> = {
+          ...signed,
+          "Content-Type": "application/json",
+        };
+
+        const init: RequestInit = { method, headers };
+        if (method === "POST") init.body = bodyString;
+
         const res = await fetch(url, init);
 
         const text = await res.text();

@@ -501,7 +501,19 @@ export class DemoBroker {
       : roundUpToStep(levelsRaw.sl, meta.tickSize);
     const qtyDecimals = decimalsFromStep(meta.qtyStep);
     const priceDecimals = decimalsFromStep(meta.tickSize);
-    const orderLinkId = `${this.runId}:${args.symbol}:${st.entryAttempt + 1}`;
+    const nextAttempt = st.entryAttempt + 1;
+    const orderLinkId = `${this.runId}:${args.symbol}:${nextAttempt}:${args.nowMs}`;
+    st.pendingEntry = true;
+    st.executionState = "OPENING";
+    st.pendingOrderLinkId = orderLinkId;
+    st.placedAt = args.nowMs;
+    st.expiresAt = args.nowMs + this.cfg.entryTimeoutSec * 1000;
+    st.side = args.signal;
+    st.qty = qtyRounded;
+    st.entryPrice = priceRounded;
+    st.tpPrice = tpRounded;
+    st.slPrice = slRounded;
+    st.entryAttempt = nextAttempt;
 
     try {
       await this.rest.placeOrderLinear({
@@ -527,18 +539,6 @@ export class DemoBroker {
       symbol: args.symbol,
       payload: { side, qty: qtyRounded, price: priceRounded, tp: tpRounded, sl: slRounded, orderLinkId, reason: args.signalReason },
     });
-
-    st.pendingEntry = true;
-    st.entryAttempt += 1;
-    st.executionState = "OPENING";
-    st.pendingOrderLinkId = orderLinkId;
-    st.placedAt = args.nowMs;
-    st.expiresAt = args.nowMs + this.cfg.entryTimeoutSec * 1000;
-    st.side = args.signal;
-    st.qty = qtyRounded;
-    st.entryPrice = priceRounded;
-    st.tpPrice = tpRounded;
-    st.slPrice = slRounded;
   }
 
   private async reconcile() {

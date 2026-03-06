@@ -7,6 +7,7 @@ import { listUniverses, readUniverse } from "../../universe/api";
 import type { UniverseMeta } from "../../universe/types";
 import { deletePreset, listPresets, readPreset, savePreset } from "../../presets/api";
 import type { PresetMeta } from "../../presets/types";
+import { getApiBase } from "../../../shared/config/env";
 
 type Props = {
   sessionState?: SessionState;
@@ -173,7 +174,8 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
   const loadDoctor = useCallback(async () => {
     setDoctorLoading(true);
     try {
-      const res = await fetch("/api/doctor");
+      const api = getApiBase();
+      const res = await fetch(`${api}/api/doctor`);
       if (!res.ok) {
         setDoctorStatus(null);
         return;

@@ -24,8 +24,6 @@ export function DashboardPage() {
     wsSessionId,
     wsRunningSinceMs,
     streams,
-    universeSelectedId,
-    universeSymbolsCount,
     events,
     botStats,
     requestEventsTail,
@@ -41,8 +39,7 @@ export function DashboardPage() {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
-  const universeReady = Boolean(universeSelectedId) && universeSymbolsCount > 0;
-  const canStartFinal = canStart && universeReady;
+  const canStartFinal = canStart;
 
   const displayedRows = useMemo(() => {
     if (!activeOnly) return rows;
