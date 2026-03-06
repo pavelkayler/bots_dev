@@ -1,0 +1,18 @@
+
+> backend@1.0.0 dev
+> tsx watch src/index.ts
+
+{"level":30,"time":1772756342634,"pid":15824,"hostname":"HOME-PC","msg":"wsHub: /ws ready (dynamic universe via runtime config)"}
+{"level":30,"time":1772756342647,"pid":15824,"hostname":"HOME-PC","msg":"Server listening at http://127.0.0.1:8080"}
+{"level":30,"time":1772756342647,"pid":15824,"hostname":"HOME-PC","msg":"Server listening at http://10.16.149.123:8080"}
+{"level":30,"time":1772756342647,"pid":15824,"hostname":"HOME-PC","msg":"Server listening at http://192.168.1.107:8080"}
+{"level":30,"time":1772756342647,"pid":15824,"hostname":"HOME-PC","host":"0.0.0.0","port":8080,"msg":"backend listening"}
+{"level":30,"time":1772756346438,"pid":15824,"hostname":"HOME-PC","reqId":"req-1","req":{"method":"GET","url":"/api/dataset-target","host":"127.0.0.1:8080","remoteAddress":"127.0.0.1","remotePort":64182},"msg":"incoming request"}
+{"level":30,"time":1772756346445,"pid":15824,"hostname":"HOME-PC","reqId":"req-1","res":{"statusCode":200},"responseTime":7.454100012779236,"msg":"request completed"}
+{"level":30,"time":1772756374302,"pid":15824,"hostname":"HOME-PC","reqId":"req-2","req":{"method":"GET","url":"/api/optimizer/jobs/history?limit=25&offset=0&sortKey=endedAtMs&sortDir=desc","host":"localhost:8080","remoteAddress":"127.0.0.1","remotePort":56388},"msg":"incoming request"}
+{"level":30,"time":1772756374304,"pid":15824,"hostname":"HOME-PC","reqId":"req-2","res":{"statusCode":200},"responseTime":0.9391999840736389,"msg":"request completed"}
+{"level":30,"time":1772756374305,"pid":15824,"hostname":"HOME-PC","reqId":"req-3","req":{"method":"GET","url":"/api/session/status","host":"localhost:8080","remoteAddress":"127.0.0.1","remotePort":51764},"msg":"incoming request"}
+{"level":30,"time":1772756374306,"pid":15824,"hostname":"HOME-PC","reqId":"req-3","res":{"statusCode":200},"responseTime":0.7702999711036682,"msg":"request completed"}
+{"level":30,"time":1772756374306,"pid":15824,"hostname":"HOME-PC","reqId":"req-4","req":{"method":"GET","url":"/api/data/history","host":"localhost:8080","remoteAddress":"127.0.0.1","remotePort":64294},"msg":"incoming request"}
+{"level":30,"time":1772756374307,"pid":15824,"hostname":"HOME-PC","reqId":"req-4","res":{"statusCode":200},"responseTime":1.0507000088691711,"msg":"request completed"}
+^C^C

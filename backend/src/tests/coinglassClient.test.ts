@@ -64,6 +64,22 @@ describe("CoinGlass limiter and client", () => {
     })).rejects.toMatchObject({ name: "CoinGlassClientError", code: "coinglass_symbol_unsupported" });
   });
 
+  it("marks plan upgrade/interval restrictions as unsupported 1m plan", async () => {
+    const client = new CoinGlassClient({
+      apiKey: "x",
+      fetchImpl: async () => new Response(JSON.stringify({
+        code: "40001",
+        msg: "Upgrade plan",
+        success: false,
+      }), { status: 200 }),
+    });
+    await expect(client.fetchBybitOpenInterest1m({
+      bybitSymbol: "BTCUSDT",
+      startMs: 0,
+      endMs: 60_000,
+    })).rejects.toMatchObject({ name: "CoinGlassClientError", code: "coinglass_plan_unsupported_1m" });
+  });
+
   it("parses points and invokes wait callback after limiter saturation", async () => {
     let now = 0;
     const limiter = new CoinGlassLimiter({

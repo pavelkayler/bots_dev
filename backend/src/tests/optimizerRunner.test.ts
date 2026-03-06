@@ -6,9 +6,11 @@ import { SignalEngine } from "../engine/SignalEngine.js";
 import {
   buildCandidateKey,
   createReplayEventsFromCacheRows,
+  deriveWindowOiValue,
   flushNegativeBlacklist,
   fundingRateAtTs,
   loadNegativeBlacklist,
+  runOptimizationCore,
 } from "../optimizer/runner.js";
 
 const cwdStack: string[] = [];
@@ -118,5 +120,44 @@ describe("optimizer runner helpers", () => {
       }
     }
     expect(skipped).toBe(2);
+  });
+
+  it("keeps optimizer tf minimum at 15", async () => {
+    pushTempCwd();
+    const dir = path.join(process.cwd(), "data", "cache", "bybit_klines", "1");
+    fs.mkdirSync(dir, { recursive: true });
+    const fp = path.join(dir, "BTCUSDT.jsonl");
+    const rows = [
+      { symbol: "BTCUSDT", startMs: 0, open: "100", high: "101", low: "99", close: "100", oi: "10" },
+      { symbol: "BTCUSDT", startMs: 60_000, open: "101", high: "102", low: "100", close: "101", oi: "11" },
+      { symbol: "BTCUSDT", startMs: 120_000, open: "102", high: "103", low: "101", close: "102", oi: "12" },
+      { symbol: "BTCUSDT", startMs: 180_000, open: "103", high: "104", low: "102", close: "103", oi: "13" },
+      { symbol: "BTCUSDT", startMs: 240_000, open: "104", high: "105", low: "103", close: "104", oi: "14" },
+      { symbol: "BTCUSDT", startMs: 300_000, open: "105", high: "106", low: "104", close: "105", oi: "15" },
+      { symbol: "BTCUSDT", startMs: 360_000, open: "106", high: "107", low: "105", close: "106", oi: "16" },
+      { symbol: "BTCUSDT", startMs: 420_000, open: "107", high: "108", low: "106", close: "107", oi: "17" },
+      { symbol: "BTCUSDT", startMs: 480_000, open: "108", high: "109", low: "107", close: "108", oi: "18" },
+      { symbol: "BTCUSDT", startMs: 540_000, open: "109", high: "110", low: "108", close: "109", oi: "19" },
+      { symbol: "BTCUSDT", startMs: 600_000, open: "110", high: "111", low: "109", close: "110", oi: "20" },
+    ];
+    fs.writeFileSync(fp, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+
+    const out = await runOptimizationCore({
+      candidates: 1,
+      seed: 1,
+      directionMode: "both",
+      optTfMin: 15,
+      fixedParams: { priceThresholdPct: 0.1, oivThresholdPct: 0.1, tpRoiPct: 1, slRoiPct: 1, entryOffsetPct: 0, timeoutSec: 61, rearmMs: 60_000 },
+      cacheDataset: { symbols: ["BTCUSDT"], startMs: 0, endMs: 600_000, interval: "1" },
+    });
+    expect(out.cancelled).toBe(false);
+    expect(out.results.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("uses minute-level OI path aggregation for higher tf windows", () => {
+    const minutePath = [100, 110, 150, 130, 120];
+    const derived = deriveWindowOiValue(minutePath, 120);
+    expect(derived).toBe(122);
+    expect(derived).not.toBe(120);
   });
 });

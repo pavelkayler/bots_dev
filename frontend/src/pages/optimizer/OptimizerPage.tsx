@@ -35,6 +35,7 @@ import { deleteDatasetHistory, listDatasetHistories, type DatasetHistoryRecord }
 import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataReceiveApi";
 import { useInterval } from "../../shared/hooks/useInterval";
 import { getDatasetHistoryIds, getHistoryRunPayloadValue } from "../../features/optimizer/utils/historyPayload";
+import { OPTIMIZER_TF_ENABLED_VALUES, OPTIMIZER_TF_OPTIONS } from "../../features/optimizer/utils/timeframes";
 
 type OptimizerResultRow = OptimizationResult;
 type LoopOptimizerResultRow = OptimizerResultRow & { __runJobId: string };
@@ -921,9 +922,9 @@ useEffect(() => {
     if (savedDirection === "long" || savedDirection === "short" || savedDirection === "both") setDirectionMode(savedDirection);
     const savedOptTfRaw = localStorage.getItem(OPT_TF_STORAGE_KEY);
     if (savedOptTfRaw != null) {
-      const normalized = Math.max(15, Math.floor(Number(savedOptTfRaw) || 15));
-      const finalTf = [15, 30, 60, 120, 240].includes(normalized) ? normalized : 15;
-      setOptTfMin(String(finalTf));
+    const normalized = Math.max(15, Math.floor(Number(savedOptTfRaw) || 15));
+    const finalTf = OPTIMIZER_TF_ENABLED_VALUES.includes(normalized as any) ? normalized : 15;
+    setOptTfMin(String(finalTf));
       localStorage.setItem(OPT_TF_STORAGE_KEY, String(finalTf));
     }
     const savedMinTrades = localStorage.getItem(MIN_TRADES_STORAGE_KEY);
@@ -2229,13 +2230,11 @@ useEffect(() => {
               <Col md={2} sm={4} xs={6}>
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>signal window (min)</Form.Label>
-                <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(String(Math.max(15, Math.floor(Number(e.currentTarget.value) || 15))))}>
-                  <option value="15">15</option>
-                  <option value="30">30</option>
-                  <option value="60">60</option>
-                  <option value="120">120</option>
-                  <option value="240">240</option>
-                </Form.Select>
+                  <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(String(Math.max(15, Math.floor(Number(e.currentTarget.value) || 15))))}>
+                    {OPTIMIZER_TF_OPTIONS.map((tf) => (
+                      <option key={tf.value} value={String(tf.value)} disabled={tf.disabled}>{tf.value}</option>
+                    ))}
+                  </Form.Select>
                 </Form.Group>
               </Col>
               <Col md={2} sm={4} xs={6}>

@@ -108,11 +108,11 @@ High-level:
   - Tape APIs/recording are removed; optimizer inputs are dataset histories/cache only
   - data comes only from Receive Data cache + Dataset Target
   - price cache: `backend/data/cache/bybit_klines/` (1m candles)
-  - OI cache: Bybit 5-minute historical OI is the base (`backend/data/cache/bybit_open_interest/5min/`); CoinGlass fills only missing in-between 1m OI slots (`backend/data/cache/coinglass_open_interest/1min/`)
+  - OI cache: Bybit 5-minute historical OI is the active source (`backend/data/cache/bybit_open_interest/5min/`), expanded to minute rows via last-known Bybit values
   - funding cache: `backend/data/cache/bybit_funding_history/` from `/v5/market/funding/history`, applied as last-known value between points
   - Receive Data completion is strict: a dataset is marked done only when every required 1m candle has OI populated
-  - if CoinGlass minute backfill is required and rate-limited, Receive Data waits and continues (progress message shows reset countdown)
-  - if CoinGlass backfill is required but `COINGLASS_API_KEY` is missing, Receive Data fails with a clear dataset-quality error
+  - CoinGlass backfill code remains in repository but is disabled in current flow (`COINGLASS_ENABLED=0`)
+  - Receive Data progress includes backend ETA (`etaSec`) and UI shows `ETA: ~Xm Ys`
 
 - Optimization:
   - job-based API with **pause/resume/cancel**
@@ -129,7 +129,8 @@ High-level:
   - openInterestValue uses `oi * close` only; OI/OIV is not fabricated
   - fees are applied in pnl; funding fee is not applied in pnl (funding is direction gate only)
   - unfinished positions at range end are excluded from optimizer stats
-  - `signal window (min)` (previously tf(opt)) controls signal/reference cadence, while execution uses close-only replay ticks
+  - `signal window (min)` minimum is 15m (5m/10m options are visible but disabled)
+  - OI for signal windows uses underlying minute OI path inside each higher timeframe window (not only coarse boundary values)
 
 - Health:
   - `/api/doctor` shows disk/writable/ports warnings (incl. low disk)

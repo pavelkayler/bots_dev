@@ -14,13 +14,13 @@ Tape-based optimizer inputs are removed. All optimizer runs use dataset historie
 
 ## Data and replay mechanics
 - Price source: cached 1-minute klines from `backend/data/cache/bybit_klines/`.
-- OI source: Bybit 5-minute OI is authoritative on its boundary points; CoinGlass is used only to fill missing in-between 1-minute OI slots for Bybit symbols during Receive Data.
+- OI source: Bybit 5-minute OI is authoritative on boundary points and expanded to minute rows with last-known Bybit values.
 - Funding source: `/v5/market/funding/history` point series from `backend/data/cache/bybit_funding_history/`; replay applies last-known funding value between timestamps.
 - Execution replay supports two modes: default `closeOnly`, and optional `conservativeOhlc` for bar-range touch checks with worst-case tie resolution.
-- Decision cadence is signal-window based: new entry decisions are evaluated only on `tf(opt)` window-close timestamps (`ts % tfMs === 0`).
+- Decision cadence is signal-window based: new entry decisions are evaluated only on `tf(opt)` window-close timestamps (`ts % tfMs === 0`), with operational minimum 15m.
 - In-between 1m close ticks are execution-only: replay still calls broker tick processing each minute for fills/TP/SL/expiry, but does not generate new entry signals.
 - `priceMovePct` and `oivMovePct` references are defined between consecutive signal-window closes (previous window close vs current window close), not per-minute bucket rollover values.
-- `openInterestValue` uses `oi * close` only (no fabricated OI/OIV).
+- `openInterestValue` uses `oi * close` only (no fabricated OI/OIV); for higher signal windows, OI reference uses the underlying minute OI path within the window.
 - Replay still emits one ticker per 1m candle close (no synthetic intermediate ticks). In conservative mode, each ticker additionally carries that candle OHLC so fill/TP/SL checks can use bar ranges without path simulation.
 - Conservative worst-case policy: if TP and SL are both reachable in the same bar, SL is chosen so optimizer cannot gain optimistic sequencing advantages.
 - PnL applies trading fees; funding fee is not applied in pnl. Funding is used only for direction gating.
@@ -137,17 +137,17 @@ Data receive must respect Bybit IP limits. Progress UI should show:
 
 Current limiter target: strict 500 requests per 5 seconds.
 
-## CoinGlass 1m OI gap-fill (implemented)
+## CoinGlass 1m OI gap-fill (kept, currently disabled)
 
 - Bybit remains the primary source for historical data and runtime data remains Bybit-only.
-- CoinGlass is used only in Receive Data for historical Bybit OI minute gap fill.
+- CoinGlass integration code is kept only for future activation.
 - Scope is narrow:
   - OI only
   - 1-minute interval only
   - Bybit symbols only
   - no price/funding/other provider mixing
-- Receive Data enforces strict completion: it does not finish successfully until all required 1m candles have OI values.
-- CoinGlass Hobbyist throttle handling is built in (30 req/min window). When waiting, progress emits a reset countdown message.
+- Current production flow uses Bybit-only receive pipeline (`COINGLASS_ENABLED=0`).
+- CoinGlass is not used for pulling missing metrics in current mechanics.
 
 ## Receive Data QA + manifest
 
@@ -159,7 +159,7 @@ Each Receive Data run now writes a deterministic QA manifest tied to the dataset
 ### What is validated
 Per symbol, for the selected range:
 - 1m kline expected vs present points, coverage %, missing contiguous windows, duplicate timestamps, out-of-order transitions, and SHA-256 hash.
-- 5m Bybit open-interest points plus strict 1m candle-level OI completeness after CoinGlass gap fill.
+- 5m Bybit open-interest points and minute expansion via last-known Bybit values.
 - Funding history points present in range, min/max timestamp, missing expected 8h points, and SHA-256 hash of raw points.
 
 ### Status rules

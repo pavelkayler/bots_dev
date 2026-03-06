@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyOiSourcesToCandles } from "../dataset/receiveDataStore.js";
+import { applyBybitLastKnownOiToCandles, applyOiSourcesToCandles } from "../dataset/receiveDataStore.js";
 
 function makeCandles(startMs: number, minutes: number) {
   const out: Array<{ startMs: number; close: string; oi?: string; oiSource?: string }> = [];
@@ -48,5 +48,20 @@ describe("receive data OI merge", () => {
     expect(result.missingMinutes).toEqual([3 * 60_000, 4 * 60_000]);
     expect(candles[3]?.oi).toBeUndefined();
     expect(candles[4]?.oi).toBeUndefined();
+  });
+
+  it("fills minute candles from Bybit last-known OI in bybit-only mode", () => {
+    const candles = makeCandles(0, 6);
+    const bybit = new Map<number, string>([
+      [0, "1000"],
+      [5 * 60_000, "2000"],
+    ]);
+    applyBybitLastKnownOiToCandles({ candles, bybitOi5m: bybit });
+    expect(candles[0]?.oi).toBe("1000");
+    expect(candles[1]?.oi).toBe("1000");
+    expect(candles[2]?.oi).toBe("1000");
+    expect(candles[3]?.oi).toBe("1000");
+    expect(candles[4]?.oi).toBe("1000");
+    expect(candles[5]?.oi).toBe("2000");
   });
 });

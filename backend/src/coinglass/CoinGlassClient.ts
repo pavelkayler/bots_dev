@@ -171,39 +171,61 @@ export class CoinGlassClient {
     const waitedMs = await this.limiter.acquire();
     if (waitedMs > 0) args.onRateLimitWait?.(Math.max(1, Math.ceil(waitedMs / 1000)));
 
-    const url = new URL(`${this.baseUrl}/api/futures/open-interest/history`);
-    url.searchParams.set("exchange", "bybit");
-    url.searchParams.set("symbol", mapped);
-    url.searchParams.set("interval", "1m");
-    url.searchParams.set("startTime", String(startMs));
-    url.searchParams.set("endTime", String(endMs));
-    url.searchParams.set("limit", String(COINGLASS_POINT_LIMIT));
+    const paths = [
+      "/api/futures/open-interest/history",
+      "/api/futures/openInterest/ohlc-history",
+    ];
 
-    const res = await this.fetchImpl(url.toString(), {
-      method: "GET",
-      headers: {
-        "CG-API-KEY": this.apiKey,
-        Accept: "application/json",
-      },
-    });
+    let lastHttpStatus = 0;
+    for (const apiPath of paths) {
+      const url = new URL(`${this.baseUrl}${apiPath}`);
+      url.searchParams.set("exchange", "bybit");
+      url.searchParams.set("symbol", mapped);
+      url.searchParams.set("interval", "1m");
+      url.searchParams.set("startTime", String(startMs));
+      url.searchParams.set("endTime", String(endMs));
+      url.searchParams.set("limit", String(COINGLASS_POINT_LIMIT));
 
-    if (res.status === 429) {
-      const retryAfter = Math.max(1, Number(res.headers.get("retry-after") ?? 1));
-      throw new CoinGlassRateLimitError("CoinGlass rate limit reached.", retryAfter);
-    }
-    if (!res.ok) {
-      throw new CoinGlassClientError("coinglass_http_error", `CoinGlass request failed with status ${res.status}.`);
-    }
+      const res = await this.fetchImpl(url.toString(), {
+        method: "GET",
+        headers: {
+          "CG-API-KEY": this.apiKey,
+          Accept: "application/json",
+        },
+      });
+      lastHttpStatus = res.status;
 
-    const payload = (await res.json()) as unknown;
-    const code = Number((payload as any)?.code ?? (payload as any)?.retCode ?? 0);
-    if (Number.isFinite(code) && code !== 0) {
-      if (code === 429) {
-        throw new CoinGlassRateLimitError("CoinGlass rate limit reached.", 1);
+      if (res.status === 429) {
+        const retryAfter = Math.max(1, Number(res.headers.get("retry-after") ?? 1));
+        throw new CoinGlassRateLimitError("CoinGlass rate limit reached.", retryAfter);
       }
-      const msg = String((payload as any)?.msg ?? (payload as any)?.message ?? "CoinGlass API error");
-      throw new CoinGlassClientError("coinglass_api_error", msg);
+
+      const payload = (await res.json()) as any;
+      const codeText = String(payload?.code ?? payload?.retCode ?? "");
+      const msg = String(payload?.msg ?? payload?.message ?? "");
+      const isUpgradePlan = codeText === "40001"
+        || codeText === "403"
+        || /upgrade/i.test(msg)
+        || /interval is not available/i.test(msg);
+      if (isUpgradePlan) {
+        throw new CoinGlassClientError("coinglass_plan_unsupported_1m", msg || "CoinGlass plan does not support 1m interval.");
+      }
+
+      if (!res.ok) {
+        if (res.status >= 500 || res.status === 404) continue;
+        throw new CoinGlassClientError("coinglass_http_error", `CoinGlass request failed with status ${res.status}.`);
+      }
+
+      const codeNum = Number(payload?.code ?? payload?.retCode ?? 0);
+      if (Number.isFinite(codeNum) && codeNum !== 0) {
+        if (codeNum === 429) {
+          throw new CoinGlassRateLimitError("CoinGlass rate limit reached.", 1);
+        }
+        throw new CoinGlassClientError("coinglass_api_error", msg || "CoinGlass API error");
+      }
+      return parsePoints(payload);
     }
-    return parsePoints(payload);
+
+    throw new CoinGlassClientError("coinglass_http_error", `CoinGlass request failed with status ${lastHttpStatus || 500}.`);
   }
 }

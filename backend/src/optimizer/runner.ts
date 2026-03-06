@@ -290,6 +290,13 @@ function pctChange(now: number, ref: number): number | null {
   return ((now - ref) / ref) * 100;
 }
 
+export function deriveWindowOiValue(minuteOiValues: number[], fallback: number): number {
+  const values = minuteOiValues.filter((v) => Number.isFinite(v) && v >= 0);
+  if (!values.length) return Number.isFinite(fallback) ? fallback : 0;
+  const sum = values.reduce((acc, v) => acc + v, 0);
+  return sum / values.length;
+}
+
 function toFiniteNumber(value: unknown, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -956,6 +963,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         const cadenceBySymbol = new Map<string, {
           prevWindowClose: number | null;
           prevWindowOivClose: number | null;
+          minuteOiValues: number[];
         }>();
 
         let eventCounter = 0;
@@ -1012,17 +1020,24 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
             const cadenceState = cadenceBySymbol.get(event.symbol) ?? {
               prevWindowClose: null,
               prevWindowOivClose: null,
+              minuteOiValues: [] as number[],
             };
+            if (Number.isFinite(openInterestValue) && openInterestValue >= 0) {
+              cadenceState.minuteOiValues.push(openInterestValue);
+            }
 
             let signal: "LONG" | "SHORT" | null = null;
             let signalReason = "window_seed";
 
             if (cadenceState.prevWindowClose == null || cadenceState.prevWindowOivClose == null) {
+              const windowOiValue = deriveWindowOiValue(cadenceState.minuteOiValues, openInterestValue);
               if (Number.isFinite(markPrice) && markPrice > 0) cadenceState.prevWindowClose = markPrice;
-              if (Number.isFinite(openInterestValue) && openInterestValue >= 0) cadenceState.prevWindowOivClose = openInterestValue;
+              if (Number.isFinite(windowOiValue) && windowOiValue >= 0) cadenceState.prevWindowOivClose = windowOiValue;
+              cadenceState.minuteOiValues = [];
             } else {
+              const windowOiValue = deriveWindowOiValue(cadenceState.minuteOiValues, openInterestValue);
               const priceMovePct = pctChange(markPrice, cadenceState.prevWindowClose);
-              const oivMovePct = openInterestValue > 0 ? pctChange(openInterestValue, cadenceState.prevWindowOivClose) : null;
+              const oivMovePct = windowOiValue > 0 ? pctChange(windowOiValue, cadenceState.prevWindowOivClose) : null;
               const decision = signalEngine.decide({
                 priceMovePct,
                 oivMovePct,
@@ -1034,7 +1049,8 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
               if (decision.reason === "no_refs") decisionsNoRefs += 1;
               if (decision.reason === "ok_long" || decision.reason === "ok_short") signalsOk += 1;
               cadenceState.prevWindowClose = markPrice;
-              cadenceState.prevWindowOivClose = openInterestValue;
+              cadenceState.prevWindowOivClose = windowOiValue;
+              cadenceState.minuteOiValues = [];
             }
 
             cadenceBySymbol.set(event.symbol, cadenceState);

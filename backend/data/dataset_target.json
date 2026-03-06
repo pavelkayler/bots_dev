@@ -1,9 +1,9 @@
 {
-  "universeId": "10m_5pct",
+  "universeId": "8m_5pct",
   "range": {
     "kind": "preset",
-    "preset": "1mo"
+    "preset": "6h"
   },
   "interval": "15",
-  "updatedAtMs": 1772668429262
+  "updatedAtMs": 1772756151011
 }

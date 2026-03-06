@@ -26,6 +26,7 @@ type ReceiveProgress = {
   totalSteps: number;
   currentSymbol?: string;
   message?: string;
+  etaSec?: number;
 };
 
 export type ReceiveJobView = {
@@ -41,6 +42,50 @@ type ReceiveJobInternal = ReceiveJobView & {
   cancelRequested: boolean;
   lastProgressEmitMs: number;
 };
+
+export type CoinGlassStageState = "idle" | "running" | "waiting_rate_limit" | "retrying" | "failed" | "completed";
+
+export class SequentialCoinGlassHandoff {
+  private pending: string | null = null;
+
+  onBybitSymbolCompleted(symbol: string): string | null {
+    const next = this.pending;
+    this.pending = symbol;
+    return next;
+  }
+
+  drainPending(): string | null {
+    const next = this.pending;
+    this.pending = null;
+    return next;
+  }
+}
+
+export function estimateReceiveEtaSec(input: {
+  startedAtMs: number;
+  completedSteps: number;
+  totalSteps: number;
+  waitUntilMs?: number;
+  nowMs?: number;
+}): number | null {
+  const nowMs = input.nowMs ?? Date.now();
+  const completed = Math.max(0, Math.floor(Number(input.completedSteps) || 0));
+  const total = Math.max(0, Math.floor(Number(input.totalSteps) || 0));
+  if (total <= 0 || completed >= total) return 0;
+  const elapsedSec = Math.max(0, (nowMs - input.startedAtMs) / 1000);
+  const remainingSteps = Math.max(0, total - completed);
+  const throughput = completed > 0 && elapsedSec > 0 ? completed / elapsedSec : 0;
+  const stepEtaSec = throughput > 0 ? remainingSteps / throughput : null;
+  const waitEtaSec = input.waitUntilMs && input.waitUntilMs > nowMs ? (input.waitUntilMs - nowMs) / 1000 : 0;
+  if (stepEtaSec == null) {
+    return waitEtaSec > 0 ? Math.ceil(waitEtaSec) : null;
+  }
+  return Math.ceil(stepEtaSec + waitEtaSec);
+}
+
+export function isRetryableCoinGlassError(error: unknown): boolean {
+  return error instanceof CoinGlassRateLimitError;
+}
 
 type BybitApiResponse = {
   retCode?: number;
@@ -134,6 +179,7 @@ const COINGLASS_OI_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "coi
 const FUNDING_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "bybit_funding_history");
 const FUNDING_STEP_MS = 8 * 60 * 60_000;
 const MANIFEST_DIR = path.resolve(process.cwd(), "data", "cache", "manifests");
+const COINGLASS_ENABLED = process.env.COINGLASS_ENABLED === "1";
 
 type QaSeriesStats = {
   expected: number;
@@ -460,6 +506,31 @@ export function applyOiSourcesToCandles(input: {
     missingMinutes.push(ts);
   }
   return { missingMinutes };
+}
+
+export function applyBybitLastKnownOiToCandles(input: {
+  candles: Array<{ startMs: number; [k: string]: any }>;
+  bybitOi5m: Map<number, string>;
+}): void {
+  const samples = Array.from(input.bybitOi5m.entries())
+    .map(([timestamp, openInterest]) => ({ timestamp, openInterest }))
+    .sort((a, b) => a.timestamp - b.timestamp);
+  let ptr = -1;
+  for (const row of input.candles.sort((a, b) => Number(a.startMs) - Number(b.startMs))) {
+    const ts = Number(row?.startMs);
+    if (!Number.isFinite(ts)) continue;
+    while (ptr + 1 < samples.length && samples[ptr + 1]!.timestamp <= ts) ptr += 1;
+    if (ptr >= 0) {
+      const sample = samples[ptr]!;
+      row.oi = sample.openInterest;
+      row.oiTs = sample.timestamp;
+      row.oiSource = "bybit";
+      continue;
+    }
+    delete row.oi;
+    delete row.oiTs;
+    delete row.oiSource;
+  }
 }
 
 function roundPct(value: number): number {
@@ -853,24 +924,27 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
 
     const klineWindowsBySymbol = new Map<string, Array<{ startMs: number; endMs: number }>>();
     const oiWindowsBySymbol = new Map<string, Array<{ startMs: number; endMs: number }>>();
-    const coinGlassOiWindowsBySymbol = new Map<string, Array<{ startMs: number; endMs: number }>>();
     const fundingWindowsBySymbol = new Map<string, Array<{ startMs: number; endMs: number }>>();
     const mergedBySymbol = new Map<string, Map<number, any>>();
     const oiBySymbol = new Map<string, Map<number, string>>();
-    const coinGlassOiBySymbol = new Map<string, Map<number, string>>();
     const fundingBySymbol = new Map<string, Map<number, string>>();
     const oiIntervalMs = 5 * 60_000;
     const oiIntervalTime: OiIntervalTime = "5min";
     const coinGlassClient = new CoinGlassClient();
     const minuteMs = 60_000;
+    const handoff = new SequentialCoinGlassHandoff();
+    const coinGlassStateBySymbol = new Map<string, CoinGlassStageState>();
+    let coinGlassWaitUntilMs = 0;
 
-    const symbolValidation = validateCoinGlassBybitSymbols(symbols);
-    if (symbolValidation.unsupported.length > 0) {
-      job.status = "error";
-      job.error = toReceiveError("coinglass_symbol_unsupported", `Unsupported symbol mapping: ${symbolValidation.unsupported.join(", ")}`);
-      job.finishedAtMs = Date.now();
-      setProgress(job, { message: "CoinGlass symbol mapping failed." }, true);
-      return;
+    if (COINGLASS_ENABLED) {
+      const symbolValidation = validateCoinGlassBybitSymbols(symbols);
+      if (symbolValidation.unsupported.length > 0) {
+        job.status = "error";
+        job.error = toReceiveError("coinglass_symbol_unsupported", `Unsupported symbol mapping: ${symbolValidation.unsupported.join(", ")}`);
+        job.finishedAtMs = Date.now();
+        setProgress(job, { message: "CoinGlass symbol mapping failed." }, true);
+        return;
+      }
     }
 
     let totalSteps = 0;
@@ -895,35 +969,32 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
       oiWindowsBySymbol.set(symbol, oiMissingWindows);
       totalSteps += oiMissingWindows.length;
 
-      const coinGlassMap = loadCoinGlassOiCache(symbol);
-      coinGlassOiBySymbol.set(symbol, coinGlassMap);
-      const candleMinutes = Array.from(merged.keys())
-        .filter((ts) => ts >= resolvedRange.startMs && ts <= resolvedRange.endMs)
-        .sort((a, b) => a - b);
-      const missingMinuteWindows = computeMissingMinutesBetweenBybitBoundaries({
-        candleMinutes,
-        bybitOi5m: oiMap,
-        coinglassOi1m: coinGlassMap,
-      });
-      const coinGlassRequestWindows: Array<{ startMs: number; endMs: number }> = [];
-      const coinGlassChunkMs = minuteMs * 500;
-      for (const window of missingMinuteWindows) {
-        for (let cursor = window.startMs; cursor <= window.endMs; cursor += coinGlassChunkMs) {
-          const chunkEnd = Math.min(window.endMs, cursor + coinGlassChunkMs - minuteMs);
-          coinGlassRequestWindows.push({ startMs: cursor, endMs: chunkEnd });
-        }
-      }
-      coinGlassOiWindowsBySymbol.set(symbol, coinGlassRequestWindows);
-      totalSteps += coinGlassRequestWindows.length;
-
       const fundingMap = loadFundingCache(symbol);
       fundingBySymbol.set(symbol, fundingMap);
       const fundingMissingWindows = computeMissingWindows(new Set(fundingMap.keys()), resolvedRange.startMs, resolvedRange.endMs, FUNDING_STEP_MS);
       fundingWindowsBySymbol.set(symbol, fundingMissingWindows);
       totalSteps += fundingMissingWindows.length;
+      coinGlassStateBySymbol.set(symbol, "idle");
     }
 
-    setProgress(job, { totalSteps, completedSteps: 0, message: "Starting receive." }, true);
+    const updateProgress = (patch: Partial<ReceiveProgress>, force = false) => {
+      const now = Date.now();
+      const nextCompleted = patch.completedSteps ?? job.progress.completedSteps;
+      const nextTotal = patch.totalSteps ?? job.progress.totalSteps;
+      const etaSec = estimateReceiveEtaSec({
+        startedAtMs: job.startedAtMs ?? now,
+        completedSteps: nextCompleted,
+        totalSteps: nextTotal,
+        ...(coinGlassWaitUntilMs > now ? { waitUntilMs: coinGlassWaitUntilMs } : {}),
+        nowMs: now,
+      });
+      setProgress(job, {
+        ...patch,
+        ...(etaSec == null ? {} : { etaSec }),
+      }, force);
+    };
+
+    updateProgress({ totalSteps, completedSteps: 0, message: "Starting receive." }, true);
 
     let completedSteps = 0;
     const symbolErrors: string[] = [];
@@ -931,14 +1002,11 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     let hasAnyOi = false;
     let hasAnyFunding = false;
 
-    for (const symbol of symbols) {
-      if (job.cancelRequested) break;
-      setProgress(job, { currentSymbol: symbol, message: `Receiving ${symbol}` }, true);
-
+    const processBybitForSymbol = async (symbol: string) => {
       const merged = mergedBySymbol.get(symbol) ?? loadSymbolCache(symbol, baseKlineInterval);
       const klineWindows = klineWindowsBySymbol.get(symbol) ?? [];
       for (const window of klineWindows) {
-        if (job.cancelRequested) break;
+        if (job.cancelRequested) return;
         try {
           const fetchStart = window.startMs;
           const fetchEnd = window.endMs + intervalToMs(baseKlineInterval) - 1;
@@ -965,16 +1033,16 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         } catch (e: any) {
           symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
           failedSymbols.add(symbol);
-          break;
+          return;
         }
         completedSteps += 1;
-        setProgress(job, { completedSteps, currentSymbol: symbol });
+        updateProgress({ completedSteps, currentSymbol: symbol, message: `Receiving ${symbol}` });
       }
 
       const oiMap = oiBySymbol.get(symbol) ?? loadOiCache(symbol);
       const oiMissingWindows = oiWindowsBySymbol.get(symbol) ?? [];
       for (const window of oiMissingWindows) {
-        if (job.cancelRequested) break;
+        if (job.cancelRequested) return;
         try {
           let cursor: string | undefined;
           do {
@@ -985,23 +1053,84 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         } catch (e: any) {
           symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
           failedSymbols.add(symbol);
-          break;
+          return;
         }
         completedSteps += 1;
-        setProgress(job, { completedSteps, currentSymbol: symbol });
+        updateProgress({ completedSteps, currentSymbol: symbol, message: `Receiving ${symbol}` });
       }
       writeOiCache(symbol, oiMap);
 
-      const coinGlassMap = coinGlassOiBySymbol.get(symbol) ?? loadCoinGlassOiCache(symbol);
-      const coinGlassWindows = coinGlassOiWindowsBySymbol.get(symbol) ?? [];
-      const missingOiMinuteChunks = coinGlassWindows.length > 0;
-      if (missingOiMinuteChunks && !coinGlassClient.hasApiKey()) {
-        symbolErrors.push(`${symbol}: COINGLASS_API_KEY is missing for 1m OI gap fill.`);
-        failedSymbols.add(symbol);
+      const fundingMap = fundingBySymbol.get(symbol) ?? loadFundingCache(symbol);
+      const fundingMissingWindows = fundingWindowsBySymbol.get(symbol) ?? [];
+      for (const window of fundingMissingWindows) {
+        if (job.cancelRequested) return;
+        try {
+          const points = await fetchFundingHistoryWindow(symbol, window.startMs, window.endMs);
+          for (const point of points) fundingMap.set(point.timestamp, point.fundingRate);
+        } catch (e: any) {
+          symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
+          failedSymbols.add(symbol);
+          return;
+        }
+        completedSteps += 1;
+        updateProgress({ completedSteps, currentSymbol: symbol, message: `Receiving ${symbol}` });
       }
-      for (const window of coinGlassWindows) {
-        if (job.cancelRequested) break;
-        if (failedSymbols.has(symbol)) break;
+      writeFundingCache(symbol, fundingMap);
+      if (fundingMap.size > 0) hasAnyFunding = true;
+    };
+
+    const processCoinGlassForSymbol = async (symbol: string) => {
+      if (failedSymbols.has(symbol) || job.cancelRequested) return;
+      const merged = mergedBySymbol.get(symbol) ?? loadSymbolCache(symbol, baseKlineInterval);
+      const oiMap = oiBySymbol.get(symbol) ?? loadOiCache(symbol);
+      const coinGlassMap = loadCoinGlassOiCache(symbol);
+      const candleMinutes = Array.from(merged.keys())
+        .filter((ts) => ts >= resolvedRange.startMs && ts <= resolvedRange.endMs)
+        .sort((a, b) => a - b);
+      const missingMinuteWindows = computeMissingMinutesBetweenBybitBoundaries({
+        candleMinutes,
+        bybitOi5m: oiMap,
+        coinglassOi1m: coinGlassMap,
+      });
+      const coinGlassRequestWindows: Array<{ startMs: number; endMs: number }> = [];
+      const coinGlassChunkMs = minuteMs * 500;
+      for (const window of missingMinuteWindows) {
+        for (let cursor = window.startMs; cursor <= window.endMs; cursor += coinGlassChunkMs) {
+          const chunkEnd = Math.min(window.endMs, cursor + coinGlassChunkMs - minuteMs);
+          coinGlassRequestWindows.push({ startMs: cursor, endMs: chunkEnd });
+        }
+      }
+
+      if (!COINGLASS_ENABLED) {
+        const candleRows = Array.from(merged.values())
+          .filter((row) => Number(row?.startMs) >= resolvedRange.startMs && Number(row?.startMs) <= resolvedRange.endMs)
+          .sort((a, b) => Number(a.startMs) - Number(b.startMs));
+        applyBybitLastKnownOiToCandles({
+          candles: candleRows,
+          bybitOi5m: oiMap,
+        });
+        if (candleRows.some((row) => typeof row?.oi === "string" && row.oi)) hasAnyOi = true;
+        writeSymbolCache(symbol, baseKlineInterval, merged);
+        coinGlassStateBySymbol.set(symbol, "completed");
+        await waitImmediate();
+        return;
+      }
+
+      if (coinGlassRequestWindows.length > 0) {
+        totalSteps += coinGlassRequestWindows.length;
+        if (!coinGlassClient.hasApiKey()) {
+          symbolErrors.push(`${symbol}: COINGLASS_API_KEY is missing for 1m OI gap fill.`);
+          failedSymbols.add(symbol);
+          coinGlassStateBySymbol.set(symbol, "failed");
+          return;
+        }
+      }
+
+      updateProgress({ totalSteps, currentSymbol: symbol, message: `CoinGlass backfill ${symbol}` }, true);
+      coinGlassStateBySymbol.set(symbol, "running");
+
+      for (const window of coinGlassRequestWindows) {
+        if (job.cancelRequested || failedSymbols.has(symbol)) break;
         let doneWindow = false;
         while (!doneWindow && !job.cancelRequested) {
           try {
@@ -1010,7 +1139,9 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
               startMs: window.startMs,
               endMs: window.endMs,
               onRateLimitWait: (waitSec) => {
-                setProgress(job, {
+                coinGlassStateBySymbol.set(symbol, "waiting_rate_limit");
+                coinGlassWaitUntilMs = Date.now() + waitSec * 1000;
+                updateProgress({
                   currentSymbol: symbol,
                   message: `CoinGlass limit resets in ${waitSec} sec`,
                 }, true);
@@ -1021,42 +1152,35 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
               if (point.timestamp % oiIntervalMs === 0 && oiMap.has(point.timestamp)) continue;
               coinGlassMap.set(point.timestamp, point.openInterest);
             }
+            coinGlassStateBySymbol.set(symbol, "running");
+            coinGlassWaitUntilMs = 0;
             doneWindow = true;
           } catch (e: any) {
-            if (e instanceof CoinGlassRateLimitError) {
-              setProgress(job, { currentSymbol: symbol, message: `CoinGlass limit resets in ${e.retryAfterSec} sec` }, true);
-              await sleep(e.retryAfterSec * 1000);
+            if (isRetryableCoinGlassError(e)) {
+              const retryAfterSec = e instanceof CoinGlassRateLimitError ? e.retryAfterSec : 1;
+              coinGlassStateBySymbol.set(symbol, "waiting_rate_limit");
+              coinGlassWaitUntilMs = Date.now() + retryAfterSec * 1000;
+              updateProgress({
+                currentSymbol: symbol,
+                message: `Waiting for CoinGlass rate limit reset`,
+              }, true);
+              await sleep(retryAfterSec * 1000);
               continue;
             }
             const message = e instanceof CoinGlassClientError ? e.message : String(e?.message ?? e);
-            symbolErrors.push(`${symbol}: ${message}`);
+            const codePrefix = e instanceof CoinGlassClientError ? `[${e.code}] ` : "";
+            symbolErrors.push(`${symbol}: ${codePrefix}${message}`);
             failedSymbols.add(symbol);
-            break;
+            coinGlassStateBySymbol.set(symbol, "failed");
+            return;
           }
         }
-        if (failedSymbols.has(symbol)) break;
         completedSteps += 1;
-        setProgress(job, { completedSteps, currentSymbol: symbol });
+        coinGlassWaitUntilMs = 0;
+        coinGlassStateBySymbol.set(symbol, "retrying");
+        updateProgress({ completedSteps, currentSymbol: symbol, message: `CoinGlass backfill ${symbol}` });
       }
       writeCoinGlassOiCache(symbol, coinGlassMap);
-
-      const fundingMap = fundingBySymbol.get(symbol) ?? loadFundingCache(symbol);
-      const fundingMissingWindows = fundingWindowsBySymbol.get(symbol) ?? [];
-      for (const window of fundingMissingWindows) {
-        if (job.cancelRequested) break;
-        try {
-          const points = await fetchFundingHistoryWindow(symbol, window.startMs, window.endMs);
-          for (const point of points) fundingMap.set(point.timestamp, point.fundingRate);
-        } catch (e: any) {
-          symbolErrors.push(`${symbol}: ${String(e?.message ?? e)}`);
-          failedSymbols.add(symbol);
-          break;
-        }
-        completedSteps += 1;
-        setProgress(job, { completedSteps, currentSymbol: symbol });
-      }
-      writeFundingCache(symbol, fundingMap);
-      if (fundingMap.size > 0) hasAnyFunding = true;
 
       const candleRows = Array.from(merged.values())
         .filter((row) => Number(row?.startMs) >= resolvedRange.startMs && Number(row?.startMs) <= resolvedRange.endMs)
@@ -1070,31 +1194,71 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
         const firstMissing = new Date(applied.missingMinutes[0]!).toISOString();
         symbolErrors.push(`${symbol}: missing minute OI coverage (count=${applied.missingMinutes.length}, first=${firstMissing})`);
         failedSymbols.add(symbol);
+        coinGlassStateBySymbol.set(symbol, "failed");
+        return;
       }
       if (candleRows.some((row) => typeof row?.oi === "string" && row.oi)) hasAnyOi = true;
       writeSymbolCache(symbol, baseKlineInterval, merged);
+      coinGlassStateBySymbol.set(symbol, "completed");
       await waitImmediate();
+    };
+
+    for (const symbol of symbols) {
+      if (job.cancelRequested) break;
+      updateProgress({ currentSymbol: symbol, message: `Receiving ${symbol}` }, true);
+      await processBybitForSymbol(symbol);
+      const readyCoinGlassSymbol = handoff.onBybitSymbolCompleted(symbol);
+      if (readyCoinGlassSymbol) {
+        await processCoinGlassForSymbol(readyCoinGlassSymbol);
+      }
+      if (symbolErrors.length > 0) break;
+    }
+
+    if (!job.cancelRequested && symbolErrors.length === 0) {
+      const finalPending = handoff.drainPending();
+      if (finalPending) {
+        await processCoinGlassForSymbol(finalPending);
+      }
     }
 
     if (job.cancelRequested) {
       job.status = "cancelled";
       job.finishedAtMs = Date.now();
-      setProgress(job, { message: "Cancelled." }, true);
+      setProgress(job, { message: "Cancelled.", etaSec: 0 }, true);
       return;
     }
 
     if (symbolErrors.length > 0) {
+      const joined = symbolErrors.slice(0, 3).join(" | ");
+      const first = symbolErrors[0] ?? "";
+      const isKeyMissing = first.includes("COINGLASS_API_KEY is missing");
+      const isSymbolUnsupported = first.includes("Unsupported symbol mapping");
+      const isPlanUnsupported = first.includes("[coinglass_plan_unsupported_1m]")
+        || /upgrade plan/i.test(first)
+        || /interval is not available/i.test(first);
       job.status = "error";
-      job.error = toReceiveError("dataset_quality_error", symbolErrors.slice(0, 3).join(" | "));
+      job.error = isKeyMissing
+        ? toReceiveError("coinglass_key_missing", first)
+        : isSymbolUnsupported
+          ? toReceiveError("coinglass_symbol_unsupported", first)
+          : isPlanUnsupported
+            ? toReceiveError("coinglass_plan_unsupported_1m", first)
+          : toReceiveError("dataset_quality_error", joined);
       job.finishedAtMs = Date.now();
-      setProgress(job, { message: "Receive failed: incomplete minute OI coverage." }, true);
+      updateProgress({
+        message: isKeyMissing || isSymbolUnsupported
+          ? "Receive failed: CoinGlass configuration error."
+          : isPlanUnsupported
+            ? "Receive failed: CoinGlass plan does not support 1m OI."
+          : "Receive failed: incomplete minute OI coverage."
+      }, true);
       return;
     }
 
-    setProgress(job, { message: "Completed." }, true);
+    updateProgress({ message: "Completed.", etaSec: 0 }, true);
     job.status = "done";
     job.finishedAtMs = Date.now();
-    setProgress(job, { completedSteps: job.progress.totalSteps, pct: 100 }, true);
+    updateProgress({ completedSteps: job.progress.totalSteps, pct: 100, etaSec: 0 }, true);
     try {
       const okSymbols = symbols.filter((s) => !failedSymbols.has(s));
       const universeName = universe.meta?.name ?? target.universeId;
@@ -1127,11 +1291,15 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
     job.status = "error";
     job.error = toReceiveError("receive_failed", String(e?.message ?? e));
     job.finishedAtMs = Date.now();
-    setProgress(job, { message: "Receive failed." }, true);
+    setProgress(job, { message: "Receive failed.", etaSec: 0 }, true);
   }
 }
 
-export function startReceiveDataJob(input?: Partial<DatasetTarget>) {
+export type StartReceiveDataJobResult =
+  | { jobId: string }
+  | { error: "universe_not_selected" | "invalid_range" | "dataset_target_error"; message?: string };
+
+export function startReceiveDataJob(input?: Partial<DatasetTarget>): StartReceiveDataJobResult {
   const persisted = readDatasetTarget();
   const target: DatasetTarget = {
     universeId: typeof input?.universeId === "string" || input?.universeId === null ? input.universeId : persisted.universeId,
@@ -1146,7 +1314,14 @@ export function startReceiveDataJob(input?: Partial<DatasetTarget>) {
     return { error: "invalid_range" as const };
   }
 
-  writeDatasetTarget(target);
+  try {
+    writeDatasetTarget(target);
+  } catch (e: any) {
+    return {
+      error: "dataset_target_error",
+      message: String(e?.message ?? "Failed to persist dataset target."),
+    };
+  }
 
   const id = randomUUID();
   jobs.set(id, {

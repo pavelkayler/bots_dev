@@ -12,6 +12,7 @@ export type ReceiveDataJob = {
     totalSteps: number;
     currentSymbol?: string;
     message?: string;
+    etaSec?: number;
   };
   startedAtMs?: number;
   finishedAtMs?: number;

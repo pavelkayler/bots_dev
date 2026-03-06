@@ -38,9 +38,10 @@ Enforcement behavior:
 - Bybit remains primary and authoritative.
 - Receive Data uses Bybit 1m klines as the base timeline.
 - Bybit 5m historical OI points stay authoritative on their timestamps.
-- CoinGlass is used only to fill missing in-between 1m OI points for Bybit symbols.
-- Completion is strict: if any 1m candle in the target range is missing OI, the job ends with error (not done).
-- CoinGlass requests are limiter-gated for Hobbyist limits (30 requests/min); when a wait is required, progress message reports reset countdown.
+- Current production receive flow is Bybit-only.
+- Minute rows are populated from last-known Bybit OI values between 5m boundary points.
+- CoinGlass integration code is preserved for later activation but disabled (`COINGLASS_ENABLED=0`).
+- Progress includes backend ETA for receive jobs.
 
 Recommended soak procedure:
 1) Start session and let it run for 24h.
