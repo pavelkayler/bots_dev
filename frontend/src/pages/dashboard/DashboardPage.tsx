@@ -9,9 +9,9 @@ import { SessionMetaBar } from "./components/SessionMetaBar";
 import { BotSummaryBar } from "./components/BotSummaryBar";
 import type { SymbolRow } from "../../shared/types/domain";
 import { ExecutionPanel } from "../../features/config/components/ExecutionPanel";
-import { SessionSummaryPanel } from "../../features/summary/components/SessionSummaryPanel";
 import { TradeStatsTabs } from "../../features/stats/components/TradeStatsTabs";
-import { BotExecutionSelectors } from "../../features/bots/components/BotExecutionSelectors";
+import { useProcessStatus } from "../../features/session/hooks/useProcessStatus";
+import { ProcessIndicatorsBar } from "../../features/session/components/ProcessIndicatorsBar";
 
 export function DashboardPage() {
   const {
@@ -30,6 +30,7 @@ export function DashboardPage() {
   } = useWsFeed();
 
   const { status, busy, error, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
+  const { status: processStatus } = useProcessStatus();
 
   const [activeOnly, setActiveOnly] = useState(true);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -115,10 +116,8 @@ export function DashboardPage() {
         />
 
         <BotSummaryBar sessionState={status.sessionState} botStats={botStats} uptimeText={uptimeText} />
+        <ProcessIndicatorsBar status={processStatus} />
 
-        <SessionSummaryPanel sessionState={status.sessionState} sessionId={status.sessionId} executionMode={botStats.executionMode ?? "paper"} suppressStopRefresh={false} />
-
-        <BotExecutionSelectors />
         <ExecutionPanel />
 
         <Card className="mb-3">

@@ -1,11 +1,14 @@
 # 17 Optimizer (cached REST dataset + search)
 
-Last update: 2026-03-04
+Last update: 2026-03-07
 
 This document describes the Optimizer feature used to tune paper-trading parameters via cached historical market data and deterministic replay.
 
 Tape-based optimizer inputs are removed. All optimizer runs use dataset histories/cache only.
-Optimizer is bot-aware through `selectedBotId` + `selectedBotPresetId` (current registry has one bot).
+Optimizer is bot-aware through `selectedBotId` + `selectedBotPresetId`.
+Current bot ids:
+- `oi-momentum-v1`
+- `signal-multi-factor-v1`
 
 ## Goals
 - Record market dataset histories (JSONL) while runtime session is **RUNNING**.
@@ -18,7 +21,7 @@ Optimizer is bot-aware through `selectedBotId` + `selectedBotPresetId` (current 
 - OI source: Bybit 5-minute OI is authoritative on boundary points and expanded to minute rows with last-known Bybit values.
 - Funding source: `/v5/market/funding/history` point series from `backend/data/cache/bybit_funding_history/`; replay applies last-known funding value between timestamps.
 - Execution replay supports two modes: default `closeOnly`, and optional `conservativeOhlc` for bar-range touch checks with worst-case tie resolution.
-- Decision cadence is signal-window based: new entry decisions are evaluated only on `tf(opt)` window-close timestamps (`ts % tfMs === 0`), with operational minimum 15m.
+- Decision cadence is signal-window based: new entry decisions are evaluated only on `tf(opt)` window-close timestamps (`ts % tfMs === 0`), with operational minimum 5m.
 - In-between 1m close ticks are execution-only: replay still calls broker tick processing each minute for fills/TP/SL/expiry, but does not generate new entry signals.
 - `priceMovePct` and `oivMovePct` references are defined between consecutive signal-window closes (previous window close vs current window close), not per-minute bucket rollover values.
 - `openInterestValue` uses `oi * close` only (no fabricated OI/OIV); for higher signal windows, OI reference uses the underlying minute OI path within the window.
@@ -44,6 +47,12 @@ Main sections:
 - `seed`: RNG seed (base seed)
 - `directionMode`: `both | long | short`
 - `signal window (min)` (tf(opt)): optimization signal/reference cadence window
+- `datasetMode`: `snapshot` (static range) or `followTail` (fixed start + moving end at current time on each run)
+
+### Bot model behavior
+- `oi-momentum-v1`: classic threshold model (`priceMovePct` + `oivMovePct` with funding gate).
+- `signal-multi-factor-v1`: weighted multi-factor score from available replay factors (`priceMovePct`, `oivMovePct`, funding contribution/sign gate).
+- Both models use the same execution simulator (fees, TP/SL, timeout, rearm, direction mode) so historical comparisons stay consistent.
 
 ### Filters
 - `minTrades`: require at least N closed trades per candidate (server-side)
@@ -85,6 +94,9 @@ Blacklist and seed shifting are scoped by:
 Optimizer supports repeated runs:
 - Run N times (`runsCount`)
 - Or infinite loop until Stop
+- Dataset mode:
+  - `snapshot`: static selected dataset histories
+  - `followTail`: user sets `timeRangeFromTs`, and `timeRangeToTs` is resolved to "now" on every run start
 
 Loop state is persisted to disk and exposes:
 - run index (i/N)
@@ -99,6 +111,17 @@ Each result row includes:
 - expectancy, profitFactor, max drawdown
 - execution counters (placed/filled/expired)
 - params (priceTh/oivTh/tp/sl/offset/timeoutSec/rearmMs)
+
+## Completed / stopped run history
+- Loop runs are aggregated by loop launch (`loopId`) into one primary session row in history.
+- Session row includes:
+  - latest terminal status
+  - loops completed/total
+  - aggregated positive/total row counters
+  - best net PnL across child runs
+- Expanded view remains drill-down oriented:
+  - non-session rows show candidate table with copy/export actions
+  - session rows show child runs list with actions to copy best settings or export best trades per child run.
 
 ## Copy to settings
 - “Copy to settings” writes a pending patch to localStorage.
@@ -151,6 +174,11 @@ Current limiter target: strict 500 requests per 5 seconds.
   - no price/funding/other provider mixing
 - Current production flow uses Bybit-only receive pipeline (`COINGLASS_ENABLED=0`).
 - CoinGlass is not used for pulling missing metrics in current mechanics.
+
+## Recorder foundation for minute OI enrichment
+- A dedicated recorder foundation collects intermediate minute OI points from Bybit WS and stores them for later enrichment.
+- Recorder keeps 5-minute boundary authority with Bybit historical OI by skipping boundary timestamps and collecting only in-between minute slots.
+- Stored rows remain timestamp-addressable so optimizer dataset enrichment can merge additional metric fields without replacing whole records.
 
 ## Receive Data QA + manifest
 

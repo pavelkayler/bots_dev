@@ -122,7 +122,7 @@ describe("optimizer runner helpers", () => {
     expect(skipped).toBe(2);
   });
 
-  it("keeps optimizer tf minimum at 15", async () => {
+  it("supports optimizer tf 5 and 10 with minute cache replay", async () => {
     pushTempCwd();
     const dir = path.join(process.cwd(), "data", "cache", "bybit_klines", "1");
     fs.mkdirSync(dir, { recursive: true });
@@ -142,16 +142,26 @@ describe("optimizer runner helpers", () => {
     ];
     fs.writeFileSync(fp, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
 
-    const out = await runOptimizationCore({
+    const out5 = await runOptimizationCore({
       candidates: 1,
       seed: 1,
       directionMode: "both",
-      optTfMin: 15,
+      optTfMin: 5,
       fixedParams: { priceThresholdPct: 0.1, oivThresholdPct: 0.1, tpRoiPct: 1, slRoiPct: 1, entryOffsetPct: 0, timeoutSec: 61, rearmMs: 60_000 },
       cacheDataset: { symbols: ["BTCUSDT"], startMs: 0, endMs: 600_000, interval: "1" },
     });
-    expect(out.cancelled).toBe(false);
-    expect(out.results.length).toBeGreaterThanOrEqual(1);
+    const out10 = await runOptimizationCore({
+      candidates: 1,
+      seed: 2,
+      directionMode: "both",
+      optTfMin: 10,
+      fixedParams: { priceThresholdPct: 0.1, oivThresholdPct: 0.1, tpRoiPct: 1, slRoiPct: 1, entryOffsetPct: 0, timeoutSec: 61, rearmMs: 60_000 },
+      cacheDataset: { symbols: ["BTCUSDT"], startMs: 0, endMs: 600_000, interval: "1" },
+    });
+    expect(out5.cancelled).toBe(false);
+    expect(out5.results.length).toBeGreaterThanOrEqual(1);
+    expect(out10.cancelled).toBe(false);
+    expect(out10.results.length).toBeGreaterThanOrEqual(1);
   });
 
   it("uses minute-level OI path aggregation for higher tf windows", () => {
@@ -159,5 +169,30 @@ describe("optimizer runner helpers", () => {
     const derived = deriveWindowOiValue(minutePath, 120);
     expect(derived).toBe(122);
     expect(derived).not.toBe(120);
+  });
+
+  it("falls back to dataset interval cache when 1m cache is unavailable", async () => {
+    pushTempCwd();
+    const dir = path.join(process.cwd(), "data", "cache", "bybit_klines", "5");
+    fs.mkdirSync(dir, { recursive: true });
+    const fp = path.join(dir, "BTCUSDT.jsonl");
+    const rows = [
+      { symbol: "BTCUSDT", startMs: 0, open: "100", high: "101", low: "99", close: "100", oi: "10" },
+      { symbol: "BTCUSDT", startMs: 300_000, open: "101", high: "102", low: "100", close: "101", oi: "11" },
+      { symbol: "BTCUSDT", startMs: 600_000, open: "102", high: "103", low: "101", close: "102", oi: "12" },
+      { symbol: "BTCUSDT", startMs: 900_000, open: "103", high: "104", low: "102", close: "103", oi: "13" },
+    ];
+    fs.writeFileSync(fp, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+
+    const out = await runOptimizationCore({
+      candidates: 1,
+      seed: 3,
+      directionMode: "both",
+      optTfMin: 10,
+      fixedParams: { priceThresholdPct: 0.1, oivThresholdPct: 0.1, tpRoiPct: 1, slRoiPct: 1, entryOffsetPct: 0, timeoutSec: 61, rearmMs: 60_000 },
+      cacheDataset: { symbols: ["BTCUSDT"], startMs: 0, endMs: 900_000, interval: "5" },
+    });
+    expect(out.cancelled).toBe(false);
+    expect(out.results.length).toBeGreaterThanOrEqual(1);
   });
 });

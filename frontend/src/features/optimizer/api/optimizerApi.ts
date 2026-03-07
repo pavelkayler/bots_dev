@@ -127,10 +127,45 @@ export type SoakLastStatus = {
 export type OptimizerJobHistoryRecord = {
   jobId: string;
   mode?: "loop" | "single";
+  loopId?: string;
+  historyType?: "run" | "session";
+  sessionRunsTotal?: number;
+  sessionRunsCompleted?: number;
+  childJobIds?: string[];
+  childRuns?: Array<{
+    jobId: string;
+    endedAtMs: number;
+    status: "done" | "cancelled" | "stopped" | "error";
+    summary: {
+      bestNetPnl: number | null;
+      bestTrades: number | null;
+      bestWinRate: number | null;
+      bestProfitFactor: number | null;
+      bestMaxDD: number | null;
+      rowsPositive: number;
+      rowsTotal: number;
+    };
+    runPayload: {
+      datasetMode?: "snapshot" | "followTail";
+      datasetHistoryIds?: string[] | null;
+      optTfMin?: number;
+      timeRangeFromTs?: number;
+      timeRangeToTs?: number;
+      candidates?: number;
+      seed?: number;
+      minTrades?: number;
+      directionMode?: "both" | "long" | "short";
+      rememberNegatives?: boolean;
+      excludeNegative?: boolean;
+      datasetHours?: number;
+      sim?: OptimizerSimulationParams;
+    };
+  }>;
   endedAtMs: number;
   status: "done" | "cancelled" | "stopped" | "error";
   hasSettings?: boolean;
   runPayload: {
+    datasetMode?: "snapshot" | "followTail";
     datasetHistoryIds?: string[] | null;
     optTfMin?: number;
     timeRangeFromTs?: number;

@@ -16,6 +16,11 @@ export const CONFIG = {
         priceThresholdPct: 0.01,
         oivThresholdPct: 0.01,
         requireFundingSign: true,
+        modelMinScore: 1.0,
+        modelScoreDelta: 0.2,
+        modelPriceWeight: 0.45,
+        modelOiWeight: 0.35,
+        modelFundingWeight: 0.2,
         dailyTriggerMin: 1,
         dailyTriggerMax: 999
     },

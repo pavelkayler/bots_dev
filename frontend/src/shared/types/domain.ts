@@ -10,6 +10,42 @@ export type StatusResponse = {
   runtimeMessage?: string | null;
 };
 
+export type ProcessStatusResponse = {
+  runtime: {
+    state: SessionState;
+    runningSinceMs: number | null;
+    message: string | null;
+  };
+  optimizer: {
+    state: "running" | "paused" | "stopped";
+    runIndex: number;
+    runsCount: number;
+    isInfinite: boolean;
+    currentJobId: string | null;
+    jobStatus: "running" | "paused" | "done" | "error" | "cancelled" | null;
+    progressPct: number;
+    message: string | null;
+  };
+  receiveData: {
+    state: "idle" | "queued" | "running" | "done" | "error" | "cancelled";
+    jobId: string | null;
+    progressPct: number;
+    currentSymbol: string | null;
+    message: string | null;
+    etaSec: number | null;
+  };
+  recorder: {
+    state: "idle" | "running" | "waiting" | "error";
+    mode: "off" | "record_only" | "record_while_running";
+    progressPct: number | null;
+    message: string | null;
+    writes?: number;
+    droppedBoundaryPoints?: number;
+    trackedSymbols?: number;
+    lastWriteAtMs?: number | null;
+  };
+};
+
 export type RuntimeConfig = {
   selectedBotId?: string;
   selectedBotPresetId?: string;

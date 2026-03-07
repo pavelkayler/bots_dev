@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Runtime } from "../runtime/runtime.js";
 
 function createRuntimeWithLimits(overrides?: {
@@ -30,7 +30,7 @@ describe.sequential("runtime risk limits", () => {
     }
   });
 
-  it("counts maxTradesPerDay from actual opens, not placements", () => {
+  it("counts maxTradesPerDay from actual opens, not placements or fills", () => {
     const rt = createRuntimeWithLimits({ maxTradesPerDay: 1 });
     runtimes.push(rt);
 
@@ -40,6 +40,10 @@ describe.sequential("runtime risk limits", () => {
     expect(rt.shouldAllowEntry("BTCUSDT", 1_200)).toBe(true);
 
     rt.handleRuntimeEvent({ ts: 1_300, type: "ORDER_FILLED", symbol: "BTCUSDT" });
+    expect(rt.riskEntriesPerDay).toBe(0);
+    expect(rt.shouldAllowEntry("BTCUSDT", 1_350)).toBe(true);
+
+    rt.handleRuntimeEvent({ ts: 1_360, type: "POSITION_OPEN", symbol: "BTCUSDT" });
     expect(rt.riskEntriesPerDay).toBe(1);
     expect(rt.shouldAllowEntry("BTCUSDT", 1_400)).toBe(false);
   });
@@ -115,5 +119,24 @@ describe.sequential("runtime risk limits", () => {
 
     expect(rt.emergencyStopActive).toBe(true);
     expect(rt.runtimeMessage).toContain("maxConsecutiveErrors reached");
+  });
+
+  it("applies config for next trades only when session is active", () => {
+    const stopped = new Runtime() as any;
+    expect(stopped.applyConfigForNextTrades({ entryTimeoutSec: 120 }).applied).toBe(false);
+
+    const rt = new Runtime() as any;
+    const paperApply = vi.fn();
+    const demoApply = vi.fn();
+    rt.sessionState = "RUNNING";
+    rt.paper = { applyConfigForNextTrades: paperApply };
+    rt.demo = { applyConfigForNextTrades: demoApply };
+    rt.logger = { log: vi.fn() };
+
+    const result = rt.applyConfigForNextTrades({ entryTimeoutSec: 120, tpRoiPct: 10 });
+    expect(result.applied).toBe(true);
+    expect(paperApply).toHaveBeenCalled();
+    expect(demoApply).toHaveBeenCalled();
+    expect(String(rt.runtimeMessage)).toContain("next trades");
   });
 });

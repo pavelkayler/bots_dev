@@ -1,6 +1,6 @@
 import { getApiBase } from "../../../shared/config/env";
 import { getJson, postJson } from "../../../shared/api/http";
-import type { DemoSummaryResponse, StatusResponse } from "../../../shared/types/domain";
+import type { DemoSummaryResponse, ProcessStatusResponse, StatusResponse } from "../../../shared/types/domain";
 
 export async function fetchStatus(): Promise<StatusResponse> {
   const api = getApiBase();
@@ -10,6 +10,11 @@ export async function fetchStatus(): Promise<StatusResponse> {
 export async function startSession(payload?: Partial<{ selectedBotId: string; selectedBotPresetId: string; selectedExecutionProfileId: string }>): Promise<StatusResponse> {
   const api = getApiBase();
   return postJson<StatusResponse>(`${api}/api/session/start`, payload ?? {});
+}
+
+export async function fetchProcessStatus(): Promise<ProcessStatusResponse> {
+  const api = getApiBase();
+  return getJson<ProcessStatusResponse>(`${api}/api/process/status`);
 }
 
 export async function stopSession(): Promise<StatusResponse> {

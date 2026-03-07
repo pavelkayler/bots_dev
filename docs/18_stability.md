@@ -1,6 +1,6 @@
 # 18 Stability & long-run operations
 
-Last update: 2026-03-06
+Last update: 2026-03-07
 
 This document describes stability mechanisms intended for multi-hour and multi-day runs.
 
@@ -13,6 +13,10 @@ This document describes stability mechanisms intended for multi-hour and multi-d
 ## Optimizer isolation
 - Optimizer heavy compute runs in a worker thread.
 - Main server remains responsive to UI polling and session runtime.
+- Follow Tail mode is window-stable:
+  - `timeRangeFromTs` is fixed from operator input
+  - `timeRangeToTs` is re-resolved to current time on each run start
+  - temporary stale `timeRangeToTs` values from payload are not trusted
 
 ## Soak snapshots
 - While runtime session is RUNNING, backend appends a JSON line every 60 seconds:
@@ -34,6 +38,23 @@ Enforcement behavior:
 - On threshold breach, runtime triggers `EMERGENCY_STOP`, sets runtime status message `Emergency stop: <reason>`, and initiates the hardened STOP flow.
 - Emergency-stop is sticky inside the same run lifecycle: status reason remains visible after stop and trading/resume is blocked until a clean new start/reset cycle.
 
+## Runtime apply semantics
+- Config apply during active runtime uses "next trades only" semantics for trading parameters.
+- Existing open positions/orders are not force-repriced or force-rebuilt by apply.
+- New values are consumed by subsequent entry attempts after apply is acknowledged.
+
+## Signal bot integration stability notes
+- Bot selection is first-class for runtime and optimizer (`selectedBotId` + bot preset).
+- Current models:
+  - `oi-momentum-v1`
+  - `signal-multi-factor-v1`
+- Signal generation model changes do not change execution safety controls:
+  - same runtime risk limits
+  - same emergency-stop flow
+  - same paper/demo execution lifecycle
+- Multi-factor model currently uses Bybit-available factors in runtime/replay paths.
+- CoinGlass remains optional for enrichment and must respect plan limits; runtime/optimizer startup does not require CoinGlass availability.
+
 ## Receive Data minute OI completeness
 - Bybit remains primary and authoritative.
 - Receive Data uses Bybit 1m klines as the base timeline.
@@ -42,6 +63,20 @@ Enforcement behavior:
 - Minute rows are populated from last-known Bybit OI values between 5m boundary points.
 - CoinGlass integration code is preserved for later activation but disabled (`COINGLASS_ENABLED=0`).
 - Progress includes backend ETA for receive jobs.
+
+## Recorder foundation (minute OI)
+- Recorder foundation is added as a dedicated subsystem (`MinuteOiRecorder`) and is surfaced through `/api/process/status`.
+- Recorder supports two operating modes:
+  - `record_only`
+  - `record_while_running`
+- Boundary rule is enforced: recorder skips 5-minute boundary points and stores only intermediate minutes.
+- Writes are append-only JSONL and keyed by timestamp, preparing for later timestamp-based field merges.
+- Recorder storage is daily-chunked by symbol:
+  - `backend/data/recorder/bybit/open_interest_1m/<SYMBOL>/<YYYY-MM-DD>.jsonl`
+  - this keeps appends/copy operations practical for cross-machine manual transfer.
+- Dataset merge behavior is timestamp-safe:
+  - metric enrichment extends existing rows by timestamp
+  - partial field updates do not replace whole rows, preserving previously merged fields.
 
 Recommended soak procedure:
 1) Start session and let it run for 24h.

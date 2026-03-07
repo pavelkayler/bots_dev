@@ -36,16 +36,29 @@ import { DATASET_CACHE_STORAGE_KEY } from "../../features/dataReceive/api/dataRe
 import { useInterval } from "../../shared/hooks/useInterval";
 import { getDatasetHistoryIds, getHistoryRunPayloadValue } from "../../features/optimizer/utils/historyPayload";
 import { OPTIMIZER_TF_ENABLED_VALUES, OPTIMIZER_TF_OPTIONS } from "../../features/optimizer/utils/timeframes";
+import { validateLoopStartInput } from "../../features/optimizer/utils/inputValidation";
+import { defaultFollowTailStartInput, resolveDatasetWindowInput, type OptimizerDatasetMode } from "../../features/optimizer/utils/datasetWindow";
 import { BotExecutionSelectors } from "../../features/bots/components/BotExecutionSelectors";
+import { useProcessStatus } from "../../features/session/hooks/useProcessStatus";
+import { ProcessIndicatorsBar } from "../../features/session/components/ProcessIndicatorsBar";
 
 type OptimizerResultRow = OptimizationResult;
 type LoopOptimizerResultRow = OptimizerResultRow & { __runJobId: string };
 type OptimizerSingleResultsState = { rowsById: Map<string, OptimizationResult>; order: string[]; version: number };
 type LoopRunStore = { rowsById: Map<string, LoopOptimizerResultRow>; order: string[]; version: number };
 type LoopAggState = { runOrder: string[]; byRunId: Record<string, LoopRunStore>; version: number };
+type OptimizerPageProps = {
+  embedded?: boolean;
+  hideBotSelectors?: boolean;
+  forcedBotId?: string;
+  forcedBotPresetId?: string;
+  title?: string;
+};
 
+const SIGNAL_BOT_ID = "signal-multi-factor-v1";
 type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmSec";
 type RangeState = Record<RangeKey, { min: string; max: string }>;
+type RangeDescriptor = { key: RangeKey; label: string };
 
 const RANGE_DEFAULTS: RangeState = {
   priceTh: { min: "0.5", max: "6" },
@@ -72,6 +85,8 @@ const FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY = "bots_dev.optimizer.filterValPn
 const FILTER_VAL_NET_PNL_POS_STORAGE_KEY = "bots_dev.optimizer.filterValNetPnlPos";
 const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
 const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
+const DATASET_MODE_STORAGE_KEY = "bots_dev.optimizer.datasetMode";
+const FOLLOW_TAIL_START_STORAGE_KEY = "bots_dev.optimizer.followTailStart";
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
@@ -97,6 +112,20 @@ const DATASET_INTERVAL_ORDER: Record<string, number> = {
   W: 12,
   M: 13,
 };
+const OI_RANGE_DESCRIPTORS: RangeDescriptor[] = [
+  { key: "priceTh", label: "priceTh" },
+  { key: "oivTh", label: "oivTh" },
+  { key: "tp", label: "tp" },
+  { key: "sl", label: "sl" },
+  { key: "offset", label: "offset" },
+  { key: "rearmSec", label: "rearmSec" },
+];
+const SIGNAL_RANGE_DESCRIPTORS: RangeDescriptor[] = [
+  { key: "priceTh", label: "Price threshold, %" },
+  { key: "oivTh", label: "OI threshold, %" },
+  { key: "timeoutSec", label: "Entry timeout, sec" },
+  { key: "rearmSec", label: "Rearm delay, sec" },
+];
 
 function chooseMaxDatasetInterval(intervals: string[]): string {
   if (!intervals.length) return "1";
@@ -539,10 +568,20 @@ const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePr
   );
 });
 
-export function OptimizerPage() {
+export function OptimizerPage({
+  embedded = false,
+  hideBotSelectors = false,
+  forcedBotId,
+  forcedBotPresetId,
+  title = "Optimizer",
+}: OptimizerPageProps) {
   const [botSelection, setBotSelection] = useState<{ selectedBotId: string; selectedBotPresetId: string; selectedExecutionProfileId: string } | null>(null);
+  const activeBotId = forcedBotId ?? botSelection?.selectedBotId ?? "";
+  const isSignalBotOptimizer = activeBotId === SIGNAL_BOT_ID;
+  const rangeDescriptors = isSignalBotOptimizer ? SIGNAL_RANGE_DESCRIPTORS : OI_RANGE_DESCRIPTORS;
   const { conn, lastMsg, lastServerTime, wsUrl, streams } = useWsFeedLite();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
+  const { status: processStatus } = useProcessStatus();
 
   const [error, setError] = useState<string | null>(null);
   const [optimizerDataSource, setOptimizerDataSource] = useState<string | null>(null);
@@ -566,6 +605,14 @@ export function OptimizerPage() {
   const [executionModel, setExecutionModel] = useState<OptimizerExecutionModel>(() => {
     const raw = localStorage.getItem(EXECUTION_MODEL_STORAGE_KEY);
     return raw === "conservativeOhlc" ? "conservativeOhlc" : "closeOnly";
+  });
+  const [datasetMode, setDatasetMode] = useState<OptimizerDatasetMode>(() => {
+    const raw = localStorage.getItem(DATASET_MODE_STORAGE_KEY);
+    return raw === "followTail" ? "followTail" : "snapshot";
+  });
+  const [followTailStartInput, setFollowTailStartInput] = useState(() => {
+    const raw = localStorage.getItem(FOLLOW_TAIL_START_STORAGE_KEY);
+    return raw && raw.trim() ? raw : defaultFollowTailStartInput();
   });
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState("15");
@@ -854,7 +901,7 @@ export function OptimizerPage() {
     if (savedDirection === "long" || savedDirection === "short" || savedDirection === "both") setDirectionMode(savedDirection);
     const savedOptTfRaw = localStorage.getItem(OPT_TF_STORAGE_KEY);
     if (savedOptTfRaw != null) {
-    const normalized = Math.max(15, Math.floor(Number(savedOptTfRaw) || 15));
+    const normalized = Math.max(5, Math.floor(Number(savedOptTfRaw) || 15));
     const finalTf = OPTIMIZER_TF_ENABLED_VALUES.includes(normalized as any) ? normalized : 15;
     setOptTfMin(String(finalTf));
       localStorage.setItem(OPT_TF_STORAGE_KEY, String(finalTf));
@@ -870,6 +917,11 @@ export function OptimizerPage() {
     setRememberNegatives(localStorage.getItem(REMEMBER_NEGATIVES_STORAGE_KEY) === "1");
     setLoopRunsCount(loadStoredPositiveInt(LOOP_RUNS_COUNT_STORAGE_KEY, "3", 1));
     setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
+    setDatasetMode(localStorage.getItem(DATASET_MODE_STORAGE_KEY) === "followTail" ? "followTail" : "snapshot");
+    {
+      const raw = localStorage.getItem(FOLLOW_TAIL_START_STORAGE_KEY);
+      setFollowTailStartInput(raw && raw.trim() ? raw : defaultFollowTailStartInput());
+    }
     void refreshStatus();
     void refreshJobHistory();
     void (async () => {
@@ -946,7 +998,7 @@ export function OptimizerPage() {
   }, [directionMode]);
 
   useEffect(() => {
-    localStorage.setItem(OPT_TF_STORAGE_KEY, String(Math.max(15, Math.floor(Number(optTfMin) || 15))));
+    localStorage.setItem(OPT_TF_STORAGE_KEY, String(Math.max(5, Math.floor(Number(optTfMin) || 15))));
   }, [optTfMin]);
 
   useEffect(() => {
@@ -990,6 +1042,14 @@ export function OptimizerPage() {
   useEffect(() => {
     localStorage.setItem(LOOP_INFINITE_STORAGE_KEY, loopInfinite ? "1" : "0");
   }, [loopInfinite]);
+  
+  useEffect(() => {
+    localStorage.setItem(DATASET_MODE_STORAGE_KEY, datasetMode);
+  }, [datasetMode]);
+
+  useEffect(() => {
+    localStorage.setItem(FOLLOW_TAIL_START_STORAGE_KEY, followTailStartInput);
+  }, [followTailStartInput]);
 
   useInterval(() => {
     setNowMs(Date.now());
@@ -1094,16 +1154,29 @@ export function OptimizerPage() {
     lastTableSourceRef.current = "loop";
     setLoopBusy(true);
     try {
+      const loopInputError = validateLoopStartInput({
+        candidates,
+        seed,
+        minTrades,
+        optTfMin,
+        loopRunsCount,
+        simMarginPerTrade,
+        simLeverage,
+      });
+      if (loopInputError) {
+        setError(loopInputError);
+        return;
+      }
+      const windowInput = resolveDatasetWindowInput({
+        datasetMode,
+        followTailStartInput,
+      });
+      if (windowInput.error) {
+        setError(windowInput.error);
+        return;
+      }
       const marginPerTrade = Number(simMarginPerTrade);
       const leverage = Number(simLeverage);
-      if (!Number.isFinite(marginPerTrade) || marginPerTrade <= 0) {
-        setError("marginPerTrade must be > 0");
-        return;
-      }
-      if (!Number.isFinite(leverage) || leverage < 1) {
-        setError("leverage must be >= 1");
-        return;
-      }
       const rangePayload = buildRangesPayload();
       const precision: OptimizerPrecision = {
         priceTh: Math.max(countDecimals(ranges.priceTh.min), countDecimals(ranges.priceTh.max)),
@@ -1124,15 +1197,20 @@ export function OptimizerPage() {
         });
       }
 
+      const selectedBotIdForRun = forcedBotId ?? botSelection?.selectedBotId;
+      const selectedBotPresetIdForRun = forcedBotPresetId ?? botSelection?.selectedBotPresetId;
       const loopPayload = {
-        ...(botSelection?.selectedBotId ? { selectedBotId: botSelection.selectedBotId } : {}),
-        ...(botSelection?.selectedBotPresetId ? { selectedBotPresetId: botSelection.selectedBotPresetId } : {}),
+        ...(selectedBotIdForRun ? { selectedBotId: selectedBotIdForRun } : {}),
+        ...(selectedBotPresetIdForRun ? { selectedBotPresetId: selectedBotPresetIdForRun } : {}),
+        datasetMode,
+        ...(windowInput.timeRangeFromTs != null ? { timeRangeFromTs: windowInput.timeRangeFromTs } : {}),
+        ...(windowInput.timeRangeToTs != null ? { timeRangeToTs: windowInput.timeRangeToTs } : {}),
         datasetHistoryIds: selectedHistoryIds,
         candidates: Number(candidates),
         seed: Number(seed),
         minTrades: Math.max(0, Math.floor(Number(minTrades) || 0)),
         directionMode,
-        optTfMin: Math.max(15, Math.floor(Number(optTfMin) || 15)),
+        optTfMin: Math.max(5, Math.floor(Number(optTfMin) || 15)),
         excludeNegative: false,
         rememberNegatives,
         sim: {
@@ -1231,7 +1309,7 @@ export function OptimizerPage() {
 
 
   const rangeError = useMemo(() => {
-    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmSec"];
+    const keys: RangeKey[] = rangeDescriptors.map((it) => it.key);
     for (const key of keys) {
       const minText = ranges[key].min;
       const maxText = ranges[key].max;
@@ -1240,11 +1318,15 @@ export function OptimizerPage() {
       if (minText.trim() && min === undefined) return `${key} min must be a valid number`;
       if (maxText.trim() && max === undefined) return `${key} max must be a valid number`;
       if (min !== undefined && max !== undefined && min > max) return `${key} min must be less than or equal to max`;
+      if (["priceTh", "oivTh", "tp", "sl", "offset"].includes(key)) {
+        if (min !== undefined && min < 0) return `${key} min must be >= 0`;
+        if (max !== undefined && max < 0) return `${key} max must be >= 0`;
+      }
       if (key === "timeoutSec" && min !== undefined && min < 61) return "timeoutSec min must be >= 61";
       if (key === "rearmSec" && min !== undefined && min < 900) return "rearmSec min must be >= 900";
     }
     return null;
-  }, [ranges]);
+  }, [rangeDescriptors, ranges]);
 
   const historyRowsSorted = useMemo(() => {
     const rows = Array.isArray(datasetHistories) ? datasetHistories : [];
@@ -1337,7 +1419,7 @@ export function OptimizerPage() {
 
   function buildRangesPayload() {
     const payload: Partial<Record<"priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "rearmMs", { min: number; max: number }>> = {};
-    const keys: RangeKey[] = ["priceTh", "oivTh", "tp", "sl", "offset", "timeoutSec", "rearmSec"];
+    const keys: RangeKey[] = rangeDescriptors.map((it) => it.key);
     for (const key of keys) {
       const min = parseMaybeNumber(ranges[key].min);
       const max = parseMaybeNumber(ranges[key].max);
@@ -1347,6 +1429,11 @@ export function OptimizerPage() {
       } else {
         payload[key] = { min, max };
       }
+    }
+    if (isSignalBotOptimizer) {
+      payload.tp = { min: Number(RANGE_DEFAULTS.tp.max), max: Number(RANGE_DEFAULTS.tp.max) };
+      payload.sl = { min: Number(RANGE_DEFAULTS.sl.max), max: Number(RANGE_DEFAULTS.sl.max) };
+      payload.offset = { min: Number(RANGE_DEFAULTS.offset.max), max: Number(RANGE_DEFAULTS.offset.max) };
     }
     return payload;
   }
@@ -1841,7 +1928,7 @@ export function OptimizerPage() {
   const activePrecision = (activeJobId ? jobPrecisionById[activeJobId] : undefined) ?? DEFAULT_PRECISION;
 
 
-  const copyToSettings = useCallback((row: OptimizationResult) => {
+  const copyToSettings = useCallback((row: OptimizationResult, sourceJobId?: string) => {
     const rowRearmSec = Number((row.params as { rearmSec?: unknown }).rearmSec);
     const rowRearmMs = Number((row.params as { rearmMs?: unknown }).rearmMs);
     const mappedRearmSec = Number.isFinite(rowRearmSec) && rowRearmSec >= 0
@@ -1864,7 +1951,7 @@ export function OptimizerPage() {
       source: "optimizer",
       ts: Date.now(),
       datasetId: null,
-      jobId: activeJobId,
+      jobId: sourceJobId ?? activeJobId,
       rank: row.rank,
       patch: {
         signals: {
@@ -1884,6 +1971,22 @@ export function OptimizerPage() {
     if (!rowJobId) return;
     window.open(getJobTradesExportUrl(rowJobId, row.rank), "_blank", "noopener,noreferrer");
   }, [activeJobId]);
+
+  const onCopySessionBest = useCallback(async (jobId: string) => {
+    const id = String(jobId ?? "").trim();
+    if (!id) return;
+    try {
+      const res = await getJobResults(id, { page: 1, sortKey: "netPnl", sortDir: "desc", pageSize: 10, positiveOnly: false });
+      const best = Array.isArray(res.results) ? res.results[0] : null;
+      if (!best) {
+        setError("No results available to copy for this run.");
+        return;
+      }
+      copyToSettings(best, id);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    }
+  }, [copyToSettings]);
 
 
 
@@ -1908,9 +2011,11 @@ export function OptimizerPage() {
     }
   }
 
-  async function toggleHistoryRow(jobId: string) {
+  async function toggleHistoryRow(row: OptimizerJobHistoryRecord) {
+    const jobId = row.jobId;
     const nextExpanded = !expandedHistory[jobId];
     setExpandedHistory((prev) => ({ ...prev, [jobId]: nextExpanded }));
+    if (row.historyType === "session") return;
     if (!nextExpanded || historyResults[jobId] != null || historyLoading[jobId]) return;
     setHistoryLoading((prev) => ({ ...prev, [jobId]: true }));
     try {
@@ -2016,7 +2121,7 @@ export function OptimizerPage() {
     });
     return map;
   }, [jobHistory]);
-  const historyColumnCount = historyCompactMode ? 10 : 14;
+  const historyColumnCount = historyCompactMode ? 11 : 15;
   const historyEndedAtCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 120 } : HISTORY_CELL_STYLE;
   const historyStatusCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 90 } : HISTORY_CELL_STYLE;
   const historyBestNetCellStyle = historyCompactMode ? { ...HISTORY_CELL_STYLE, width: 90 } : HISTORY_CELL_STYLE;
@@ -2094,30 +2199,35 @@ export function OptimizerPage() {
 
   return (
     <>
-      <HeaderBar
-        conn={conn}
-        sessionState={status.sessionState}
-        wsUrl={wsUrl}
-        lastServerTime={lastServerTime}
-        streams={streams}
-        canStart={canStart}
-        canStop={canStop}
-        busy={busy}
-        onStart={() => void start()}
-        onStop={() => void stop()}
-        onPause={() => void pause()}
-        onResume={() => void resume()}
-        canPause={canPause}
-        canResume={canResume}
-      />
+      {!embedded ? (
+        <HeaderBar
+          conn={conn}
+          sessionState={status.sessionState}
+          wsUrl={wsUrl}
+          lastServerTime={lastServerTime}
+          streams={streams}
+          canStart={canStart}
+          canStop={canStop}
+          busy={busy}
+          onStart={() => void start()}
+          onStop={() => void stop()}
+          onPause={() => void pause()}
+          onResume={() => void resume()}
+          canPause={canPause}
+          canResume={canResume}
+        />
+      ) : null}
 
-      <Container fluid className="py-2 px-2">
-        <div className="mb-2">
-          <BotExecutionSelectors compact onChange={setBotSelection} />
-        </div>
+      <Container fluid className={embedded ? "px-0 py-0" : "py-2 px-2"}>
+        {!hideBotSelectors ? (
+          <div className="mb-2">
+            <BotExecutionSelectors compact onChange={setBotSelection} />
+          </div>
+        ) : null}
+        {!embedded ? <ProcessIndicatorsBar status={processStatus} /> : null}
         <Card>
           <Card.Header className="d-flex align-items-center justify-content-between">
-            <b>Optimizer</b>
+            <b>{title}</b>
             <span style={{ fontSize: 12, opacity: 0.8 }}>RECEIVE_DATA_CACHE</span>
           </Card.Header>
           <Card.Body>
@@ -2211,6 +2321,34 @@ export function OptimizerPage() {
             <fieldset disabled={false}>
             <h6>Optimization</h6>
             <Row className="g-2 align-items-start mb-2">
+              <Col xl={3} lg={4} md={6} sm={12} xs={12}>
+                <Form.Group>
+                  <Form.Label style={{ fontSize: 12 }}>Dataset mode</Form.Label>
+                  <Form.Select value={datasetMode} onChange={(e) => setDatasetMode(e.currentTarget.value as OptimizerDatasetMode)}>
+                    <option value="snapshot">Snapshot</option>
+                    <option value="followTail">Follow Tail</option>
+                  </Form.Select>
+                  <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>
+                    Snapshot uses fixed selected histories. Follow Tail uses a moving end time up to now.
+                  </Form.Text>
+                </Form.Group>
+              </Col>
+              <Col xl={5} lg={6} md={6} sm={12} xs={12}>
+                <Form.Group>
+                  <Form.Label style={{ fontSize: 12 }}>Follow Tail start</Form.Label>
+                  <Form.Control
+                    type="datetime-local"
+                    value={followTailStartInput}
+                    onChange={(e) => setFollowTailStartInput(e.currentTarget.value)}
+                    disabled={datasetMode !== "followTail"}
+                  />
+                  <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>
+                    Required only for Follow Tail. End time is resolved automatically to current server time on each run.
+                  </Form.Text>
+                </Form.Group>
+              </Col>
+            </Row>
+            <Row className="g-2 align-items-start mb-2">
               <Col xl={2} lg={2} md={4} sm={6} xs={12}>
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>Candidates</Form.Label>
@@ -2239,7 +2377,7 @@ export function OptimizerPage() {
               <Col xl={2} lg={2} md={4} sm={6} xs={12}>
                 <Form.Group>
                 <Form.Label style={{ fontSize: 12 }}>Signal window (min)</Form.Label>
-                  <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(String(Math.max(15, Math.floor(Number(e.currentTarget.value) || 15))))}>
+                  <Form.Select value={optTfMin} onChange={(e) => setOptTfMin(String(Math.max(5, Math.floor(Number(e.currentTarget.value) || 15))))}>
                     {OPTIMIZER_TF_OPTIONS.map((tf) => (
                       <option key={tf.value} value={String(tf.value)} disabled={tf.disabled}>{tf.value}</option>
                     ))}
@@ -2338,9 +2476,9 @@ export function OptimizerPage() {
                 </tr>
               </thead>
               <tbody>
-                {(["priceTh", "oivTh", "tp", "sl", "offset", "rearmSec"] as RangeKey[]).map((key) => (
+                {rangeDescriptors.map(({ key, label }) => (
                   <tr key={key}>
-                    <td>{key}</td>
+                    <td>{label}</td>
                     <td>
                       <Form.Control
                         size="sm"
@@ -2489,6 +2627,7 @@ export function OptimizerPage() {
                 <tr>
                   <th style={{ ...historyEndedAtCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
                   <th style={{ ...historyStatusCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
+                  <th style={HISTORY_CELL_STYLE}>loops</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("datasets")}>dataset</th>
                   <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
                   <th style={HISTORY_CELL_STYLE}>sim</th>
@@ -2517,6 +2656,7 @@ export function OptimizerPage() {
                       <tr>
                         <td style={historyEndedAtCellStyle} title={new Date(row.endedAtMs).toISOString()}><span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{formatHistoryEndedAt(row.endedAtMs)}</span></td>
                         <td style={historyStatusCellStyle}>{row.status.toUpperCase()}</td>
+                        <td style={HISTORY_CELL_STYLE}>{row.historyType === "session" ? `${row.sessionRunsCompleted ?? 0}/${row.sessionRunsTotal ?? 0}` : "-"}</td>
                         <td style={HISTORY_CELL_STYLE} title={datasetHistoryIds.join(",") || "-"}>{datasetHistoryIds.length || "-"}</td>
                         <td style={HISTORY_CELL_STYLE}>{optTfMin ?? "-"}</td>
                         <td style={HISTORY_CELL_STYLE}>{formatSimSummary((row.runPayload as any).sim)}</td>
@@ -2528,7 +2668,7 @@ export function OptimizerPage() {
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.bestMaxDD == null ? "-" : row.summary.bestMaxDD.toFixed(4)}</td> : null}
                         {!historyCompactMode ? <td style={HISTORY_CELL_STYLE}>{row.summary.rowsPositive}</td> : null}
                         <td style={historyRowsTotalCellStyle}>{row.summary.rowsTotal}</td>
-                        <td style={historyViewCellStyle}><Button size="sm" variant="outline-secondary" onClick={() => void toggleHistoryRow(row.jobId)}>{isOpen ? "Hide" : "Open"}</Button></td>
+                        <td style={historyViewCellStyle}><Button size="sm" variant="outline-secondary" onClick={() => void toggleHistoryRow(row)}>{isOpen ? "Hide" : "Open"}</Button></td>
                       </tr>
                       <tr>
                         <td colSpan={historyColumnCount} style={HISTORY_DETAILS_CELL_STYLE}>
@@ -2537,9 +2677,46 @@ export function OptimizerPage() {
                               <div style={{ fontSize: 12 }}>
                                 sim: <b>{JSON.stringify((row.runPayload as any).sim ?? {})}</b>
                               </div>
+                              {row.historyType === "session" ? (
+                                <div style={{ fontSize: 12, marginTop: 6 }}>
+                                  <div><b>Loop session runs:</b> {row.sessionRunsCompleted ?? 0}/{row.sessionRunsTotal ?? 0}</div>
+                                  <div style={{ opacity: 0.8, wordBreak: "break-word", marginBottom: 6 }}>child runs: {(row.childJobIds ?? []).join(", ") || "-"}</div>
+                                  {Array.isArray(row.childRuns) && row.childRuns.length > 0 ? (
+                                    <Table striped bordered hover size="sm" className="mb-0">
+                                      <thead>
+                                        <tr>
+                                          <th>runId</th>
+                                          <th>endedAt</th>
+                                          <th>status</th>
+                                          <th>bestNetPnl</th>
+                                          <th>rows</th>
+                                          <th>actions</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {row.childRuns.map((child) => (
+                                          <tr key={child.jobId}>
+                                            <td>{child.jobId}</td>
+                                            <td>{formatHistoryEndedAt(child.endedAtMs)}</td>
+                                            <td>{child.status.toUpperCase()}</td>
+                                            <td>{child.summary.bestNetPnl == null ? "-" : child.summary.bestNetPnl.toFixed(4)}</td>
+                                            <td>{child.summary.rowsPositive}/{child.summary.rowsTotal}</td>
+                                            <td>
+                                              <div className="d-flex gap-2">
+                                                <Button size="sm" variant="outline-secondary" onClick={() => void onCopySessionBest(child.jobId)}>Copy best</Button>
+                                                <Button size="sm" variant="outline-secondary" onClick={() => window.open(getJobTradesExportUrl(child.jobId, 1), "_blank", "noopener,noreferrer")}>Export best trades</Button>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </Table>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               {historyLoading[row.jobId] ? <div style={{ fontSize: 12 }}>Loading...</div> : null}
                               {!historyLoading[row.jobId] && row.summary.rowsPositive === 0 ? <div style={{ fontSize: 12 }}>No positive results</div> : null}
-                              {!historyLoading[row.jobId] && row.summary.rowsPositive > 0 ? (
+                              {!historyLoading[row.jobId] && row.summary.rowsPositive > 0 && row.historyType !== "session" ? (
                                 <Table striped bordered hover size="sm" className="mb-0" style={{ marginTop: 8, marginLeft: 8 }}>
                                   <thead>
                                     <tr>

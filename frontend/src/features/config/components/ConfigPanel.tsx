@@ -76,6 +76,12 @@ function parseNumber(v: string, label: string): number {
   return n;
 }
 
+function parseNumberMin(v: string, label: string, min: number): number {
+  const n = parseNumber(v, label);
+  if (n < min) throw new Error(`${label} must be >= ${min}.`);
+  return n;
+}
+
 function toNonNegativeRoundedInt(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -99,28 +105,28 @@ function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft |
       ...draft,
       signals: {
         ...draft.signals,
-        priceThresholdPct: parseNumber(numericDraft.signalsPriceThresholdPct, "priceThresholdPct"),
-        oivThresholdPct: parseNumber(numericDraft.signalsOivThresholdPct, "oivThresholdPct"),
-        dailyTriggerMin: parseNumber(numericDraft.signalsDailyTriggerMin, "dailyTriggerMin"),
-        dailyTriggerMax: parseNumber(numericDraft.signalsDailyTriggerMax, "dailyTriggerMax"),
+        priceThresholdPct: parseNumberMin(numericDraft.signalsPriceThresholdPct, "priceThresholdPct", 0),
+        oivThresholdPct: parseNumberMin(numericDraft.signalsOivThresholdPct, "oivThresholdPct", 0),
+        dailyTriggerMin: parseNumberMin(numericDraft.signalsDailyTriggerMin, "dailyTriggerMin", 1),
+        dailyTriggerMax: parseNumberMin(numericDraft.signalsDailyTriggerMax, "dailyTriggerMax", 1),
         requireFundingSign: true,
       },
       fundingCooldown: {
         ...draft.fundingCooldown,
-        beforeMin: parseNumber(numericDraft.fundingBeforeMin, "beforeMin"),
-        afterMin: parseNumber(numericDraft.fundingAfterMin, "afterMin"),
+        beforeMin: parseNumberMin(numericDraft.fundingBeforeMin, "beforeMin", 0),
+        afterMin: parseNumberMin(numericDraft.fundingAfterMin, "afterMin", 0),
       },
       paper: {
         ...draft.paper,
-        marginUSDT: parseNumber(numericDraft.paperMarginUSDT, "marginUSDT"),
-        leverage: parseNumber(numericDraft.paperLeverage, "leverage"),
-        entryOffsetPct: parseNumber(numericDraft.paperEntryOffsetPct, "entryOffsetPct"),
-        entryTimeoutSec: parseNumber(numericDraft.paperEntryTimeoutSec, "entryTimeoutSec"),
-        tpRoiPct: parseNumber(numericDraft.paperTpRoiPct, "tpRoiPct"),
-        slRoiPct: parseNumber(numericDraft.paperSlRoiPct, "slRoiPct"),
+        marginUSDT: parseNumberMin(numericDraft.paperMarginUSDT, "marginUSDT", 0),
+        leverage: parseNumberMin(numericDraft.paperLeverage, "leverage", 1),
+        entryOffsetPct: parseNumberMin(numericDraft.paperEntryOffsetPct, "entryOffsetPct", 0),
+        entryTimeoutSec: parseNumberMin(numericDraft.paperEntryTimeoutSec, "entryTimeoutSec", 1),
+        tpRoiPct: parseNumberMin(numericDraft.paperTpRoiPct, "tpRoiPct", 0),
+        slRoiPct: parseNumberMin(numericDraft.paperSlRoiPct, "slRoiPct", 0),
         makerFeeRate: MAKER_FEE_RATE_FIXED,
-        rearmDelayMs: toNonNegativeRoundedInt(parseNumber(numericDraft.paperRearmSec, "rearmSec")) * 1000,
-        maxDailyLossUSDT: parseNumber(numericDraft.paperMaxDailyLossUSDT, "maxDailyLossUSDT"),
+        rearmDelayMs: toNonNegativeRoundedInt(parseNumberMin(numericDraft.paperRearmSec, "rearmSec", 0)) * 1000,
+        maxDailyLossUSDT: parseNumberMin(numericDraft.paperMaxDailyLossUSDT, "maxDailyLossUSDT", 0),
       },
     };
     const min = parsed.signals.dailyTriggerMin;
@@ -370,7 +376,7 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
   }
 
 function buildConfigForApply(): RuntimeConfig {
-    if (!validation.ok) throw new Error("Config is not loaded.");
+    if (!validation.ok) throw new Error("Fix invalid numeric values before applying.");
     return { ...validation.parsed, signals: { ...validation.parsed.signals, requireFundingSign: true } };
   }
 

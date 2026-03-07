@@ -1,6 +1,6 @@
 # 11 Current State (what exists now) + Next Actions
 
-Last update: 2026-03-04
+Last update: 2026-03-07
 
 ## What the project is
 A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper testing and parameter iteration:
@@ -23,6 +23,13 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
 - Each session creates:
   - `backend/data/sessions/<sessionId>/events.jsonl`
   - `backend/data/sessions/<sessionId>/summary.json` (after stop)
+
+### Process indicators
+- `GET /api/process/status` provides additive operational status for:
+  - runtime session state/message
+  - optimizer loop/job progress
+  - active Receive Data job progress
+  - recorder state/mode/message with write counters
 
 ### Streams lifecycle (important)
 - Backend start flow enters `RESUMING` first, connects Bybit public WS, and transitions to `RUNNING` only after required streams are connected.
@@ -73,9 +80,15 @@ A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper test
   - disabled if Universe not selected
   - disabled if draft == applied
   - disabled if invalid
+- While runtime is active, Apply updates trading parameters for next entries only (`applied.paper = "next_trades"`). Existing open trade state is not retroactively rewritten.
 
 Apply-and-Run / record controls are removed. Optimizer uses dataset histories/cache only.
-- Runtime is bot-aware via `selectedBotId` with a minimal registry (current bot: `oi-momentum-v1`).
+- Runtime is bot-aware via `selectedBotId` with a minimal registry.
+- Registered bots:
+  - `oi-momentum-v1` (OI Momentum)
+  - `signal-multi-factor-v1` (Signal Multi-Factor)
+- Bot can be selected from Dashboard and Optimizer through shared bot selectors.
+- A dedicated operational page `/signal-bot` is available for signal-bot control/status context.
 - Config is split into:
   - bot config (strategy semantics, includes TP/SL)
   - shared execution profile (execution/session/risk controls only)
@@ -119,12 +132,40 @@ High-level:
   - price cache: `backend/data/cache/bybit_klines/` (1m candles)
   - OI cache: Bybit 5-minute historical OI is the active source (`backend/data/cache/bybit_open_interest/5min/`), expanded to minute rows via last-known Bybit values
   - funding cache: `backend/data/cache/bybit_funding_history/` from `/v5/market/funding/history`, applied as last-known value between points
-  - Receive Data completion is strict: a dataset is marked done only when every required 1m candle has OI populated
-  - CoinGlass backfill code remains in repository but is disabled in current flow (`COINGLASS_ENABLED=0`)
-  - Receive Data progress includes backend ETA (`etaSec`) and UI shows `ETA: ~Xm Ys`
+- Receive Data completion is strict: a dataset is marked done only when every required 1m candle has OI populated
+- CoinGlass backfill code remains in repository but is disabled in current flow (`COINGLASS_ENABLED=0`)
+- Receive Data progress includes backend ETA (`etaSec`) and UI shows `ETA: ~Xm Ys`
+
+### Recorder foundation (minute OI path)
+- A dedicated recorder foundation exists in `backend/src/recorder/MinuteOiRecorder.ts`.
+- Recorder input source is Bybit WS ticker updates.
+- Recorder persists only intermediate minute OI points (non-5-minute boundaries), so Bybit 5-minute boundary points remain authoritative.
+- Recorder rows are timestamped and merge-ready for future metric enrichment by timestamp.
+- Recorder modes:
+  - `record_only`: recorder keeps WS stream and records without trading session
+  - `record_while_running`: recorder records only while runtime is RUNNING/RESUMING
+- Recorder control endpoints:
+  - `GET /api/recorder/status`
+  - `POST /api/recorder/mode` with `mode: off | record_only | record_while_running`
+- Recorder universe endpoints:
+  - `GET /api/recorder/universe`
+  - `POST /api/recorder/universe` (set by `selectedId` or direct `symbols[]`)
+- Recorder universe is persisted separately from trading universe and used for recorder symbol selection.
+
+### Signal bot data-source policy
+- Primary source remains Bybit for runtime and optimizer replay.
+- CoinGlass is optional and used only where an endpoint/metric is available for the active key/plan.
+- Current app behavior does not make CoinGlass a hard dependency for starting runtime/optimizer signal flows.
+- Hobbyist baseline constraints to account for when integrating optional CoinGlass metrics:
+  - 30 requests per minute
+  - up to 1-minute refresh cadence
+- Availability of specific advanced metrics on higher CoinGlass tiers depends on the plan and should be validated against current CoinGlass pricing/docs at integration time.
 
 - Optimization:
   - run payload supports `selectedBotId` and `selectedBotPresetId`
+  - dataset mode supports:
+    - `snapshot` (fixed histories)
+    - `followTail` (fixed start + moving end at current time per loop/run start)
   - job-based API with **pause/resume/cancel**
   - runs heavy compute in a **worker thread** (main server stays responsive)
   - progress is reported in percent and displayed in UI as integer 0..100
@@ -139,7 +180,7 @@ High-level:
   - openInterestValue uses `oi * close` only; OI/OIV is not fabricated
   - fees are applied in pnl; funding fee is not applied in pnl (funding is direction gate only)
   - unfinished positions at range end are excluded from optimizer stats
-  - `signal window (min)` minimum is 15m (5m/10m options are visible but disabled)
+  - `signal window (min)` minimum is 5m
   - OI for signal windows uses underlying minute OI path inside each higher timeframe window (not only coarse boundary values)
 
 - Health:

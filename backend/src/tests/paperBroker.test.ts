@@ -158,4 +158,26 @@ describe("PaperBroker", () => {
     expect(stats.pendingOrders).toBe(0);
     expect(view.paperStatus).toBe("IDLE");
   });
+
+  it("applyConfigForNextTrades updates only future entries", () => {
+    const { broker, events } = createHarness({ makerFeeRate: 0, leverage: 10, tpRoiPct: 20, slRoiPct: 10, entryOffsetPct: 0 });
+    tick(broker, { nowMs: 1_000, markPrice: 100, signal: "LONG" });
+    tick(broker, { nowMs: 1_100, markPrice: 100 });
+    const firstOpen = events.find((ev) => ev.type === "POSITION_OPEN");
+    expect(firstOpen?.payload?.tpPrice).toBeCloseTo(102, 8);
+
+    broker.applyConfigForNextTrades({ leverage: 20, tpRoiPct: 40, slRoiPct: 20, entryOffsetPct: 1 });
+    const openedView = broker.getView("BTCUSDT", 100);
+    expect(openedView.paperTpPrice).toBeCloseTo(102, 8);
+
+    tick(broker, { nowMs: 1_200, markPrice: 200 });
+    tick(broker, { nowMs: 2_000, markPrice: 100, signal: "LONG" });
+    tick(broker, { nowMs: 2_100, markPrice: 99 });
+
+    const opened = events.filter((ev) => ev.type === "POSITION_OPEN");
+    expect(opened.length).toBeGreaterThanOrEqual(2);
+    const secondOpen = opened[1];
+    expect(secondOpen?.payload?.entryPrice).toBeCloseTo(99, 8);
+    expect(secondOpen?.payload?.tpPrice).toBeCloseTo(100.98, 8);
+  });
 });

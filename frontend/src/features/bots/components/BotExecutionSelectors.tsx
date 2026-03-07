@@ -1,12 +1,15 @@
+import { useEffect } from "react";
 import { Card, Col, Form, Row } from "react-bootstrap";
 import { useBotSelections } from "../hooks/useBotSelections";
 
 type Props = {
   compact?: boolean;
+  allowedBotIds?: string[];
+  hideBotSelect?: boolean;
   onChange?: (state: { selectedBotId: string; selectedBotPresetId: string; selectedExecutionProfileId: string }) => void;
 };
 
-export function BotExecutionSelectors({ compact, onChange }: Props) {
+export function BotExecutionSelectors({ compact, allowedBotIds, hideBotSelect, onChange }: Props) {
   const {
     bots,
     botPresets,
@@ -19,9 +22,23 @@ export function BotExecutionSelectors({ compact, onChange }: Props) {
     error,
   } = useBotSelections();
 
+  const filteredBots = allowedBotIds?.length
+    ? bots.filter((b) => allowedBotIds.includes(b.id))
+    : bots;
+  const activeBotId = filteredBots.some((b) => b.id === selectedBotId)
+    ? selectedBotId
+    : (filteredBots[0]?.id ?? selectedBotId);
+
+  const canRenderBotSelect = !hideBotSelect && filteredBots.length > 1;
+
+  useEffect(() => {
+    if (!activeBotId || activeBotId === selectedBotId || loading) return;
+    void setSelectedBotId(activeBotId);
+  }, [activeBotId, selectedBotId, loading, setSelectedBotId]);
+
   const emit = (next: Partial<{ selectedBotId: string; selectedBotPresetId: string; selectedExecutionProfileId: string }>) => {
     onChange?.({
-      selectedBotId: next.selectedBotId ?? selectedBotId,
+      selectedBotId: next.selectedBotId ?? activeBotId,
       selectedBotPresetId: next.selectedBotPresetId ?? selectedBotPresetId,
       selectedExecutionProfileId: next.selectedExecutionProfileId ?? selectedExecutionProfileId,
     });
@@ -29,23 +46,25 @@ export function BotExecutionSelectors({ compact, onChange }: Props) {
 
   const body = (
     <Row className="g-2">
-      <Col md={6} xs={12}>
-        <Form.Group>
-          <Form.Label style={{ color: "#0d6efd", fontWeight: 700 }}>Bot (active)</Form.Label>
-          <Form.Select
-            style={{ borderColor: "#0d6efd", backgroundColor: "#f4f8ff" }}
-            value={selectedBotId}
-            disabled={loading}
-            onChange={(e) => {
-              const value = e.currentTarget.value;
-              void setSelectedBotId(value).then(() => emit({ selectedBotId: value }));
-            }}
-          >
-            {bots.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </Form.Select>
-        </Form.Group>
-      </Col>
-      <Col md={6} xs={12}>
+      {canRenderBotSelect ? (
+        <Col md={6} xs={12}>
+          <Form.Group>
+            <Form.Label style={{ color: "#0d6efd", fontWeight: 700 }}>Bot (active)</Form.Label>
+            <Form.Select
+              style={{ borderColor: "#0d6efd", backgroundColor: "#f4f8ff" }}
+              value={activeBotId}
+              disabled={loading}
+              onChange={(e) => {
+                const value = e.currentTarget.value;
+                void setSelectedBotId(value).then(() => emit({ selectedBotId: value }));
+              }}
+            >
+              {filteredBots.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </Form.Select>
+          </Form.Group>
+        </Col>
+      ) : null}
+      <Col md={canRenderBotSelect ? 6 : 12} xs={12}>
         <Form.Group>
           <Form.Label>Bot preset</Form.Label>
           <Form.Select

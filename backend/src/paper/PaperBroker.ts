@@ -39,6 +39,7 @@ type EntryOrder = {
     side: PaperSide;
     entryPrice: number;
     qty: number;
+    leverage: number;
     placedAt: number;
     expiresAt: number;
 };
@@ -49,6 +50,7 @@ type Position = {
     side: PaperSide;
     entryPrice: number;
     qty: number;
+    leverage: number;
 
     tpPrice: number;
     slPrice: number;
@@ -141,7 +143,7 @@ function isFiniteOhlc(ohlc?: PaperTickOhlc): ohlc is PaperTickOhlc {
 }
 
 export class PaperBroker {
-    private readonly cfg: PaperBrokerConfig;
+    private cfg: PaperBrokerConfig;
     private readonly logger: EventLogger;
     private readonly map = new Map<string, SymbolState>();
 
@@ -159,6 +161,22 @@ export class PaperBroker {
         this.cfg = cfg;
         this.logger = logger;
         this.runId = runId;
+    }
+
+    applyConfigForNextTrades(next: Partial<PaperBrokerConfig>) {
+        const patch = next ?? {};
+        if (typeof patch.enabled === "boolean") this.cfg.enabled = patch.enabled;
+        if (patch.directionMode === "both" || patch.directionMode === "long" || patch.directionMode === "short") {
+            this.cfg.directionMode = patch.directionMode;
+        }
+        if (Number.isFinite(patch.marginUSDT) && Number(patch.marginUSDT) > 0) this.cfg.marginUSDT = Number(patch.marginUSDT);
+        if (Number.isFinite(patch.leverage) && Number(patch.leverage) >= 1) this.cfg.leverage = Number(patch.leverage);
+        if (Number.isFinite(patch.entryOffsetPct) && Number(patch.entryOffsetPct) >= 0) this.cfg.entryOffsetPct = Number(patch.entryOffsetPct);
+        if (Number.isFinite(patch.entryTimeoutSec) && Math.floor(Number(patch.entryTimeoutSec)) >= 1) this.cfg.entryTimeoutSec = Math.floor(Number(patch.entryTimeoutSec));
+        if (Number.isFinite(patch.tpRoiPct) && Number(patch.tpRoiPct) >= 0) this.cfg.tpRoiPct = Number(patch.tpRoiPct);
+        if (Number.isFinite(patch.slRoiPct) && Number(patch.slRoiPct) >= 0) this.cfg.slRoiPct = Number(patch.slRoiPct);
+        if (Number.isFinite(patch.rearmDelayMs) && Math.floor(Number(patch.rearmDelayMs)) >= 0) this.cfg.rearmDelayMs = Math.floor(Number(patch.rearmDelayMs));
+        if (Number.isFinite(patch.maxDailyLossUSDT) && Number(patch.maxDailyLossUSDT) >= 0) this.cfg.maxDailyLossUSDT = Number(patch.maxDailyLossUSDT);
     }
 
     private syncRiskDay(nowMs: number) {
@@ -422,7 +440,7 @@ export class PaperBroker {
                 }
             }
 
-            const roiPct = calcRoiPct(p.side, p.entryPrice, markPrice, this.cfg.leverage);
+            const roiPct = calcRoiPct(p.side, p.entryPrice, markPrice, p.leverage);
             p.minRoiPct = Math.min(p.minRoiPct, roiPct);
             p.maxRoiPct = Math.max(p.maxRoiPct, roiPct);
 
@@ -525,7 +543,7 @@ export class PaperBroker {
                 const notionalEntry = o.entryPrice * o.qty;
                 const entryFee = fee(notionalEntry, this.cfg.makerFeeRate);
 
-                const { tp, sl } = calcTpSl(o.entryPrice, o.side, this.cfg.leverage, this.cfg.tpRoiPct, this.cfg.slRoiPct);
+                const { tp, sl } = calcTpSl(o.entryPrice, o.side, o.leverage, this.cfg.tpRoiPct, this.cfg.slRoiPct);
 
                 const pos: Position = {
                     id: randomUUID(),
@@ -533,6 +551,7 @@ export class PaperBroker {
                     side: o.side,
                     entryPrice: o.entryPrice,
                     qty: o.qty,
+                    leverage: o.leverage,
                     tpPrice: tp,
                     slPrice: sl,
                     openedAt: nowMs,
@@ -693,6 +712,7 @@ export class PaperBroker {
             side: signal,
             entryPrice,
             qty,
+            leverage: lev,
             placedAt: nowMs,
             expiresAt: nowMs + Math.max(1, this.cfg.entryTimeoutSec) * 1000
         };

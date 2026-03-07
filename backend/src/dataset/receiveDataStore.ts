@@ -7,6 +7,7 @@ import {
   type DatasetRangePreset,
   type DatasetTarget,
   type BybitKlineInterval,
+  BYBIT_KLINE_INTERVALS,
   normalizeBybitKlineInterval,
 } from "../dataset/datasetTargetStore.js";
 import { readUniverse } from "../universe/universeStore.js";
@@ -17,6 +18,7 @@ import {
   CoinGlassRateLimitError,
   validateCoinGlassBybitSymbols,
 } from "../coinglass/CoinGlassClient.js";
+import { upsertTimestampFields } from "./timestampMerge.js";
 
 type ReceiveStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
@@ -1024,7 +1026,7 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
             const row = item.row;
             const startMs = Number(row?.[0]);
             if (!Number.isFinite(startMs)) continue;
-            merged.set(startMs, {
+            upsertTimestampFields(merged, startMs, {
               symbol,
               startMs,
               open: String(row?.[1] ?? ""),
@@ -1322,10 +1324,35 @@ async function runReceiveJob(jobId: string, target: DatasetTarget) {
 
 export type StartReceiveDataJobResult =
   | { jobId: string }
-  | { error: "universe_not_selected" | "invalid_range"; message?: string };
+  | { error: "universe_not_selected" | "invalid_range" | "invalid_interval"; message?: string };
+
+function isValidDatasetRangeInput(range: unknown): boolean {
+  if (!range || typeof range !== "object") return false;
+  const row = range as Record<string, unknown>;
+  const kind = typeof row.kind === "string" ? row.kind : "";
+  if (kind === "preset") {
+    const preset = typeof row.preset === "string" ? row.preset : "";
+    return ["6h", "12h", "24h", "48h", "1w", "2w", "4w", "1mo"].includes(preset);
+  }
+  if (kind === "manual") {
+    const startMs = Number(row.startMs);
+    const endMs = Number(row.endMs);
+    return Number.isFinite(startMs) && Number.isFinite(endMs) && Math.floor(endMs) > Math.floor(startMs);
+  }
+  return false;
+}
 
 export function startReceiveDataJob(input?: Partial<DatasetTarget>): StartReceiveDataJobResult {
   const persisted = readDatasetTarget();
+  if (input?.interval != null) {
+    const intervalRaw = String(input.interval).trim();
+    if (!BYBIT_KLINE_INTERVALS.includes(intervalRaw as BybitKlineInterval)) {
+      return { error: "invalid_interval" as const };
+    }
+  }
+  if (input?.range != null && !isValidDatasetRangeInput(input.range)) {
+    return { error: "invalid_range" as const };
+  }
   const target: DatasetTarget = {
     universeId: typeof input?.universeId === "string" || input?.universeId === null ? input.universeId : persisted.universeId,
     range: input?.range ?? persisted.range,
@@ -1364,6 +1391,26 @@ export function startReceiveDataJob(input?: Partial<DatasetTarget>): StartReceiv
 export function getReceiveDataJob(jobId: string): ReceiveJobView | null {
   const job = jobs.get(jobId);
   if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    progress: job.progress,
+    ...(typeof job.startedAtMs === "number" ? { startedAtMs: job.startedAtMs } : {}),
+    ...(typeof job.finishedAtMs === "number" ? { finishedAtMs: job.finishedAtMs } : {}),
+    ...(job.error ? { error: job.error } : {}),
+  };
+}
+
+export function getActiveReceiveDataJob(): ReceiveJobView | null {
+  const candidates = Array.from(jobs.values()).filter((job) => job.status === "queued" || job.status === "running");
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const ats = Number(a.startedAtMs ?? 0);
+    const bts = Number(b.startedAtMs ?? 0);
+    if (ats !== bts) return bts - ats;
+    return Number(b.lastProgressEmitMs ?? 0) - Number(a.lastProgressEmitMs ?? 0);
+  });
+  const job = candidates[0]!;
   return {
     id: job.id,
     status: job.status,

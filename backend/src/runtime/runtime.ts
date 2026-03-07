@@ -224,7 +224,7 @@ export class Runtime extends EventEmitter {
     this.syncRiskDay(nowMs);
 
     const type = String(ev?.type ?? "");
-    if (type === "ORDER_FILLED" || type === "POSITION_OPEN" || type === "DEMO_POSITION_OPEN") {
+    if (type === "POSITION_OPEN" || type === "DEMO_POSITION_OPEN") {
       this.riskEntriesPerDay += 1;
       this.riskConsecutiveErrors = 0;
       return;
@@ -301,6 +301,34 @@ export class Runtime extends EventEmitter {
 
   attachMarkPriceProvider(fn: (symbol: string) => number | null) {
     this.getMarkPrice = fn;
+  }
+
+  applyConfigForNextTrades(patch: Partial<{
+    enabled: boolean;
+    directionMode: "both" | "long" | "short";
+    marginUSDT: number;
+    leverage: number;
+    entryOffsetPct: number;
+    entryTimeoutSec: number;
+    tpRoiPct: number;
+    slRoiPct: number;
+    rearmDelayMs: number;
+    maxDailyLossUSDT: number;
+  }>): { applied: boolean; reason?: string } {
+    if (this.sessionState !== "RUNNING" && this.sessionState !== "PAUSED" && this.sessionState !== "RESUMING") {
+      return { applied: false, reason: "session_not_active" };
+    }
+    const keys = Object.keys(patch ?? {});
+    if (!keys.length) return { applied: false, reason: "empty_patch" };
+    if (this.paper) this.paper.applyConfigForNextTrades(patch);
+    if (this.demo) this.demo.applyConfigForNextTrades(patch);
+    this.logger?.log({
+      ts: Date.now(),
+      type: "CONFIG_APPLY_NEXT_TRADES",
+      payload: { keys },
+    });
+    this.runtimeMessage = "Config applied for next trades.";
+    return { applied: true };
   }
 
   getStatus(): Status {

@@ -32,13 +32,13 @@ export function HeaderBar(props: Props) {
     <Navbar bg="light">
       <Container fluid>
         <Navbar.Brand>{APP_NAME}</Navbar.Brand>
-        <Nav className="me-2">
+        <Nav className="me-2" style={{ whiteSpace: "nowrap" }}>
           <Nav.Link as={Link} to="/">Dashboard</Nav.Link>
-          <Nav.Link as={Link} to="/bots">Bots</Nav.Link>
+          <Nav.Link as={Link} to="/bots">OI&nbsp;Momentum</Nav.Link>
+          <Nav.Link as={Link} to="/signal-bot">Signal&nbsp;Bot</Nav.Link>
           <Nav.Link as={Link} to="/universe">Universe</Nav.Link>
-          <Nav.Link as={Link} to="/optimizer">Optimizer</Nav.Link>
         </Nav>
-        <div className="d-flex align-items-center gap-2 flex-wrap" style={{ width: "100%" }}>
+        <div className="d-flex align-items-center gap-2 flex-nowrap" style={{ width: "100%", whiteSpace: "nowrap" }}>
           <Badge bg={connVariant}>{conn}</Badge>
           <Badge bg={streamsVariant}>{streamsText}</Badge>
           <Badge bg={sessionVariant}>Session: {sessionState}</Badge>

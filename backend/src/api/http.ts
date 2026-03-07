@@ -32,9 +32,12 @@ import { optimizerWorkerManager } from "../optimizer/worker/workerManager.js";
 import { getDataDirPath, isLowDiskBestEffort, MIN_FREE_BYTES, readFreeBytesBestEffort } from "../utils/diskGuard.js";
 import { BybitDemoRestClient } from "../bybit/BybitDemoRestClient.js";
 import { readDatasetTarget, writeDatasetTarget, normalizeDatasetTarget } from "../dataset/datasetTargetStore.js";
-import { cancelReceiveDataJob, getReceiveDataJob, startReceiveDataJob } from "../dataset/receiveDataStore.js";
+import { cancelReceiveDataJob, getActiveReceiveDataJob, getReceiveDataJob, startReceiveDataJob } from "../dataset/receiveDataStore.js";
 import { deleteDatasetHistory, incrementDatasetHistoryLoops, listDatasetHistories, readDatasetHistory } from "../dataset/datasetHistoryStore.js";
-import { awaitAllStreamsConnected, broadcastOptimizerRowsAppend, setOptimizerSnapshotProvider } from "./wsHub.js";
+import { awaitAllStreamsConnected, broadcastOptimizerRowsAppend, requestStreamLifecycleSync, setOptimizerSnapshotProvider } from "./wsHub.js";
+import { cvdRecorder, minuteOiRecorder } from "../recorder/recorderStore.js";
+import { readRecorderUniverseState, setRecorderUniverseById, setRecorderUniverseSymbols } from "../recorder/recorderUniverseStore.js";
+import { collectProviderCapabilities } from "./providerCapabilities.js";
 
 type OptimizerJob = {
   status: "running" | "paused" | "done" | "error" | "cancelled";
@@ -91,11 +94,24 @@ type OptimizerJobSnapshot = {
 type OptimizerJobHistoryRecord = {
   jobId: string;
   mode?: "loop" | "single";
+  loopId?: string;
+  historyType?: "run" | "session";
+  sessionRunsTotal?: number;
+  sessionRunsCompleted?: number;
+  childJobIds?: string[];
+  childRuns?: Array<{
+    jobId: string;
+    endedAtMs: number;
+    status: "done" | "cancelled" | "error" | "stopped";
+    summary: OptimizerJobHistoryRecord["summary"];
+    runPayload: OptimizerJobHistoryRecord["runPayload"];
+  }>;
   endedAtMs: number;
   status: "done" | "cancelled" | "error" | "stopped";
   runPayload: {
     selectedBotId?: string;
     selectedBotPresetId?: string;
+    datasetMode?: "snapshot" | "followTail";
     datasetHistoryIds: string[];
     optTfMin?: number;
     timeRangeFromTs?: number;
@@ -200,6 +216,10 @@ function toHistoryRunPayload(runPayload: Record<string, unknown> | null): Optimi
   return {
     ...(typeof (runPayload as any)?.selectedBotId === "string" ? { selectedBotId: String((runPayload as any).selectedBotId) } : {}),
     ...(typeof (runPayload as any)?.selectedBotPresetId === "string" ? { selectedBotPresetId: String((runPayload as any).selectedBotPresetId) } : {}),
+    ...(["snapshot", "followTail"].includes(String((runPayload as any)?.datasetMode))
+      ? { datasetMode: String((runPayload as any).datasetMode) as "snapshot" | "followTail" }
+      : {}),
+    ...(typeof (runPayload as any)?.loopId === "string" ? { loopId: String((runPayload as any).loopId) } : {}),
     datasetHistoryIds,
     ...(Number.isFinite(Number((runPayload as any)?.optTfMin)) ? { optTfMin: Math.floor(Number((runPayload as any)?.optTfMin)) } : {}),
     ...(Number.isFinite(Number((runPayload as any)?.timeRangeFromTs)) ? { timeRangeFromTs: Math.floor(Number((runPayload as any)?.timeRangeFromTs)) } : {}),
@@ -267,6 +287,8 @@ function appendOptimizerJobHistory(jobId: string, job: OptimizerJob) {
   const nextRecord: OptimizerJobHistoryRecord = {
     jobId,
     mode,
+    ...(mode === "loop" ? { loopId: String((job.runPayload as any)?.loopId ?? optimizerLoopState?.loopId ?? "") } : {}),
+    historyType: "run",
     endedAtMs,
     status: historyStatus,
     runPayload: toHistoryRunPayload(job.runPayload),
@@ -283,6 +305,60 @@ function appendOptimizerJobHistory(jobId: string, job: OptimizerJob) {
   const prev = readOptimizerJobHistory().filter((row) => row.jobId !== jobId);
   prev.unshift(nextRecord);
   writeOptimizerJobHistory(prev.slice(0, 500));
+}
+
+export function aggregateOptimizerHistorySessions(records: OptimizerJobHistoryRecord[]): OptimizerJobHistoryRecord[] {
+  const loopGroups = new Map<string, OptimizerJobHistoryRecord[]>();
+  const singles: OptimizerJobHistoryRecord[] = [];
+  for (const row of records) {
+    if (row.mode !== "loop" || !row.loopId) {
+      singles.push(row);
+      continue;
+    }
+    const key = String(row.loopId);
+    const group = loopGroups.get(key) ?? [];
+    group.push(row);
+    loopGroups.set(key, group);
+  }
+  const sessions: OptimizerJobHistoryRecord[] = [];
+  for (const [loopId, group] of loopGroups.entries()) {
+    const sorted = [...group].sort((a, b) => Number(b.endedAtMs) - Number(a.endedAtMs));
+    const latest = sorted[0];
+    if (!latest) continue;
+    const bestNetPnl = sorted.reduce<number | null>((acc, row) => {
+      const current = row.summary.bestNetPnl;
+      if (current == null || !Number.isFinite(current)) return acc;
+      if (acc == null || current > acc) return current;
+      return acc;
+    }, null);
+    const runsTotal = sorted.length;
+    const runsCompleted = sorted.filter((row) => ["done", "cancelled", "stopped", "error"].includes(row.status)).length;
+    const rowsPositive = sorted.reduce((sum, row) => sum + Math.max(0, Number(row.summary.rowsPositive) || 0), 0);
+    const rowsTotal = sorted.reduce((sum, row) => sum + Math.max(0, Number(row.summary.rowsTotal) || 0), 0);
+    sessions.push({
+      ...latest,
+      jobId: `loop:${loopId}`,
+      loopId,
+      historyType: "session",
+      sessionRunsTotal: runsTotal,
+      sessionRunsCompleted: runsCompleted,
+      childJobIds: sorted.map((row) => row.jobId),
+      childRuns: sorted.map((row) => ({
+        jobId: row.jobId,
+        endedAtMs: row.endedAtMs,
+        status: row.status,
+        summary: row.summary,
+        runPayload: row.runPayload,
+      })),
+      summary: {
+        ...latest.summary,
+        bestNetPnl,
+        rowsPositive,
+        rowsTotal,
+      },
+    });
+  }
+  return [...sessions, ...singles].sort((a, b) => Number(b.endedAtMs) - Number(a.endedAtMs));
 }
 
 
@@ -634,6 +710,9 @@ function parseRanges(raw: any): OptimizerRanges | undefined {
     if (min === undefined && max === undefined) return;
     if (min === undefined || max === undefined) throw new Error(`invalid_range_${String(key)}`);
     if (min > max) throw new Error(`invalid_range_${String(key)}`);
+    if (["priceTh", "oivTh", "tp", "sl", "offset"].includes(String(key)) && (min < 0 || max < 0)) {
+      throw new Error(`invalid_range_${String(key)}`);
+    }
     parsed[key] = { min, max };
   };
 
@@ -845,8 +924,23 @@ async function startLoopJob(app: FastifyInstance) {
   const payloadWithLoopSeed = {
     ...(state.runPayload as Record<string, unknown>),
     loopIndex: state.loopIndex,
+    loopId: state.loopId,
   };
-  const res = await app.inject({ method: "POST", url: "/api/optimizer/run", payload: withDatasetResolved(payloadWithLoopSeed) });
+  let resolvedPayload: Record<string, unknown>;
+  try {
+    resolvedPayload = withDatasetResolved(payloadWithLoopSeed);
+  } catch (e: any) {
+    updateLoopState({
+      isRunning: false,
+      isPaused: false,
+      lastError: {
+        statusCode: 400,
+        bodySnippet: String(e?.message ?? e).slice(0, 300),
+      },
+    });
+    return;
+  }
+  const res = await app.inject({ method: "POST", url: "/api/optimizer/run", payload: resolvedPayload });
   if (res.statusCode !== 200) {
     updateLoopState({
       isRunning: false,
@@ -999,6 +1093,7 @@ function buildDatasetRunKey(input: {
   candidates: number;
   seed: number;
   executionModel?: "closeOnly" | "conservativeOhlc";
+  datasetMode?: "snapshot" | "followTail";
 }) {
   const normalizedHistoryIds = [...input.datasetHistoryIds].map((id) => String(id ?? "").trim()).filter(Boolean).sort();
   const raw = [
@@ -1010,13 +1105,42 @@ function buildDatasetRunKey(input: {
     `c=${Math.floor(input.candidates)}`,
     `s=${Number.isFinite(input.seed) ? input.seed : 1}`,
     `exec=${input.executionModel ?? "closeOnly"}`,
+    `datasetMode=${input.datasetMode ?? "snapshot"}`,
   ].join("|");
   const digest = createHash("sha256").update(raw).digest("hex").slice(0, 16);
   return `datasetHist=${digest}`;
 }
 
+export function resolveOptimizerDatasetWindow(runPayload: Record<string, unknown>, nowMs = Date.now()): Record<string, unknown> {
+  const modeRaw = runPayload.datasetMode;
+  const mode = modeRaw == null || String(modeRaw).trim() === ""
+    ? "snapshot"
+    : String(modeRaw);
+  if (mode !== "snapshot" && mode !== "followTail") {
+    throw new Error("invalid_dataset_mode");
+  }
+  if (mode === "snapshot") {
+    return {
+      ...runPayload,
+      datasetMode: "snapshot",
+    };
+  }
+  const fromTs = normalizeOptionalTs((runPayload as any).timeRangeFromTs);
+  if (!Number.isFinite(fromTs as number) || (fromTs as number) <= 0) {
+    throw new Error("invalid_follow_tail_start");
+  }
+  const from = Math.floor(fromTs as number);
+  const to = Math.max(from + 1, Math.floor(nowMs));
+  return {
+    ...runPayload,
+    datasetMode: "followTail",
+    timeRangeFromTs: from,
+    timeRangeToTs: to,
+  };
+}
+
 function withDatasetResolved(runPayload: Record<string, unknown>): Record<string, unknown> {
-  return runPayload;
+  return resolveOptimizerDatasetWindow(runPayload);
 }
 
 
@@ -1268,13 +1392,178 @@ export function registerHttpRoutes(app: FastifyInstance) {
 
   app.post("/api/dataset-target", async (req, reply) => {
     try {
+      const body = safeBody((req as any).body) as Record<string, unknown>;
+      if (body?.interval != null) {
+        const interval = String(body.interval).trim();
+        if (!["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"].includes(interval)) {
+          reply.code(400);
+          return { error: "invalid_interval", message: "Invalid dataset interval." };
+        }
+      }
+      if (body?.range != null) {
+        const range = body.range;
+        if (!range || typeof range !== "object") {
+          reply.code(400);
+          return { error: "invalid_range", message: "Invalid dataset range payload." };
+        }
+        const row = range as Record<string, unknown>;
+        const kind = typeof row.kind === "string" ? row.kind : "";
+        if (kind === "manual") {
+          const startMs = Number(row.startMs);
+          const endMs = Number(row.endMs);
+          if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || Math.floor(endMs) <= Math.floor(startMs)) {
+            reply.code(400);
+            return { error: "invalid_range", message: "Manual range must have endMs > startMs." };
+          }
+        } else if (kind === "preset") {
+          const preset = typeof row.preset === "string" ? row.preset : "";
+          if (!["6h", "12h", "24h", "48h", "1w", "2w", "4w", "1mo"].includes(preset)) {
+            reply.code(400);
+            return { error: "invalid_range", message: "Invalid dataset preset range." };
+          }
+        } else {
+          reply.code(400);
+          return { error: "invalid_range", message: "Range kind must be preset or manual." };
+        }
+      }
       const normalized = normalizeDatasetTarget((req as any).body);
       writeDatasetTarget(normalized);
       return { datasetTarget: normalized };
     } catch (e: any) {
-      reply.code(500);
+      reply.code(400);
       return { error: "dataset_target_error", message: String(e?.message ?? "Failed to persist dataset target.") };
     }
+  });
+
+  app.get("/api/providers/capabilities", async (req) => {
+    const query = req.query as Record<string, unknown>;
+    const botId = typeof query?.botId === "string" ? query.botId : configStore.get().selectedBotId;
+    const checks = await collectProviderCapabilities({ botId });
+    const requiredChecks = checks.filter((row) => row.required);
+    const requiredOk = requiredChecks.every((row) => row.available);
+    return {
+      ok: requiredOk,
+      nowMs: Date.now(),
+      bybitRestUrl: process.env.BYBIT_REST_URL ?? "https://api.bybit.com",
+      coinglassBaseUrl: process.env.COINGLASS_BASE_URL ?? "https://open-api-v3.coinglass.com",
+      checks,
+      summary: {
+        total: checks.length,
+        available: checks.filter((row) => row.available).length,
+        requiredTotal: requiredChecks.length,
+        requiredAvailable: requiredChecks.filter((row) => row.available).length,
+      },
+    };
+  });
+
+  app.get("/api/process/status", async () => {
+    const runtimeStatus = runtime.getStatus();
+    const loop = optimizerLoopState;
+    const receive = getActiveReceiveDataJob();
+    const oiRecorder = minuteOiRecorder.getStatus();
+    const cvd = cvdRecorder.getStatus();
+    const currentJobId = resolveCurrentOptimizerJobId();
+    const currentJob = currentJobId ? optimizerJobs.get(currentJobId) : null;
+    const loopProgress = loop?.progress && typeof loop.progress === "object" ? loop.progress : null;
+    return {
+      runtime: {
+        state: runtimeStatus.sessionState,
+        runningSinceMs: runtimeStatus.runningSinceMs ?? null,
+        message: runtimeStatus.runtimeMessage ?? null,
+      },
+      optimizer: {
+        state: loop?.isRunning ? (loop.isPaused ? "paused" : "running") : "stopped",
+        runIndex: loop?.runIndex ?? 0,
+        runsCount: loop?.runsCount ?? 0,
+        isInfinite: Boolean(loop?.isInfinite),
+        currentJobId: currentJobId ?? null,
+        jobStatus: currentJob?.status ?? null,
+        progressPct: loopProgress?.overallPct ?? (currentJob?.done ?? 0),
+        message: currentJob?.message ?? null,
+      },
+      receiveData: {
+        state: receive?.status ?? "idle",
+        jobId: receive?.id ?? null,
+        progressPct: receive?.progress?.pct ?? 0,
+        currentSymbol: receive?.progress?.currentSymbol ?? null,
+        message: receive?.progress?.message ?? null,
+        etaSec: receive?.progress?.etaSec ?? null,
+      },
+      recorder: {
+        state: oiRecorder.state === "running" || cvd.state === "running" ? "running" : oiRecorder.state,
+        mode: oiRecorder.mode,
+        progressPct: null,
+        message: oiRecorder.message,
+        writes: (oiRecorder.writes ?? 0) + (cvd.writes1m ?? 0),
+        droppedBoundaryPoints: oiRecorder.droppedBoundaryPoints,
+        trackedSymbols: Math.max(oiRecorder.trackedSymbols ?? 0, cvd.trackedSymbols ?? 0),
+        lastWriteAtMs: Math.max(oiRecorder.lastWriteAtMs ?? 0, cvd.lastWriteAtMs ?? 0) || null,
+        cvd: {
+          state: cvd.state,
+          writes1s: cvd.writes1s,
+          writes1m: cvd.writes1m,
+          trackedSymbols: cvd.trackedSymbols,
+          message: cvd.message,
+          lastSeenTradeTs: cvd.lastSeenTradeTs,
+        },
+      },
+    };
+  });
+
+  app.get("/api/recorder/status", async () => {
+    const oi = minuteOiRecorder.getStatus();
+    const cvd = cvdRecorder.getStatus();
+    return {
+      ...oi,
+      cvd,
+    };
+  });
+
+  app.get("/api/recorder/cvd/debug", async (req) => {
+    const query = (req as any)?.query ?? {};
+    const symbolsRaw = String(query?.symbols ?? "").trim();
+    const symbols = symbolsRaw ? symbolsRaw.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+    return cvdRecorder.getDebugSnapshot(symbols ? { symbols } : undefined);
+  });
+
+  app.get("/api/recorder/universe", async () => {
+    return readRecorderUniverseState();
+  });
+
+  app.post("/api/recorder/universe", async (req, reply) => {
+    const body = safeBody((req as any).body) as any;
+    const selectedId = String(body?.selectedId ?? "").trim();
+    if (selectedId) {
+      const next = setRecorderUniverseById(selectedId);
+      if (!next) {
+        reply.code(400);
+        return { error: "recorder_universe_not_found" };
+      }
+      requestStreamLifecycleSync();
+      return next;
+    }
+    if (Array.isArray(body?.symbols)) {
+      const next = setRecorderUniverseSymbols(body.symbols);
+      requestStreamLifecycleSync();
+      return next;
+    }
+    reply.code(400);
+    return { error: "invalid_recorder_universe_payload" };
+  });
+
+  app.post("/api/recorder/mode", async (req, reply) => {
+    const body = safeBody((req as any).body) as any;
+    const mode = String(body?.mode ?? "").trim();
+    if (mode !== "off" && mode !== "record_only" && mode !== "record_while_running") {
+      reply.code(400);
+      return { error: "invalid_recorder_mode" };
+    }
+    minuteOiRecorder.setMode(mode);
+    cvdRecorder.setMode(mode);
+    requestStreamLifecycleSync();
+    const oi = minuteOiRecorder.getStatus();
+    const cvd = cvdRecorder.getStatus();
+    return { ok: true, recorder: { ...oi, cvd } };
   });
 
   app.post("/api/data/receive", async (req, reply) => {
@@ -1347,15 +1636,19 @@ app.get("/api/config", async () => {
       }
       if (paperPatch.rearmDelayMs != null) {
         const rawRearmDelayMs = Number(paperPatch.rearmDelayMs);
-        const safeRearmDelayMs = Number.isFinite(rawRearmDelayMs)
-          ? Math.max(0, Math.floor(rawRearmDelayMs))
-          : 0;
-        paperPatch.rearmDelayMs = safeRearmDelayMs;
+        if (!Number.isFinite(rawRearmDelayMs) || Math.floor(rawRearmDelayMs) < 0) {
+          reply.code(400);
+          return { error: "invalid_config", message: "paper.rearmDelayMs must be a non-negative integer." };
+        }
+        paperPatch.rearmDelayMs = Math.floor(rawRearmDelayMs);
       }
       if (paperPatch.entryTimeoutSec != null) {
         const raw = Number(paperPatch.entryTimeoutSec);
-        const safe = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 1;
-        paperPatch.entryTimeoutSec = safe;
+        if (!Number.isFinite(raw) || Math.floor(raw) < 1) {
+          reply.code(400);
+          return { error: "invalid_config", message: "paper.entryTimeoutSec must be an integer >= 1." };
+        }
+        paperPatch.entryTimeoutSec = Math.floor(raw);
       }
       normalizedPatch.paper = paperPatch;
     }
@@ -1381,6 +1674,24 @@ app.get("/api/config", async () => {
       }
 
       const uChanged = universeWouldChange(cur, normalizedPatch);
+      const runtimeState = runtime.getStatus().sessionState;
+      const runtimeActive = runtimeState === "RUNNING" || runtimeState === "PAUSED" || runtimeState === "RESUMING";
+      let paperApplyMode: "next_session" | "next_trades" = "next_session";
+      if (runtimeActive) {
+        const applied = runtime.applyConfigForNextTrades({
+          enabled: config.paper.enabled,
+          directionMode: config.paper.directionMode,
+          marginUSDT: config.paper.marginUSDT,
+          leverage: config.paper.leverage,
+          entryOffsetPct: config.paper.entryOffsetPct,
+          entryTimeoutSec: config.paper.entryTimeoutSec,
+          tpRoiPct: config.paper.tpRoiPct,
+          slRoiPct: config.paper.slRoiPct,
+          rearmDelayMs: config.paper.rearmDelayMs,
+          maxDailyLossUSDT: config.paper.maxDailyLossUSDT,
+        });
+        if (applied.applied) paperApplyMode = "next_trades";
+      }
 
       return {
         config,
@@ -1388,7 +1699,7 @@ app.get("/api/config", async () => {
           universe: uChanged ? "streams_reconnect" : "no_change",
           signals: true,
           fundingCooldown: true,
-          paper: "next_session"
+          paper: paperApplyMode
         }
       };
     } catch (err: any) {
@@ -1511,9 +1822,7 @@ app.get("/api/config", async () => {
     try {
       ensureDefaultBotPresetSelected(botId);
       return {
-        presets: listBotPresets(botId)
-          .filter((p) => p.id === DEFAULT_BOT_PRESET_ID)
-          .map((p) => ({ id: p.id, botId: p.botId, name: p.name, updatedAt: p.updatedAt })),
+        presets: listBotPresets(botId).map((p) => ({ id: p.id, botId: p.botId, name: p.name, updatedAt: p.updatedAt })),
       };
     } catch (e: any) {
       reply.code(400);
@@ -1709,9 +2018,9 @@ app.get("/api/config", async () => {
     }
 
     for (const symbol of allSymbols) {
-      if (!fs.existsSync(resolveDatasetCachePath(symbol, interval)) || !fs.existsSync(resolveDatasetCachePath(symbol, "1"))) {
+      if (!fs.existsSync(resolveDatasetCachePath(symbol, "1"))) {
         reply.code(400);
-        return { error: "dataset_cache_missing", message: "Dataset cache is missing (required: selected interval + 1m). Run Receive Data again." };
+        return { error: "dataset_cache_missing", message: "Dataset cache is missing (required: 1m cache). Run Receive Data again." };
       }
     }
 
@@ -1723,7 +2032,7 @@ app.get("/api/config", async () => {
     const directionMode = body?.directionMode == null ? "both" : String(body.directionMode);
     const optTfMinRaw = body?.optTfMin;
     const optTfMinParsed = optTfMinRaw == null || String(optTfMinRaw).trim() === "" ? 15 : Math.floor(Number(optTfMinRaw));
-    if (!Number.isInteger(optTfMinParsed) || optTfMinParsed < 15 || optTfMinParsed > 240) {
+    if (!Number.isInteger(optTfMinParsed) || optTfMinParsed < 5 || optTfMinParsed > 240) {
       reply.code(400);
       return { error: "invalid_opt_tf_min" };
     }
@@ -1741,6 +2050,15 @@ app.get("/api/config", async () => {
       reply.code(400);
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
+    const datasetModeRaw = body?.datasetMode;
+    const datasetMode = datasetModeRaw == null || String(datasetModeRaw).trim() === ""
+      ? "snapshot"
+      : String(datasetModeRaw);
+    if (datasetMode !== "snapshot" && datasetMode !== "followTail") {
+      reply.code(400);
+      return { error: "invalid_dataset_mode" };
+    }
+
     const runKey = buildDatasetRunKey({
       selectedBotId,
       selectedBotPresetId,
@@ -1750,6 +2068,7 @@ app.get("/api/config", async () => {
       candidates: Number.isFinite(candidates) ? candidates : 0,
       seed,
       executionModel,
+      datasetMode,
     });
 
     if (!Number.isFinite(candidates) || candidates < 1 || candidates > 2000) {
@@ -1809,6 +2128,7 @@ app.get("/api/config", async () => {
       runId: jobId,
       selectedBotId,
       selectedBotPresetId,
+      datasetMode,
       datasetHistoryIds,
       cacheDatasets,
       interval,
@@ -1826,7 +2146,14 @@ app.get("/api/config", async () => {
       sim,
     };
     job.runPayload = runPayload;
-    const resolvedRunPayload = withDatasetResolved(runPayload as Record<string, unknown>);
+    let resolvedRunPayload: Record<string, unknown>;
+    try {
+      resolvedRunPayload = withDatasetResolved(runPayload as Record<string, unknown>);
+    } catch (e: any) {
+      optimizerJobs.delete(jobId);
+      reply.code(400);
+      return { error: "invalid_dataset_window", message: String(e?.message ?? e) };
+    }
 
     try {
       optimizerWorkerManager.start(jobId, resolvedRunPayload, {
@@ -2016,9 +2343,9 @@ app.get("/api/config", async () => {
     }
 
     for (const symbol of allSymbols) {
-      if (!fs.existsSync(resolveDatasetCachePath(symbol, interval)) || !fs.existsSync(resolveDatasetCachePath(symbol, "1"))) {
+      if (!fs.existsSync(resolveDatasetCachePath(symbol, "1"))) {
         reply.code(400);
-        return { error: "dataset_cache_missing", message: "Dataset cache is missing (required: selected interval + 1m). Run Receive Data again." };
+        return { error: "dataset_cache_missing", message: "Dataset cache is missing (required: 1m cache). Run Receive Data again." };
       }
     }
 
@@ -2034,10 +2361,19 @@ app.get("/api/config", async () => {
       reply.code(400);
       return { error: "invalid_optimizer_run_payload", message: String(e?.message ?? e) };
     }
+    const datasetModeRaw = body?.datasetMode;
+    const datasetMode = datasetModeRaw == null || String(datasetModeRaw).trim() === ""
+      ? "snapshot"
+      : String(datasetModeRaw);
+    if (datasetMode !== "snapshot" && datasetMode !== "followTail") {
+      reply.code(400);
+      return { error: "invalid_dataset_mode" };
+    }
     const payload: OptimizerLoopRunPayload = {
       ...body,
       selectedBotId,
       selectedBotPresetId,
+      datasetMode,
       datasetHistoryIds,
       cacheDatasets,
       interval,
@@ -2054,11 +2390,17 @@ app.get("/api/config", async () => {
       sim,
     };
     const optTfMin = Math.floor(Number(payload.optTfMin));
-    if (!Number.isInteger(optTfMin) || optTfMin < 15 || optTfMin > 240) {
+    if (!Number.isInteger(optTfMin) || optTfMin < 5 || optTfMin > 240) {
       reply.code(400);
       return { error: "invalid_opt_tf_min" };
     }
     payload.optTfMin = optTfMin;
+    try {
+      resolveOptimizerDatasetWindow(payload as unknown as Record<string, unknown>);
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "invalid_dataset_window", message: String(e?.message ?? e) };
+    }
     try {
       const parsedRanges = parseRanges(payload.ranges);
       assertOptimizerMinimumRanges(parsedRanges);
@@ -2288,7 +2630,7 @@ app.get("/api/config", async () => {
     const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
     const sortKey = String(query.sortKey ?? "endedAtMs");
     const sortDir: "asc" | "desc" = String(query.sortDir ?? "desc") === "asc" ? "asc" : "desc";
-    const history = readOptimizerJobHistory();
+    const history = aggregateOptimizerHistorySessions(readOptimizerJobHistory());
     const sorted = history.sort((a, b) => {
       const getValue = (row: OptimizerJobHistoryRecord): number | string => {
         switch (sortKey) {
@@ -2296,7 +2638,7 @@ app.get("/api/config", async () => {
           case "endedAtMs": return Number(row.endedAtMs) || 0;
           case "status": return row.status;
           case "mode": return row.mode ?? "";
-          case "datasets": return row.runPayload.datasetHistoryIds.length;
+          case "datasets": return Array.isArray(row.runPayload.datasetHistoryIds) ? row.runPayload.datasetHistoryIds.length : 0;
           case "tfMin": return Number(row.runPayload.optTfMin) || 0;
           case "candidates": return Number(row.runPayload.candidates) || 0;
           case "seed": return Number(row.runPayload.seed) || 0;
@@ -2323,13 +2665,16 @@ app.get("/api/config", async () => {
       const cmp = String(av).localeCompare(String(bv));
       return sortDir === "asc" ? cmp : -cmp;
     });
-    const filtered = sorted.filter((row) => (
-      Number(row.summary?.rowsPositive ?? 0) > 0
-      && (Boolean(optimizerJobs.get(row.jobId)) || Boolean(tryReadOptimizerJobSnapshot(row.jobId)))
-    ));
+    const hasSettings = (row: OptimizerJobHistoryRecord): boolean => {
+      if (row.historyType === "session" && Array.isArray(row.childJobIds) && row.childJobIds.length > 0) {
+        return row.childJobIds.some((jobId) => Boolean(optimizerJobs.get(jobId)) || Boolean(tryReadOptimizerJobSnapshot(jobId)));
+      }
+      return Boolean(optimizerJobs.get(row.jobId)) || Boolean(tryReadOptimizerJobSnapshot(row.jobId));
+    };
+    const filtered = sorted.filter((row) => Number(row.summary?.rowsPositive ?? 0) > 0 && hasSettings(row));
     const items = filtered
       .slice(offset, offset + limit)
-      .map((row) => ({ ...row, hasSettings: true }));
+      .map((row) => ({ ...row, hasSettings: hasSettings(row) }));
     return { total: filtered.length, items };
   });
 
@@ -2661,3 +3006,4 @@ app.get("/api/config", async () => {
     return configStore.get().universe;
   });
 }
+

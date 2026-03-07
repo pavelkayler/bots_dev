@@ -1,6 +1,6 @@
 export const OPTIMIZER_TF_OPTIONS = [
-  { value: 5, disabled: true },
-  { value: 10, disabled: true },
+  { value: 5, disabled: false },
+  { value: 10, disabled: false },
   { value: 15, disabled: false },
   { value: 30, disabled: false },
   { value: 60, disabled: false },

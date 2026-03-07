@@ -131,7 +131,7 @@ function getCacheDir() {
 function getFundingCacheDir() {
   return path.resolve(process.cwd(), "data", "cache", "bybit_funding_history");
 }
-const MIN_OPT_TF_MIN = 15;
+const MIN_OPT_TF_MIN = 5;
 const MIN_TIMEOUT_SEC = 61;
 const MINUTE_MS = 60_000;
 const DEBUG_DATASET_TF = process.env.DEBUG_DATASET_TF === "1";
@@ -539,6 +539,7 @@ function buildCandidateParams(
 export type RunOptimizationArgs = {
   jobId?: string;
   runId?: string;
+  selectedBotId?: string;
   datasetHistoryIds?: string[];
   candidates: number;
   seed: number;
@@ -957,6 +958,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           oivThresholdPct: params.oivThresholdPct,
           requireFundingSign: true,
           directionMode: args.directionMode ?? "both",
+          model: (args.selectedBotId ?? baseConfig.selectedBotId) === "signal-multi-factor-v1" ? "signal-multi-factor-v1" : "oi-momentum-v1",
         });
         const paper = new PaperBroker(candidateConfig.paper, logger as any);
         let lastEventTs = 0;

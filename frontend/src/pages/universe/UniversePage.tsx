@@ -177,6 +177,10 @@ export function UniversePage() {
         setError("Both numeric fields are required.");
         return;
       }
+      if (parsedTurnover < 0 || parsedVol < 0) {
+        setError("Numeric fields must be non-negative.");
+        return;
+      }
       const nextJob: UniverseCreateJobState = {
         status: "running",
         minTurnoverUsd: parsedTurnover,

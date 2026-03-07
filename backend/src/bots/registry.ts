@@ -1,6 +1,7 @@
 import { CONFIG } from "../config.js";
 
 export const DEFAULT_BOT_ID = "oi-momentum-v1";
+export const SIGNAL_BOT_ID = "signal-multi-factor-v1";
 
 export type BotConfig = {
   fundingCooldown: {
@@ -101,7 +102,36 @@ const CURRENT_BOT: BotRegistryEntry = {
   validateBotConfig: validateCurrentBotConfig,
 };
 
-const registry = new Map<string, BotRegistryEntry>([[CURRENT_BOT.id, CURRENT_BOT]]);
+const SIGNAL_BOT: BotRegistryEntry = {
+  id: SIGNAL_BOT_ID,
+  name: "Signal Multi-Factor",
+  defaults: normalizeCurrentBotConfig({
+    fundingCooldown: CONFIG.fundingCooldown,
+    signals: {
+      priceThresholdPct: Math.max(0.1, CONFIG.signals.priceThresholdPct),
+      oivThresholdPct: Math.max(0.1, CONFIG.signals.oivThresholdPct),
+      requireFundingSign: true,
+      dailyTriggerMin: CONFIG.signals.dailyTriggerMin,
+      dailyTriggerMax: CONFIG.signals.dailyTriggerMax,
+    },
+    strategy: {
+      klineTfMin: CONFIG.klineTfMin,
+      entryOffsetPct: CONFIG.paper.entryOffsetPct,
+      entryTimeoutSec: CONFIG.paper.entryTimeoutSec,
+      tpRoiPct: CONFIG.paper.tpRoiPct,
+      slRoiPct: CONFIG.paper.slRoiPct,
+      rearmDelayMs: CONFIG.paper.rearmDelayMs,
+      applyFunding: CONFIG.paper.applyFunding,
+    },
+  }),
+  normalizeBotConfig: normalizeCurrentBotConfig,
+  validateBotConfig: validateCurrentBotConfig,
+};
+
+const registry = new Map<string, BotRegistryEntry>([
+  [CURRENT_BOT.id, CURRENT_BOT],
+  [SIGNAL_BOT.id, SIGNAL_BOT],
+]);
 
 export function listBots(): Array<Pick<BotRegistryEntry, "id" | "name">> {
   return Array.from(registry.values()).map((b) => ({ id: b.id, name: b.name }));

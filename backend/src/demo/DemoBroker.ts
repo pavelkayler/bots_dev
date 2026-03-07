@@ -57,7 +57,7 @@ function calcTpSl(entry: number, side: PaperSide, leverage: number, tpRoiPct: nu
 }
 
 export class DemoBroker {
-  private readonly cfg: PaperBrokerConfig;
+  private cfg: PaperBrokerConfig;
   private readonly logger: EventLogger;
   private readonly rest = new BybitDemoRestClient();
   private readonly map = new Map<string, SymbolState>();
@@ -98,6 +98,22 @@ export class DemoBroker {
   ) {
     this.cfg = cfg;
     this.logger = logger;
+  }
+
+  applyConfigForNextTrades(next: Partial<PaperBrokerConfig>) {
+    const patch = next ?? {};
+    if (typeof patch.enabled === "boolean") this.cfg.enabled = patch.enabled;
+    if (patch.directionMode === "both" || patch.directionMode === "long" || patch.directionMode === "short") {
+      this.cfg.directionMode = patch.directionMode;
+    }
+    if (Number.isFinite(patch.marginUSDT) && Number(patch.marginUSDT) > 0) this.cfg.marginUSDT = Number(patch.marginUSDT);
+    if (Number.isFinite(patch.leverage) && Number(patch.leverage) >= 1) this.cfg.leverage = Number(patch.leverage);
+    if (Number.isFinite(patch.entryOffsetPct) && Number(patch.entryOffsetPct) >= 0) this.cfg.entryOffsetPct = Number(patch.entryOffsetPct);
+    if (Number.isFinite(patch.entryTimeoutSec) && Math.floor(Number(patch.entryTimeoutSec)) >= 1) this.cfg.entryTimeoutSec = Math.floor(Number(patch.entryTimeoutSec));
+    if (Number.isFinite(patch.tpRoiPct) && Number(patch.tpRoiPct) >= 0) this.cfg.tpRoiPct = Number(patch.tpRoiPct);
+    if (Number.isFinite(patch.slRoiPct) && Number(patch.slRoiPct) >= 0) this.cfg.slRoiPct = Number(patch.slRoiPct);
+    if (Number.isFinite(patch.rearmDelayMs) && Math.floor(Number(patch.rearmDelayMs)) >= 0) this.cfg.rearmDelayMs = Math.floor(Number(patch.rearmDelayMs));
+    if (Number.isFinite(patch.maxDailyLossUSDT) && Number(patch.maxDailyLossUSDT) >= 0) this.cfg.maxDailyLossUSDT = Number(patch.maxDailyLossUSDT);
   }
 
   private onTickRestError(args: TickInput, stage: string, err: any, st?: SymbolState) {

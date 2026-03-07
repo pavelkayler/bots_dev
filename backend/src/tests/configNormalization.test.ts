@@ -35,4 +35,17 @@ describe("config normalization", () => {
     expect((next.executionProfile?.paper as any).tpRoiPct).toBeUndefined();
     expect((next.executionProfile?.paper as any).slRoiPct).toBeUndefined();
   });
+
+  test("normalizes runtime numeric values to safe bounds", () => {
+    const next = configStore.update({ paper: { entryTimeoutSec: -5, maxDailyLossUSDT: -1 } as any });
+    expect(next.paper.entryTimeoutSec).toBeGreaterThanOrEqual(1);
+    expect(next.paper.maxDailyLossUSDT).toBeGreaterThanOrEqual(0);
+    expect(() => configStore.update({ riskLimits: { maxTradesPerDay: 0 } as any })).toThrow();
+  });
+
+  test("resolves unknown selectedBotId to registry default", () => {
+    const next = configStore.setSelections({ selectedBotId: "unknown-bot-id" });
+    expect(next.selectedBotId).toBe("oi-momentum-v1");
+    expect(next.selectedBotPresetId).toBeTruthy();
+  });
 });

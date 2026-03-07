@@ -29,4 +29,17 @@ describe("SignalEngine", () => {
     expect(decision.reason).toBe("cooldown");
     expect(decision.signal).toBeNull();
   });
+
+  it("supports multi-factor model scoring path", () => {
+    const engine = new SignalEngine({
+      priceThresholdPct: 1,
+      oivThresholdPct: 1,
+      requireFundingSign: true,
+      directionMode: "both",
+      model: "signal-multi-factor-v1",
+    });
+    expect(engine.decide({ priceMovePct: 1.3, oivMovePct: 1.2, fundingRate: 0.001, cooldownActive: false }).signal).toBe("LONG");
+    expect(engine.decide({ priceMovePct: -1.4, oivMovePct: -1.2, fundingRate: -0.001, cooldownActive: false }).signal).toBe("SHORT");
+    expect(engine.decide({ priceMovePct: 2, oivMovePct: 2, fundingRate: -0.001, cooldownActive: false }).reason).toBe("funding_mismatch");
+  });
 });

@@ -5,6 +5,9 @@ export type OptimizerLoopRunPayload = {
   [key: string]: unknown;
   selectedBotId?: string;
   selectedBotPresetId?: string;
+  datasetMode?: "snapshot" | "followTail";
+  timeRangeFromTs?: number | null;
+  timeRangeToTs?: number | null;
   datasetHistoryIds: string[];
   candidates: number;
   seed: number;

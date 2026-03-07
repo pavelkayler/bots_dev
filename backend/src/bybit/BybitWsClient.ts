@@ -10,6 +10,7 @@ type BybitWsReq = {
 type Handlers = {
   onTicker: (topic: string, type: "snapshot" | "delta", data: Record<string, any>) => void;
   onKline: (topic: string, type: "snapshot" | "delta", data: Record<string, any>) => void;
+  onPublicTrade?: (topic: string, data: Record<string, any>) => void;
   onOpen?: () => void;
   onClose?: () => void;
   onError?: (err: unknown) => void;
@@ -68,10 +69,16 @@ export class BybitWsClient {
       if (msg.op || typeof msg.success === "boolean") return;
 
       const topic = msg.topic as string | undefined;
-      const type = msg.type as "snapshot" | "delta" | undefined;
-      if (!topic || (type !== "snapshot" && type !== "delta")) return;
-
       const rows = normalizeData(msg.data);
+      if (!topic) return;
+
+      if (topic.startsWith("publicTrade.")) {
+        for (const row of rows) this.handlers.onPublicTrade?.(topic, row);
+        return;
+      }
+
+      const type = msg.type as "snapshot" | "delta" | undefined;
+      if (type !== "snapshot" && type !== "delta") return;
 
       if (topic.startsWith("tickers.")) {
         for (const row of rows) this.handlers.onTicker(topic, type, row);

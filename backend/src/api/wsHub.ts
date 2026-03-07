@@ -11,6 +11,8 @@ import { runtime } from "../runtime/runtime.js";
 import type { LogEvent } from "../logging/EventLogger.js";
 import { configStore, type RuntimeConfig } from "../runtime/configStore.js";
 import { LiveUpdateAggregator } from "./liveUpdateAggregator.js";
+import { cvdRecorder, minuteOiRecorder } from "../recorder/recorderStore.js";
+import { resolveRecorderSymbols } from "../recorder/recorderUniverseStore.js";
 
 type AwaitAllStreamsConnectedArgs = {
   timeoutMs: number;
@@ -20,12 +22,17 @@ type AwaitAllStreamsConnectedArgs = {
 type AwaitStreamsProvider = (args: AwaitAllStreamsConnectedArgs) => Promise<void>;
 
 let awaitStreamsProvider: AwaitStreamsProvider | null = null;
+let streamLifecycleSyncProvider: (() => void) | null = null;
 
 export async function awaitAllStreamsConnected(args: AwaitAllStreamsConnectedArgs): Promise<void> {
   if (!awaitStreamsProvider) {
     throw new Error("ws_hub_not_ready");
   }
   return await awaitStreamsProvider(args);
+}
+
+export function requestStreamLifecycleSync() {
+  streamLifecycleSyncProvider?.();
 }
 
 type SymbolRowBase = {
@@ -182,12 +189,26 @@ function chunkTopicsByCharLimit(topics: string[], maxChars = 18_000): string[][]
   return chunks;
 }
 
-function buildBybitTopics(cfg: RuntimeConfig): string[] {
+function normalizeSymbols(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const unique = new Set<string>();
+  for (const item of raw) {
+    const symbol = String(item ?? "").trim();
+    if (symbol) unique.add(symbol);
+  }
+  return Array.from(unique);
+}
+
+function buildBybitTopics(cfg: RuntimeConfig, symbols: string[]): string[] {
   const topics: string[] = [];
   const tf = cfg.universe.klineTfMin;
-  for (const s of cfg.universe.symbols) {
+  const includePublicTrade = cfg.selectedBotId === "signal-multi-factor-v1"
+    || minuteOiRecorder.getStatus().mode !== "off"
+    || cvdRecorder.getStatus().mode !== "off";
+  for (const s of symbols) {
     topics.push(`tickers.${s}`);
     topics.push(`kline.${tf}.${s}`);
+    if (includePublicTrade) topics.push(`publicTrade.${s}`);
   }
   return topics;
 }
@@ -253,6 +274,7 @@ export function createWsHub(app: FastifyInstance) {
     oivThresholdPct: CONFIG.signals.oivThresholdPct,
     requireFundingSign: CONFIG.signals.requireFundingSign,
     directionMode: CONFIG.paper.directionMode,
+    model: "oi-momentum-v1",
   });
 
   function ensureEngines() {
@@ -267,6 +289,7 @@ export function createWsHub(app: FastifyInstance) {
         oivThresholdPct: cfg.signals.oivThresholdPct,
         requireFundingSign: cfg.signals.requireFundingSign,
         directionMode: cfg.paper.directionMode,
+        model: cfg.selectedBotId === "signal-multi-factor-v1" ? "signal-multi-factor-v1" : "oi-momentum-v1",
       });
       app.log.info(
         { cfg: { fundingCooldown: cfg.fundingCooldown, signals: cfg.signals, paper: { directionMode: cfg.paper.directionMode } } },
@@ -322,9 +345,33 @@ export function createWsHub(app: FastifyInstance) {
 
   // Universe tracking (auto-apply via reconnect when changed)
   let lastUniverseKey = JSON.stringify(configStore.get().universe);
+  let lastSubscriptionKey = "";
   let universeApplyTimer: NodeJS.Timeout | null = null;
   const dailyGateBySymbol = new Map<string, DailyGateState>();
   let lastGateSessionId: string | null = runtime.getStatus().sessionId;
+
+  function resolveSubscribedSymbols(runtimeActive: boolean, recorderMode: "off" | "record_only" | "record_while_running"): string[] {
+    const cfg = configStore.get();
+    const tradingSymbols = normalizeSymbols(cfg.universe?.symbols ?? []);
+    if (recorderMode === "off") return tradingSymbols;
+    const recorderSymbols = normalizeSymbols(resolveRecorderSymbols());
+    if (recorderMode === "record_only") return recorderSymbols;
+    if (!runtimeActive) return recorderSymbols;
+    return normalizeSymbols([...tradingSymbols, ...recorderSymbols]);
+  }
+
+  function computeSubscriptionKey(runtimeActive: boolean, recorderMode: "off" | "record_only" | "record_while_running"): string {
+    const cfg = configStore.get();
+    const tf = Math.max(1, Math.floor(Number(cfg.universe?.klineTfMin) || 1));
+    const symbols = resolveSubscribedSymbols(runtimeActive, recorderMode);
+    return JSON.stringify({
+      tf,
+      symbols,
+      botId: cfg.selectedBotId,
+      minuteMode: recorderMode,
+      cvdMode: cvdRecorder.getStatus().mode,
+    });
+  }
 
   function broadcastStreamsState() {
     const msg: ServerWsMessage = { type: "streams_state", payload: { streamsEnabled, bybitConnected } };
@@ -542,11 +589,37 @@ export function createWsHub(app: FastifyInstance) {
 
   function syncRuntimeStreamLifecycle() {
     const st = runtime.getStatus();
-    if (st.sessionState === "RUNNING" || st.sessionState === "RESUMING") {
+    const runtimeActive = st.sessionState === "RUNNING" || st.sessionState === "RESUMING";
+    const recorderMode = minuteOiRecorder.getStatus().mode;
+    const cvdMode = cvdRecorder.getStatus().mode;
+    const nextSubscriptionKey = computeSubscriptionKey(runtimeActive, recorderMode);
+    const shouldEnableStreams = runtimeActive || recorderMode === "record_only" || cvdMode === "record_only";
+
+    if (shouldEnableStreams) {
       streamsEnabled = true;
       desiredStreams = true;
-      void startUpstreamIfNeeded();
-      if (st.sessionState === "RUNNING") startLiveUpdateAggregator();
+      if (recorderMode === "record_only") {
+        minuteOiRecorder.activate(resolveRecorderSymbols());
+      } else if (runtimeActive && recorderMode === "record_while_running") {
+        minuteOiRecorder.activate(resolveRecorderSymbols());
+      } else {
+        minuteOiRecorder.deactivate();
+      }
+      if (cvdMode === "record_only") {
+        cvdRecorder.activate(resolveRecorderSymbols());
+      } else if (runtimeActive && cvdMode === "record_while_running") {
+        cvdRecorder.activate(resolveRecorderSymbols());
+      } else {
+        cvdRecorder.deactivate();
+      }
+      if (bybit && bybitConnected && nextSubscriptionKey !== lastSubscriptionKey) {
+        lastSubscriptionKey = nextSubscriptionKey;
+        applySubscriptions("stream_target_change");
+      } else {
+        lastSubscriptionKey = nextSubscriptionKey;
+        void startUpstreamIfNeeded();
+      }
+      if (runtimeActive && st.sessionState === "RUNNING") startLiveUpdateAggregator();
       else stopLiveUpdateAggregator();
       broadcastStreamsState();
       return;
@@ -554,6 +627,9 @@ export function createWsHub(app: FastifyInstance) {
 
     streamsEnabled = false;
     desiredStreams = false;
+    lastSubscriptionKey = "";
+    minuteOiRecorder.deactivate();
+    cvdRecorder.deactivate();
     stopUpstreamHard();
     stopLiveUpdateAggregator();
     broadcastStreamsState();
@@ -572,8 +648,16 @@ export function createWsHub(app: FastifyInstance) {
     if (!bybit) return;
 
     const cfg = configStore.get();
-    const topics = buildBybitTopics(cfg);
+    const st = runtime.getStatus();
+    const runtimeActive = st.sessionState === "RUNNING" || st.sessionState === "RESUMING";
+    const recorderMode = minuteOiRecorder.getStatus().mode;
+    const symbols = resolveSubscribedSymbols(runtimeActive, recorderMode);
+    const topics = buildBybitTopics(cfg, symbols);
     const batches = chunkTopicsByCharLimit(topics);
+    const cvdStatus = cvdRecorder.getStatus();
+    if (cvdStatus.mode !== "off" && symbols.length > 0) {
+      void cvdRecorder.bootstrapFromRest(symbols).catch(() => undefined);
+    }
 
     let delay = 0;
     for (const batch of batches) {
@@ -596,6 +680,10 @@ export function createWsHub(app: FastifyInstance) {
       onOpen: () => {
         connectInFlight = false;
         bybitConnected = true;
+        const st = runtime.getStatus();
+        const runtimeActive = st.sessionState === "RUNNING" || st.sessionState === "RESUMING";
+        const recorderMode = minuteOiRecorder.getStatus().mode;
+        lastSubscriptionKey = computeSubscriptionKey(runtimeActive, recorderMode);
         app.log.info("bybit ws: open");
         broadcastStreamsState();
         resolveStreamWaitersIfReady();
@@ -621,10 +709,13 @@ export function createWsHub(app: FastifyInstance) {
         cache.upsertFromTicker(symbol, data);
         liveUpdateAggregator.upsert(`ticker:${symbol}`);
         const row = cache.getRawRow(symbol);
-        const markPrice = Number(row?.markPrice);
         const openInterestValue = Number(row?.openInterestValue);
-        const fundingRate = Number(row?.fundingRate);
-        const nextFundingTime = Number(row?.nextFundingTime);
+        const tickerTsMs = Number((data as any)?.ts);
+        minuteOiRecorder.ingestTicker({
+          symbol,
+          openInterestValue,
+          tsMs: Number.isFinite(tickerTsMs) && tickerTsMs > 0 ? tickerTsMs : Date.now(),
+        });
       },
       onKline: (topic, _type, data) => {
         const symbol = parseKlineSymbol(topic);
@@ -637,6 +728,21 @@ export function createWsHub(app: FastifyInstance) {
         if (isConfirm) {
           liveUpdateAggregator.upsert(`kline:${symbol}`);
         }
+      },
+      onPublicTrade: (topic, data) => {
+        const symbol = topic.slice("publicTrade.".length);
+        const side = String((data as any)?.S ?? (data as any)?.side ?? "");
+        const price = Number((data as any)?.p ?? (data as any)?.price);
+        const size = Number((data as any)?.v ?? (data as any)?.size);
+        const tsRaw = Number((data as any)?.T ?? (data as any)?.time);
+        if (side !== "Buy" && side !== "Sell") return;
+        cvdRecorder.ingestTrade({
+          symbol,
+          side,
+          price,
+          size,
+          ts: Number.isFinite(tsRaw) && tsRaw > 0 ? tsRaw : Date.now(),
+        });
       },
     });
 
@@ -737,6 +843,11 @@ export function createWsHub(app: FastifyInstance) {
     });
   };
 
+  streamLifecycleSyncProvider = () => {
+    syncRuntimeStreamLifecycle();
+    broadcastSnapshot();
+  };
+
   function applySubscriptions(reason: string) {
     if (!streamsEnabled) return;
 
@@ -764,11 +875,16 @@ export function createWsHub(app: FastifyInstance) {
   function onConfigChange(cfg: RuntimeConfig, meta: any) {
     // meta.universeChanged is emitted by ConfigStore.update()
     const key = JSON.stringify(cfg.universe);
-    const changed = key !== lastUniverseKey || Boolean(meta?.universeChanged);
+    const recorderMode = minuteOiRecorder.getStatus().mode;
+    const runtimeState = runtime.getStatus().sessionState;
+    const runtimeActive = runtimeState === "RUNNING" || runtimeState === "RESUMING";
+    const subscriptionKey = computeSubscriptionKey(runtimeActive, recorderMode);
+    const changed = key !== lastUniverseKey || Boolean(meta?.universeChanged) || subscriptionKey !== lastSubscriptionKey;
 
     if (!changed) return;
 
     lastUniverseKey = key;
+    lastSubscriptionKey = subscriptionKey;
 
     if (universeApplyTimer) clearTimeout(universeApplyTimer);
     universeApplyTimer = setTimeout(() => {
@@ -850,6 +966,7 @@ export function createWsHub(app: FastifyInstance) {
 
   app.addHook("onClose", async () => {
     awaitStreamsProvider = null;
+    streamLifecycleSyncProvider = null;
     runtime.off("state", onRuntimeState);
     runtime.off("event", onRuntimeEvent);
 
