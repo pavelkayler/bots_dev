@@ -260,9 +260,12 @@ export async function getJobStatus(jobId: string): Promise<{ status: "running" |
   return await getJson<{ status: "running" | "paused" | "done" | "error" | "cancelled"; total: number; done: number; startedAtMs?: number; updatedAtMs?: number; finishedAtMs?: number | null; message?: string }>(`${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/status`);
 }
 
-export async function getCurrentJob(): Promise<{ jobId: string | null }> {
+export async function getCurrentJob(botId?: string): Promise<{ jobId: string | null }> {
   const base = getApiBase();
-  return await getJson<{ jobId: string | null }>(`${base}/api/optimizer/jobs/current`);
+  const params = new URLSearchParams();
+  if (botId) params.set("botId", botId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return await getJson<{ jobId: string | null }>(`${base}/api/optimizer/jobs/current${suffix}`);
 }
 
 export async function getJobResults(
@@ -293,6 +296,7 @@ export async function getOptimizerJobHistory(query?: {
   offset?: number;
   sortKey?: OptimizerHistorySortKey;
   sortDir?: OptimizerSortDir;
+  botId?: string;
 }): Promise<{ total: number; items: OptimizerJobHistoryRecord[] }> {
   const base = getApiBase();
   const params = new URLSearchParams();
@@ -300,6 +304,7 @@ export async function getOptimizerJobHistory(query?: {
   if (query?.offset != null) params.set("offset", String(query.offset));
   if (query?.sortKey) params.set("sortKey", query.sortKey);
   if (query?.sortDir) params.set("sortDir", query.sortDir);
+  if (query?.botId) params.set("botId", query.botId);
   return await getJson<{ total: number; items: OptimizerJobHistoryRecord[] }>(`${base}/api/optimizer/jobs/history?${params.toString()}`);
 }
 
@@ -312,12 +317,13 @@ export function getJobExportUrl(jobId: string, format: "json" | "csv" = "json", 
   return `${base}/api/optimizer/jobs/${encodeURIComponent(jobId)}/export?${params.toString()}`;
 }
 
-export function getCurrentJobExportUrl(format: "json" | "csv" = "json", sortKey?: OptimizerSortKeyExtended, sortDir?: OptimizerSortDir): string {
+export function getCurrentJobExportUrl(format: "json" | "csv" = "json", sortKey?: OptimizerSortKeyExtended, sortDir?: OptimizerSortDir, botId?: string): string {
   const base = getApiBase();
   const params = new URLSearchParams();
   params.set("format", format);
   if (sortKey) params.set("sortKey", sortKey);
   if (sortDir) params.set("sortDir", sortDir);
+  if (botId) params.set("botId", botId);
   return `${base}/api/optimizer/jobs/current/export?${params.toString()}`;
 }
 

@@ -15,5 +15,17 @@ describe("bot registry", () => {
     expect(bot.defaults.signals.priceThresholdPct).toBeGreaterThan(0);
     expect(bot.defaults.signals.oivThresholdPct).toBeGreaterThan(0);
   });
-});
 
+  it("keeps bot-specific normalizers isolated", () => {
+    const oi = getBotDefinition(DEFAULT_BOT_ID);
+    const signal = getBotDefinition(SIGNAL_BOT_ID);
+
+    const oiCfg = oi.normalizeBotConfig({ fundingCooldown: { beforeMin: -10, afterMin: -10 } } as any);
+    const signalCfg = signal.normalizeBotConfig({ fundingCooldown: { beforeMin: -10, afterMin: -10 } } as any);
+
+    expect(Number.isFinite(oiCfg.fundingCooldown.beforeMin)).toBe(true);
+    expect(signalCfg.fundingCooldown.beforeMin).toBeGreaterThanOrEqual(0);
+    expect(signal.validateBotConfig).not.toBe(oi.validateBotConfig);
+    expect(signal.normalizeBotConfig).not.toBe(oi.normalizeBotConfig);
+  });
+});

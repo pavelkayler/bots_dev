@@ -34,7 +34,7 @@ export function HeaderBar(props: Props) {
         <Navbar.Brand>{APP_NAME}</Navbar.Brand>
         <Nav className="me-2" style={{ whiteSpace: "nowrap" }}>
           <Nav.Link as={Link} to="/">Dashboard</Nav.Link>
-          <Nav.Link as={Link} to="/bots">OI&nbsp;Momentum</Nav.Link>
+          <Nav.Link as={Link} to="/oimomentum">OI&nbsp;Momentum</Nav.Link>
           <Nav.Link as={Link} to="/signal-bot">Signal&nbsp;Bot</Nav.Link>
           <Nav.Link as={Link} to="/universe">Universe</Nav.Link>
         </Nav>

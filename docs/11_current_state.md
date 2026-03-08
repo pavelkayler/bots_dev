@@ -1,6 +1,6 @@
 # 11 Current State (what exists now) + Next Actions
 
-Last update: 2026-03-07
+Last update: 2026-03-08
 
 ## What the project is
 A Bybit USDT‑perpetual bot skeleton focused on **operator-visible** paper testing and parameter iteration:
@@ -135,6 +135,16 @@ High-level:
 - Receive Data completion is strict: a dataset is marked done only when every required 1m candle has OI populated
 - CoinGlass backfill code remains in repository but is disabled in current flow (`COINGLASS_ENABLED=0`)
 - Receive Data progress includes backend ETA (`etaSec`) and UI shows `ETA: ~Xm Ys`
+
+### Bot isolation (OI Momentum vs Signal Bot)
+- Optimizer history is bot-scoped end-to-end:
+  - backend `/api/optimizer/jobs/history` accepts `botId` and filters rows by `runPayload.selectedBotId`
+  - frontend optimizer always requests history with active/forced bot id
+- Legacy optimizer history rows without bot id are treated as OI-only compatibility rows and are not shown on Signal Bot optimizer surfaces.
+- Optimizer local UI persistence is bot-scoped in localStorage:
+  - ranges, candidates, seed, tf, filters, follow-tail start, loop flags, and table page-size preferences are all keyed by bot id.
+- Signal Bot page no longer force-switches global bot selection on open.
+  - This removes cross-page selection side effects while keeping Signal optimizer/settings explicitly scoped.
 
 ### Recorder foundation (minute OI path)
 - A dedicated recorder foundation exists in `backend/src/recorder/MinuteOiRecorder.ts`.

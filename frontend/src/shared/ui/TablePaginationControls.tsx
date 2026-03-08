@@ -14,13 +14,27 @@ type Props = {
 
 export function useStoredPageSize(tableId: string, fallback: 10 | 25 | 50): [10 | 25 | 50, (next: 10 | 25 | 50) => void] {
   const key = `table.pageSize.${tableId}`;
+  const readStored = (): 10 | 25 | 50 => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      const parsed = Number(raw);
+      return parsed === 25 || parsed === 50 ? parsed : fallback;
+    } catch {
+      return fallback;
+    }
+  };
   const [value, setValue] = useState<10 | 25 | 50>(() => {
-    const raw = window.localStorage.getItem(key);
-    const parsed = Number(raw);
-    return parsed === 25 || parsed === 50 ? parsed : fallback;
+    return readStored();
   });
   useEffect(() => {
-    window.localStorage.setItem(key, String(value));
+    setValue(readStored());
+  }, [key, fallback]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(key, String(value));
+    } catch {
+      // Ignore quota/storage errors to keep pagination/render stable.
+    }
   }, [key, value]);
   return [value, setValue];
 }

@@ -11,6 +11,7 @@ export type StatusResponse = {
 };
 
 export type ProcessStatusResponse = {
+  serverBootId?: string | null;
   runtime: {
     state: SessionState;
     runningSinceMs: number | null;

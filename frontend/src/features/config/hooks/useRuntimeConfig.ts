@@ -6,7 +6,12 @@ function deepClone<T>(x: T): T {
   return structuredClone(x);
 }
 
-export function useRuntimeConfig() {
+type UseRuntimeConfigOptions = {
+  selectedBotId?: string;
+  selectedBotPresetId?: string;
+};
+
+export function useRuntimeConfig(options?: UseRuntimeConfigOptions) {
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const [draft, setDraft] = useState<RuntimeConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +22,16 @@ export function useRuntimeConfig() {
   async function reload() {
     setError(null);
     try {
-      const cfg = await fetchRuntimeConfig();
+      let cfg = await fetchRuntimeConfig();
+      const needsBotSelection = Boolean(options?.selectedBotId) && cfg.selectedBotId !== options?.selectedBotId;
+      const needsPresetSelection = Boolean(options?.selectedBotPresetId) && cfg.selectedBotPresetId !== options?.selectedBotPresetId;
+      if (needsBotSelection || needsPresetSelection) {
+        await updateRuntimeConfig({
+          ...(options?.selectedBotId ? { selectedBotId: options.selectedBotId } : {}),
+          ...(options?.selectedBotPresetId ? { selectedBotPresetId: options.selectedBotPresetId } : {}),
+        });
+        cfg = await fetchRuntimeConfig();
+      }
       setConfig(cfg);
       setDraft(deepClone(cfg));
       setLastApplied(null);
@@ -29,7 +43,7 @@ export function useRuntimeConfig() {
 
   useEffect(() => {
     void reload();
-  }, []);
+  }, [options?.selectedBotId, options?.selectedBotPresetId]);
 
   const dirty = useMemo(() => {
     if (!config || !draft) return false;
@@ -42,7 +56,11 @@ export function useRuntimeConfig() {
     setError(null);
     setSaving(true);
     try {
-      const res = await updateRuntimeConfig(payload);
+      const res = await updateRuntimeConfig({
+        ...payload,
+        ...(options?.selectedBotId ? { selectedBotId: options.selectedBotId } : {}),
+        ...(options?.selectedBotPresetId ? { selectedBotPresetId: options.selectedBotPresetId } : {}),
+      });
       setConfig(res.config);
       setDraft(deepClone(res.config));
       setLastApplied(res.applied ?? null);

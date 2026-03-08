@@ -44,3 +44,17 @@ export type UniverseSymbolSummaryResponse = {
   range: UniverseMetricsRange;
   rows: UniverseSymbolSummaryRow[];
 };
+
+export type UniverseAvailableSymbolRow = {
+  symbol: string;
+  avgTurnoverUsd24h: number;
+  avgVolatilityPct: number;
+};
+
+export type UniverseAvailableSymbolsResponse = {
+  range: UniverseMetricsRange;
+  rows: UniverseAvailableSymbolRow[];
+  cached: boolean;
+  cachedAtMs: number;
+  nowMs: number;
+};

@@ -41,6 +41,8 @@ type SymbolMetrics = {
   avgVolatilityPct: number;
 };
 
+export type UniverseAvailableSymbolMetrics = SymbolMetrics;
+
 function isUsdtPerpSymbol(symbol: string): boolean {
   if (!/^[A-Z0-9]{2,28}USDT$/.test(symbol)) return false;
   if (symbol.includes("-")) return false;
@@ -98,8 +100,48 @@ async function fetchSymbolMetrics(restBaseUrl: string, symbol: string, rangeHour
   const avgHourlyTurnoverUsd = sumTurnover / count;
   return {
     symbol,
-    avgTurnoverUsd24h: avgHourlyTurnoverUsd * 24,
+    avgTurnoverUsd24h: avgHourlyTurnoverUsd * rangeHours,
     avgVolatilityPct: sumVolatility / count,
+  };
+}
+
+export async function collectUniverseAvailableSymbolMetrics(input: {
+  restBaseUrl: string;
+  symbols: string[];
+  range: UniverseMetricsRange;
+}): Promise<{ range: UniverseMetricsRange; rangeHours: number; rows: UniverseAvailableSymbolMetrics[] }> {
+  const range = normalizeUniverseMetricsRange(input.range);
+  const rangeHours = HOURS_BY_RANGE[range];
+  const seededRaw = Array.isArray(input.symbols)
+    ? input.symbols.map((s) => String(s).trim().toUpperCase()).filter(Boolean)
+    : [];
+  const seededFiltered = seededRaw.filter(isUsdtPerpSymbol);
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const symbol of seededFiltered) {
+    if (seen.has(symbol)) continue;
+    seen.add(symbol);
+    unique.push(symbol);
+  }
+
+  const rows = new Array<UniverseAvailableSymbolMetrics>(unique.length);
+  const concurrency = 8;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < unique.length) {
+      const idx = cursor;
+      cursor += 1;
+      const symbol = unique[idx];
+      if (!symbol) continue;
+      const row = await fetchSymbolMetrics(input.restBaseUrl, symbol, rangeHours);
+      if (row) rows[idx] = row;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, unique.length || 1)) }, () => worker()));
+  return {
+    range,
+    rangeHours,
+    rows: rows.filter(Boolean),
   };
 }
 

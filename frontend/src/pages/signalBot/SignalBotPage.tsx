@@ -6,31 +6,26 @@ import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntim
 import { useProcessStatus } from "../../features/session/hooks/useProcessStatus";
 import { ProcessIndicatorsBar } from "../../features/session/components/ProcessIndicatorsBar";
 import { OptimizerPage } from "../optimizer/OptimizerPage";
-import { useBotSelections } from "../../features/bots/hooks/useBotSelections";
 import { ProviderCapabilitiesCard } from "../../features/providers/components/ProviderCapabilitiesCard";
 import { listDatasetHistories, type DatasetHistoryRecord } from "../../features/datasetHistory/api/datasetHistoryApi";
 import { SignalFollowTailDatasetCard } from "./SignalFollowTailDatasetCard";
 import { setRecorderMode } from "../../features/recorder/api/recorderApi";
 import { SignalBotSettingsPanel } from "./SignalBotSettingsPanel";
+import { usePersistentState } from "../../shared/hooks/usePersistentState";
 
 const SIGNAL_BOT_ID = "signal-multi-factor-v1";
-type SignalTab = "live" | "settings" | "optimizer" | "report";
+type SignalTab = "live" | "settings" | "optimizer" | "report" | "api";
 
 export function SignalBotPage() {
   const { conn, rows, lastServerTime, wsUrl, streams, requestRowsRefresh } = useWsFeed();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
   const { status: processStatus } = useProcessStatus();
-  const { selectedBotId, setSelectedBotId } = useBotSelections();
-  const [tab, setTab] = useState<SignalTab>("live");
-  const [trackingEnabled, setTrackingEnabled] = useState(true);
+  const [tab, setTab] = usePersistentState<SignalTab>("signalbot.tab", "live");
+  const [trackingEnabled, setTrackingEnabled] = usePersistentState<boolean>("signalbot.trackingEnabled", true);
   const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
+  const [signalRowsSnapshot, setSignalRowsSnapshot] = useState<typeof rows>([]);
   const [datasetHistories, setDatasetHistories] = useState<DatasetHistoryRecord[]>([]);
   const [trackingError, setTrackingError] = useState<string>("");
-
-  useEffect(() => {
-    if (!selectedBotId || selectedBotId === SIGNAL_BOT_ID) return;
-    void setSelectedBotId(SIGNAL_BOT_ID);
-  }, [selectedBotId, setSelectedBotId]);
 
   useEffect(() => {
     let active = true;
@@ -54,11 +49,22 @@ export function SignalBotPage() {
     };
   }, []);
 
-  const signalRows = useMemo(() => (
+  const rawSignalRows = useMemo(() => (
     rows
       .filter((row) => row.signal === "LONG" || row.signal === "SHORT")
       .sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0))
   ), [rows]);
+
+  useEffect(() => {
+    if (!trackingEnabled) return;
+    const id = window.setInterval(() => {
+      setSignalRowsSnapshot(rawSignalRows);
+      setLastRefreshAt(Date.now());
+    }, 5_000);
+    return () => window.clearInterval(id);
+  }, [trackingEnabled, rawSignalRows]);
+
+  const signalRows = signalRowsSnapshot;
 
   const liveSummary = useMemo(() => {
     let longCount = 0;
@@ -96,26 +102,30 @@ export function SignalBotPage() {
       {
         id: "open_interest",
         label: "Open interest path",
-        ok: Boolean(latestHistory.hasOi) && missingOiPointsTotal === 0,
-        detail: Boolean(latestHistory.hasOi) && missingOiPointsTotal === 0 ? "ok" : `missing points: ${missingOiPointsTotal}`,
+        ok: missingOiPointsTotal === 0,
+        detail: missingOiPointsTotal === 0 ? "ok" : `missing points: ${missingOiPointsTotal}`,
       },
       {
         id: "funding",
         label: "Funding history",
-        ok: Boolean(latestHistory.hasFunding) && missingFundingPointsTotal === 0,
-        detail: Boolean(latestHistory.hasFunding) && missingFundingPointsTotal === 0 ? "ok" : `missing points: ${missingFundingPointsTotal}`,
+        ok: missingFundingPointsTotal === 0,
+        detail: missingFundingPointsTotal === 0 ? "ok" : `missing points: ${missingFundingPointsTotal}`,
       },
     ];
   }, [latestHistory]);
 
   const missingMetricLabels = useMemo(() => datasetChecks.filter((it) => !it.ok).map((it) => it.label), [datasetChecks]);
-  const datasetBaselineReady = useMemo(() => latestHistory != null && missingMetricLabels.length === 0, [latestHistory, missingMetricLabels]);
+  const datasetBaselineReady = useMemo(() => {
+    if (!latestHistory) return false;
+    const has1mInterval = String(latestHistory.interval ?? "") === "1";
+    const hasSymbols = Number(latestHistory.receivedSymbolsCount ?? 0) > 0;
+    return has1mInterval && hasSymbols && missingMetricLabels.length === 0;
+  }, [latestHistory, missingMetricLabels]);
 
   useEffect(() => {
     if (!trackingEnabled || !datasetBaselineReady) return;
     const id = window.setInterval(() => {
       requestRowsRefresh("tick");
-      setLastRefreshAt(Date.now());
     }, 5_000);
     return () => window.clearInterval(id);
   }, [trackingEnabled, datasetBaselineReady, requestRowsRefresh]);
@@ -166,21 +176,19 @@ export function SignalBotPage() {
               <Button variant={tab === "settings" ? "primary" : "outline-primary"} onClick={() => setTab("settings")}>Settings</Button>
               <Button variant={tab === "optimizer" ? "primary" : "outline-primary"} onClick={() => setTab("optimizer")}>Signal Bot Optimizer</Button>
               <Button variant={tab === "report" ? "primary" : "outline-primary"} onClick={() => setTab("report")}>Report</Button>
+              <Button variant={tab === "api" ? "primary" : "outline-primary"} onClick={() => setTab("api")}>API</Button>
             </ButtonGroup>
           </Card.Header>
           <Card.Body>
             {tab === "live" ? (
               <>
-                <ProviderCapabilitiesCard botId={SIGNAL_BOT_ID} title="Signal Bot endpoints availability" />
                 <SignalFollowTailDatasetCard />
                 <div className="d-flex align-items-center gap-2 mb-2">
-                  <Button
-                    size="sm"
-                    variant={trackingEnabled ? "outline-danger" : "success"}
-                    disabled={!datasetBaselineReady}
-                    onClick={() => setTrackingEnabled((prev) => !prev)}
-                  >
-                    {trackingEnabled ? "Stop tracking" : "Start tracking"}
+                  <Button size="sm" variant="success" disabled={!datasetBaselineReady || trackingEnabled} onClick={() => setTrackingEnabled(true)}>
+                    Start
+                  </Button>
+                  <Button size="sm" variant="outline-danger" disabled={!trackingEnabled} onClick={() => setTrackingEnabled(false)}>
+                    Stop
                   </Button>
                   <Badge bg="secondary">update: 5 sec</Badge>
                   <Badge bg="primary">signals: {liveSummary.total}</Badge>
@@ -201,7 +209,18 @@ export function SignalBotPage() {
                   </div>
                 ) : null}
                 <div style={{ overflowX: "auto" }}>
-                  <Table size="sm" bordered hover className="mb-0">
+                  <Table size="sm" bordered hover className="mb-0" style={{ tableLayout: "fixed", width: "100%" }}>
+                    <colgroup>
+                      <col style={{ width: "13%" }} />
+                      <col style={{ width: "8%" }} />
+                      <col style={{ width: "11%" }} />
+                      <col style={{ width: "11%" }} />
+                      <col style={{ width: "13%" }} />
+                      <col style={{ width: "11%" }} />
+                      <col style={{ width: "10%" }} />
+                      <col style={{ width: "13%" }} />
+                      <col style={{ width: "10%" }} />
+                    </colgroup>
                     <thead>
                       <tr>
                         <th>Symbol</th>
@@ -218,21 +237,21 @@ export function SignalBotPage() {
                     <tbody>
                       {signalRows.length ? signalRows.map((row) => (
                         <tr key={row.symbol}>
-                          <td>{row.symbol}</td>
+                          <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.symbol}</td>
                           <td>
                             <span style={{ color: row.signal === "LONG" ? "#198754" : "#dc3545", fontWeight: 600 }}>
                               {row.signal}
                             </span>
                           </td>
-                          <td>{Number(row.markPrice ?? 0).toFixed(6)}</td>
-                          <td>{Number(row.priceMovePct ?? 0).toFixed(3)}</td>
-                          <td>{Number(row.openInterestValue ?? 0).toFixed(2)}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{Number(row.markPrice ?? 0).toFixed(6)}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{Number(row.priceMovePct ?? 0).toFixed(3)}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{Number(row.openInterestValue ?? 0).toFixed(2)}</td>
                           <td style={{ color: Number(row.oivMovePct ?? 0) >= 0 ? "#198754" : "#dc3545" }}>
                             {Number(row.oivMovePct ?? 0).toFixed(3)}
                           </td>
-                          <td>{Number(row.fundingRate ?? 0).toFixed(6)}</td>
-                          <td>{row.signalReason || "-"}</td>
-                          <td>{row.updatedAt ? new Date(row.updatedAt).toLocaleTimeString() : "-"}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{Number(row.fundingRate ?? 0).toFixed(6)}</td>
+                          <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.signalReason || "-"}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{row.updatedAt ? new Date(row.updatedAt).toLocaleTimeString() : "-"}</td>
                         </tr>
                       )) : (
                         <tr><td colSpan={9} style={{ fontSize: 12, opacity: 0.75 }}>No live signals yet.</td></tr>
@@ -248,12 +267,7 @@ export function SignalBotPage() {
             ) : null}
 
             {tab === "optimizer" ? (
-              <Card className="mt-1">
-                <Card.Header className="py-2"><b>Signal Bot Optimizer</b></Card.Header>
-                <Card.Body>
-                  <OptimizerPage embedded forcedBotId={SIGNAL_BOT_ID} hideBotSelectors title="Signal Bot Optimizer" />
-                </Card.Body>
-              </Card>
+              <OptimizerPage embedded forcedBotId={SIGNAL_BOT_ID} hideBotSelectors title="Signal Bot Optimizer" />
             ) : null}
 
             {tab === "report" ? (
@@ -320,6 +334,14 @@ export function SignalBotPage() {
                   </Card>
                 </Col>
               </Row>
+            ) : null}
+
+            {tab === "api" ? (
+              <ProviderCapabilitiesCard
+                botId={SIGNAL_BOT_ID}
+                title="Signal Bot endpoints availability"
+                serverBootId={processStatus.serverBootId}
+              />
             ) : null}
           </Card.Body>
         </Card>

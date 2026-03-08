@@ -21,6 +21,14 @@ const RECEIVE_LAST_JOB_STORAGE_KEY = "receiveDataLastJob";
 const PRESETS: DatasetRangePreset[] = ["6h", "12h", "24h", "48h", "1w", "2w", "4w", "1mo"];
 const COMPAT_INTERVAL: BybitKlineInterval = "15";
 
+function safeSetStorage(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore quota errors to keep UI usable.
+  }
+}
+
 function toDatetimeLocal(ms: number): string {
   if (!Number.isFinite(ms)) return "";
   const d = new Date(ms);
@@ -157,12 +165,12 @@ export default function DatasetTargetCard() {
         if (!active) return;
         const next = draftFromTarget(res.datasetTarget);
         setDraft(next);
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        safeSetStorage(STORAGE_KEY, JSON.stringify(next));
       } catch {
         if (!active) return;
         const fallback = defaultDraft();
         setDraft(fallback);
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fallback));
+        safeSetStorage(STORAGE_KEY, JSON.stringify(fallback));
       } finally {
         if (active) setLoadingInit(false);
       }
@@ -174,7 +182,7 @@ export default function DatasetTargetCard() {
 
   useEffect(() => {
     if (loadingInit) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+    safeSetStorage(STORAGE_KEY, JSON.stringify(draft));
   }, [draft, loadingInit]);
 
   useEffect(() => {
@@ -205,10 +213,10 @@ export default function DatasetTargetCard() {
           setReceiveJob(res.job);
           if (res.job.status === "done") {
             const datasetCache = res.datasetCache ?? res.job.id;
-            window.localStorage.setItem(DATASET_CACHE_STORAGE_KEY, datasetCache);
+            safeSetStorage(DATASET_CACHE_STORAGE_KEY, datasetCache);
           }
           if (res.job.status === "done" || res.job.status === "error" || res.job.status === "cancelled") {
-            window.localStorage.setItem(RECEIVE_LAST_JOB_STORAGE_KEY, JSON.stringify(res.job));
+            safeSetStorage(RECEIVE_LAST_JOB_STORAGE_KEY, JSON.stringify(res.job));
             setReceiveJobId(null);
             window.localStorage.removeItem(RECEIVE_JOB_STORAGE_KEY);
           }
@@ -244,7 +252,7 @@ export default function DatasetTargetCard() {
       const started = await startReceiveData(payload);
       window.localStorage.removeItem(RECEIVE_LAST_JOB_STORAGE_KEY);
       setReceiveJobId(started.jobId);
-      window.localStorage.setItem(RECEIVE_JOB_STORAGE_KEY, started.jobId);
+      safeSetStorage(RECEIVE_JOB_STORAGE_KEY, started.jobId);
       setReceiveJob({
         id: started.jobId,
         status: "queued",

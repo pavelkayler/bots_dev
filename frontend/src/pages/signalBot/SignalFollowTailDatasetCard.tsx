@@ -10,6 +10,14 @@ const RECEIVE_JOB_STORAGE_KEY = "signalBot.followTail.receiveJobId";
 const START_DATE_STORAGE_KEY = "signalBot.followTail.startDate";
 const UNIVERSE_STORAGE_KEY = "signalBot.followTail.universeId";
 
+function safeSetStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage quota errors to keep the page functional.
+  }
+}
+
 function toDatetimeLocal(ms: number): string {
   const d = new Date(ms);
   const offsetMs = d.getTimezoneOffset() * 60_000;
@@ -58,7 +66,7 @@ export function SignalFollowTailDatasetCard() {
           setJob(res.job);
           if (res.job.status === "done") {
             const datasetCache = res.datasetCache ?? res.job.id;
-            localStorage.setItem(DATASET_CACHE_STORAGE_KEY, datasetCache);
+            safeSetStorage(DATASET_CACHE_STORAGE_KEY, datasetCache);
           }
           if (res.job.status === "done" || res.job.status === "error" || res.job.status === "cancelled") {
             setJobId(null);
@@ -95,8 +103,8 @@ export function SignalFollowTailDatasetCard() {
       return;
     }
     try {
-      localStorage.setItem(START_DATE_STORAGE_KEY, startInput);
-      localStorage.setItem(UNIVERSE_STORAGE_KEY, universeId);
+      safeSetStorage(START_DATE_STORAGE_KEY, startInput);
+      safeSetStorage(UNIVERSE_STORAGE_KEY, universeId);
       const started = await startReceiveData({
         universeId,
         interval: "1",
@@ -107,7 +115,7 @@ export function SignalFollowTailDatasetCard() {
         },
       });
       setJobId(started.jobId);
-      localStorage.setItem(RECEIVE_JOB_STORAGE_KEY, started.jobId);
+      safeSetStorage(RECEIVE_JOB_STORAGE_KEY, started.jobId);
       setJob({
         id: started.jobId,
         status: "queued",

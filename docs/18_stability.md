@@ -1,6 +1,6 @@
 # 18 Stability & long-run operations
 
-Last update: 2026-03-07
+Last update: 2026-03-08
 
 This document describes stability mechanisms intended for multi-hour and multi-day runs.
 
@@ -17,6 +17,11 @@ This document describes stability mechanisms intended for multi-hour and multi-d
   - `timeRangeFromTs` is fixed from operator input
   - `timeRangeToTs` is re-resolved to current time on each run start
   - temporary stale `timeRangeToTs` values from payload are not trusted
+- Multi-bot isolation hardening:
+  - optimizer history is filtered by bot id on backend and frontend
+  - legacy history rows without bot id map to default OI bot only
+  - optimizer localStorage state is bot-scoped to prevent cross-bot UI bleed
+  - Signal Bot page does not force global bot selection, preventing cross-page config selection races
 
 ## Soak snapshots
 - While runtime session is RUNNING, backend appends a JSON line every 60 seconds:

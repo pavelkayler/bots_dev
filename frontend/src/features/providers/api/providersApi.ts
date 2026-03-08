@@ -22,6 +22,7 @@ export type ProviderCapabilityCheck = {
 export type ProviderCapabilitiesResponse = {
   ok: boolean;
   nowMs: number;
+  serverBootId: string;
   bybitRestUrl: string;
   coinglassBaseUrl: string;
   checks: ProviderCapabilityCheck[];

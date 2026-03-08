@@ -82,6 +82,47 @@ function validateCurrentBotConfig(cfg: BotConfig): void {
   }
 }
 
+function normalizeSignalBotConfig(raw: unknown): BotConfig {
+  const source = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const funding = source.fundingCooldown ?? {};
+  const signals = source.signals ?? {};
+  const strategy = source.strategy ?? {};
+  return {
+    fundingCooldown: {
+      beforeMin: toInt(funding.beforeMin, CONFIG.fundingCooldown.beforeMin, 0, 240),
+      afterMin: toInt(funding.afterMin, CONFIG.fundingCooldown.afterMin, 0, 240),
+    },
+    signals: {
+      priceThresholdPct: Math.max(0, toFinite(signals.priceThresholdPct, Math.max(0.1, CONFIG.signals.priceThresholdPct))),
+      oivThresholdPct: Math.max(0, toFinite(signals.oivThresholdPct, Math.max(0.1, CONFIG.signals.oivThresholdPct))),
+      requireFundingSign: Boolean(signals.requireFundingSign ?? true),
+      dailyTriggerMin: toInt(signals.dailyTriggerMin, Math.max(1, CONFIG.signals.dailyTriggerMin), 1),
+      dailyTriggerMax: toInt(signals.dailyTriggerMax, Math.max(1, CONFIG.signals.dailyTriggerMax), 1),
+    },
+    strategy: {
+      klineTfMin: toInt(strategy.klineTfMin, CONFIG.klineTfMin, 1, 60),
+      entryOffsetPct: Math.max(0, toFinite(strategy.entryOffsetPct, CONFIG.paper.entryOffsetPct)),
+      entryTimeoutSec: toInt(strategy.entryTimeoutSec, CONFIG.paper.entryTimeoutSec, 1),
+      tpRoiPct: Math.max(0, toFinite(strategy.tpRoiPct, CONFIG.paper.tpRoiPct)),
+      slRoiPct: Math.max(0, toFinite(strategy.slRoiPct, CONFIG.paper.slRoiPct)),
+      rearmDelayMs: toInt(strategy.rearmDelayMs, CONFIG.paper.rearmDelayMs, 0),
+      applyFunding: Boolean(strategy.applyFunding ?? true),
+    },
+  };
+}
+
+function validateSignalBotConfig(cfg: BotConfig): void {
+  if (!Number.isInteger(cfg.signals.dailyTriggerMin) || cfg.signals.dailyTriggerMin < 1) {
+    throw new Error("invalid_signal_bot_dailyTriggerMin");
+  }
+  if (!Number.isInteger(cfg.signals.dailyTriggerMax) || cfg.signals.dailyTriggerMax < cfg.signals.dailyTriggerMin) {
+    throw new Error("invalid_signal_bot_dailyTriggerMax");
+  }
+  if (cfg.fundingCooldown.beforeMin < 0 || cfg.fundingCooldown.afterMin < 0) {
+    throw new Error("invalid_signal_bot_funding_cooldown");
+  }
+}
+
 const CURRENT_BOT: BotRegistryEntry = {
   id: DEFAULT_BOT_ID,
   name: "OI Momentum",
@@ -105,7 +146,7 @@ const CURRENT_BOT: BotRegistryEntry = {
 const SIGNAL_BOT: BotRegistryEntry = {
   id: SIGNAL_BOT_ID,
   name: "Signal Multi-Factor",
-  defaults: normalizeCurrentBotConfig({
+  defaults: normalizeSignalBotConfig({
     fundingCooldown: CONFIG.fundingCooldown,
     signals: {
       priceThresholdPct: Math.max(0.1, CONFIG.signals.priceThresholdPct),
@@ -124,8 +165,8 @@ const SIGNAL_BOT: BotRegistryEntry = {
       applyFunding: CONFIG.paper.applyFunding,
     },
   }),
-  normalizeBotConfig: normalizeCurrentBotConfig,
-  validateBotConfig: validateCurrentBotConfig,
+  normalizeBotConfig: normalizeSignalBotConfig,
+  validateBotConfig: validateSignalBotConfig,
 };
 
 const registry = new Map<string, BotRegistryEntry>([

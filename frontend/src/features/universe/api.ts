@@ -1,6 +1,13 @@
 import { getApiBase } from "../../shared/config/env";
 import { deleteJson, getJson } from "../../shared/api/http";
-import type { UniverseCreateResponse, UniverseFile, UniverseMetricsRange, UniverseSymbolSummaryResponse, UniversesListResponse } from "./types";
+import type {
+  UniverseAvailableSymbolsResponse,
+  UniverseCreateResponse,
+  UniverseFile,
+  UniverseMetricsRange,
+  UniverseSymbolSummaryResponse,
+  UniversesListResponse,
+} from "./types";
 
 export async function listUniverses(): Promise<UniversesListResponse> {
   const base = getApiBase();
@@ -21,13 +28,14 @@ export async function createUniverse(
   minTurnoverUsd: number,
   minVolatilityPct: number,
   metricsRange: UniverseMetricsRange,
+  symbols?: string[],
   signal?: AbortSignal,
 ): Promise<UniverseCreateResponse> {
   const base = getApiBase();
   const res = await fetch(`${base}/api/universes/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ minTurnoverUsd, minVolatilityPct, metricsRange }),
+    body: JSON.stringify({ minTurnoverUsd, minVolatilityPct, metricsRange, ...(symbols?.length ? { symbols } : {}) }),
     signal,
   });
   if (!res.ok) {
@@ -42,6 +50,11 @@ export async function createUniverse(
     throw new Error(`POST ${base}/api/universes/create failed: ${res.status}${detail ? ` ${String(detail)}` : ""}`);
   }
   return (await res.json()) as UniverseCreateResponse;
+}
+
+export async function listAvailableUniverseSymbols(range: UniverseMetricsRange): Promise<UniverseAvailableSymbolsResponse> {
+  const base = getApiBase();
+  return await getJson<UniverseAvailableSymbolsResponse>(`${base}/api/universes/available-symbols?range=${encodeURIComponent(range)}`);
 }
 
 export async function deleteUniverse(id: string): Promise<{ ok: true }> {

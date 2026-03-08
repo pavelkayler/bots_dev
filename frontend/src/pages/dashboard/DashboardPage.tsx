@@ -12,6 +12,7 @@ import { ExecutionPanel } from "../../features/config/components/ExecutionPanel"
 import { TradeStatsTabs } from "../../features/stats/components/TradeStatsTabs";
 import { useProcessStatus } from "../../features/session/hooks/useProcessStatus";
 import { ProcessIndicatorsBar } from "../../features/session/components/ProcessIndicatorsBar";
+import { usePersistentState } from "../../shared/hooks/usePersistentState";
 
 export function DashboardPage() {
   const {
@@ -32,24 +33,40 @@ export function DashboardPage() {
   const { status, busy, error, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
   const { status: processStatus } = useProcessStatus();
 
-  const [activeOnly, setActiveOnly] = useState(true);
+  const [activeOnly, setActiveOnly] = usePersistentState<boolean>("dashboard.activeOnly", true);
+  const [showLastFive, setShowLastFive] = usePersistentState<boolean>("dashboard.showLastFive", false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [draftKlineTfMin] = useState(1);
+  const [rowsSnapshot, setRowsSnapshot] = useState<typeof rows>([]);
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    setRowsSnapshot(rows);
+    const id = window.setInterval(() => {
+      setRowsSnapshot(rows);
+    }, 5_000);
+    return () => window.clearInterval(id);
+  }, [rows]);
+
   const canStartFinal = canStart;
 
   const displayedRows = useMemo(() => {
-    if (!activeOnly) return rows;
-
-    return rows.filter((r: SymbolRow) => {
+    const activeRows = rowsSnapshot.filter((r: SymbolRow) => {
       const paperActive = r.paperStatus === "ENTRY_PENDING" || r.paperStatus === "OPEN";
       const hasSignal = r.signal === "LONG" || r.signal === "SHORT";
       return paperActive || hasSignal;
     });
-  }, [rows, activeOnly]);
+    if (showLastFive) {
+      return [...activeRows]
+        .sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0))
+        .slice(0, 5);
+    }
+    if (activeOnly) return activeRows;
+    return rowsSnapshot;
+  }, [rowsSnapshot, activeOnly, showLastFive]);
 
   function parseSessionStartTs(sessionId: string | null): number | null {
     if (!sessionId) return null;
@@ -122,8 +139,15 @@ export function DashboardPage() {
 
         <Card className="mb-3">
           <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
-            <b>Live rows (1Hz)</b>
+            <b>Live rows (5s)</b>
             <div className="ms-auto d-flex align-items-center gap-2 flex-wrap">
+              <Form.Check
+                type="switch"
+                id="show-last-five"
+                label="Show Last 5"
+                checked={showLastFive}
+                onChange={(e) => setShowLastFive(e.currentTarget.checked)}
+              />
               <Form.Check type="switch" id="active-only" label="Active only" checked={activeOnly} onChange={(e) => setActiveOnly(e.currentTarget.checked)} />
               <Badge bg="secondary">rows: {displayedRows.length}</Badge>
               <span style={{ fontSize: 12, opacity: 0.85 }}>Next candle in: {nextCandle}</span>

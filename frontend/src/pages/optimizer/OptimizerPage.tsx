@@ -38,6 +38,7 @@ import { getDatasetHistoryIds, getHistoryRunPayloadValue } from "../../features/
 import { OPTIMIZER_TF_ENABLED_VALUES, OPTIMIZER_TF_OPTIONS } from "../../features/optimizer/utils/timeframes";
 import { validateLoopStartInput } from "../../features/optimizer/utils/inputValidation";
 import { defaultFollowTailStartInput, resolveDatasetWindowInput, type OptimizerDatasetMode } from "../../features/optimizer/utils/datasetWindow";
+import { makeOptimizerScopedStorageKey, resolveOptimizerStorageBotId } from "../../features/optimizer/utils/storageScope";
 import { BotExecutionSelectors } from "../../features/bots/components/BotExecutionSelectors";
 import { useProcessStatus } from "../../features/session/hooks/useProcessStatus";
 import { ProcessIndicatorsBar } from "../../features/session/components/ProcessIndicatorsBar";
@@ -70,23 +71,25 @@ const RANGE_DEFAULTS: RangeState = {
   rearmSec: { min: "900", max: "3600" },
 };
 
-const RANGES_STORAGE_KEY = "bots_dev.optimizer.ranges";
-const CANDIDATES_STORAGE_KEY = "bots_dev.optimizer.candidates";
-const SEED_STORAGE_KEY = "bots_dev.optimizer.seed";
-const DIRECTION_STORAGE_KEY = "bots_dev.optimizer.directionMode";
-const OPT_TF_STORAGE_KEY = "bots_dev.optimizer.optTfMin";
-const MIN_TRADES_STORAGE_KEY = "bots_dev.optimizer.minTrades";
-const SIM_MARGIN_STORAGE_KEY = "bots_dev.optimizer.sim.marginPerTrade";
-const SIM_LEVERAGE_STORAGE_KEY = "bots_dev.optimizer.sim.leverage";
-const EXECUTION_MODEL_STORAGE_KEY = "bots_dev.optimizer.executionModel";
-const EXCLUDE_NEGATIVE_STORAGE_KEY = "bots_dev.optimizer.excludeNegative";
-const REMEMBER_NEGATIVES_STORAGE_KEY = "bots_dev.optimizer.rememberNegatives";
-const FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY = "bots_dev.optimizer.filterValPnlPerTradePos";
-const FILTER_VAL_NET_PNL_POS_STORAGE_KEY = "bots_dev.optimizer.filterValNetPnlPos";
-const LOOP_RUNS_COUNT_STORAGE_KEY = "bots_dev.optimizer.loopRunsCount";
-const LOOP_INFINITE_STORAGE_KEY = "bots_dev.optimizer.loopInfinite";
-const DATASET_MODE_STORAGE_KEY = "bots_dev.optimizer.datasetMode";
-const FOLLOW_TAIL_START_STORAGE_KEY = "bots_dev.optimizer.followTailStart";
+const LEGACY_STORAGE_KEYS = {
+  ranges: "bots_dev.optimizer.ranges",
+  candidates: "bots_dev.optimizer.candidates",
+  seed: "bots_dev.optimizer.seed",
+  directionMode: "bots_dev.optimizer.directionMode",
+  optTfMin: "bots_dev.optimizer.optTfMin",
+  minTrades: "bots_dev.optimizer.minTrades",
+  simMarginPerTrade: "bots_dev.optimizer.sim.marginPerTrade",
+  simLeverage: "bots_dev.optimizer.sim.leverage",
+  executionModel: "bots_dev.optimizer.executionModel",
+  excludeNegative: "bots_dev.optimizer.excludeNegative",
+  rememberNegatives: "bots_dev.optimizer.rememberNegatives",
+  filterValPnlPerTradePos: "bots_dev.optimizer.filterValPnlPerTradePos",
+  filterValNetPnlPos: "bots_dev.optimizer.filterValNetPnlPos",
+  loopRunsCount: "bots_dev.optimizer.loopRunsCount",
+  loopInfinite: "bots_dev.optimizer.loopInfinite",
+  datasetMode: "bots_dev.optimizer.datasetMode",
+  followTailStart: "bots_dev.optimizer.followTailStart",
+} as const;
 const RANGES_SAVE_DEBOUNCE_MS = 400;
 const DEFAULT_PRECISION: OptimizerPrecision = { priceTh: 3, oivTh: 3, tp: 3, sl: 3, offset: 3, timeoutSec: 0, rearmMs: 0 };
 const HISTORY_COMPACT_BREAKPOINT_PX = 1400;
@@ -169,9 +172,9 @@ function isValidRangeState(value: unknown): value is RangeState {
   return true;
 }
 
-function loadSavedRanges(): RangeState {
+function loadSavedRanges(key: string, legacyKey?: string): RangeState {
   try {
-    const raw = localStorage.getItem(RANGES_STORAGE_KEY);
+    const raw = localStorage.getItem(key) ?? (legacyKey ? localStorage.getItem(legacyKey) : null);
     if (!raw) return RANGE_DEFAULTS;
     const parsed = JSON.parse(raw) as unknown;
     if (!isValidRangeState(parsed)) return RANGE_DEFAULTS;
@@ -326,6 +329,36 @@ function loadStoredPositiveInt(key: string, fallback: string, min: number): stri
     return fallback;
   } catch {
     return fallback;
+  }
+}
+
+function loadStoredPositiveIntWithLegacy(key: string, fallback: string, min: number, legacyKey?: string): string {
+  const scoped = loadStoredPositiveInt(key, "", min);
+  if (scoped) return scoped;
+  if (!legacyKey) return fallback;
+  return loadStoredPositiveInt(legacyKey, fallback, min);
+}
+
+function loadStoredFlagWithLegacy(key: string, legacyKey?: string): boolean {
+  const scoped = localStorage.getItem(key);
+  if (scoped != null) return scoped === "1";
+  if (!legacyKey) return false;
+  return localStorage.getItem(legacyKey) === "1";
+}
+
+function loadStoredTextWithLegacy(key: string, fallback: string, legacyKey?: string): string {
+  const scoped = localStorage.getItem(key);
+  if (scoped != null) return scoped;
+  if (!legacyKey) return fallback;
+  const legacy = localStorage.getItem(legacyKey);
+  return legacy ?? fallback;
+}
+
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore quota/storage errors to avoid breaking optimizer page render.
   }
 }
 
@@ -577,6 +610,32 @@ export function OptimizerPage({
 }: OptimizerPageProps) {
   const [botSelection, setBotSelection] = useState<{ selectedBotId: string; selectedBotPresetId: string; selectedExecutionProfileId: string } | null>(null);
   const activeBotId = forcedBotId ?? botSelection?.selectedBotId ?? "";
+  const storageScopeBotId = resolveOptimizerStorageBotId(activeBotId);
+  const storageKeys = useMemo(() => ({
+    ranges: makeOptimizerScopedStorageKey(storageScopeBotId, "ranges"),
+    candidates: makeOptimizerScopedStorageKey(storageScopeBotId, "candidates"),
+    seed: makeOptimizerScopedStorageKey(storageScopeBotId, "seed"),
+    directionMode: makeOptimizerScopedStorageKey(storageScopeBotId, "directionMode"),
+    optTfMin: makeOptimizerScopedStorageKey(storageScopeBotId, "optTfMin"),
+    minTrades: makeOptimizerScopedStorageKey(storageScopeBotId, "minTrades"),
+    simMarginPerTrade: makeOptimizerScopedStorageKey(storageScopeBotId, "sim.marginPerTrade"),
+    simLeverage: makeOptimizerScopedStorageKey(storageScopeBotId, "sim.leverage"),
+    executionModel: makeOptimizerScopedStorageKey(storageScopeBotId, "executionModel"),
+    excludeNegative: makeOptimizerScopedStorageKey(storageScopeBotId, "excludeNegative"),
+    rememberNegatives: makeOptimizerScopedStorageKey(storageScopeBotId, "rememberNegatives"),
+    filterValPnlPerTradePos: makeOptimizerScopedStorageKey(storageScopeBotId, "filterValPnlPerTradePos"),
+    filterValNetPnlPos: makeOptimizerScopedStorageKey(storageScopeBotId, "filterValNetPnlPos"),
+    loopRunsCount: makeOptimizerScopedStorageKey(storageScopeBotId, "loopRunsCount"),
+    loopInfinite: makeOptimizerScopedStorageKey(storageScopeBotId, "loopInfinite"),
+    datasetMode: makeOptimizerScopedStorageKey(storageScopeBotId, "datasetMode"),
+    followTailStart: makeOptimizerScopedStorageKey(storageScopeBotId, "followTailStart"),
+    resultsPageSize: makeOptimizerScopedStorageKey(storageScopeBotId, "results.pageSize"),
+    historyPageSize: makeOptimizerScopedStorageKey(storageScopeBotId, "history.pageSize"),
+    datasetHistoryPageSize: makeOptimizerScopedStorageKey(storageScopeBotId, "datasetHistory.pageSize"),
+    datasetHistoryTableId: makeOptimizerScopedStorageKey(storageScopeBotId, "table.datasetHistory"),
+    resultsTableId: makeOptimizerScopedStorageKey(storageScopeBotId, "table.results"),
+    jobHistoryTableId: makeOptimizerScopedStorageKey(storageScopeBotId, "table.jobHistory"),
+  }), [storageScopeBotId]);
   const isSignalBotOptimizer = activeBotId === SIGNAL_BOT_ID;
   const rangeDescriptors = isSignalBotOptimizer ? SIGNAL_RANGE_DESCRIPTORS : OI_RANGE_DESCRIPTORS;
   const { conn, lastMsg, lastServerTime, wsUrl, streams } = useWsFeedLite();
@@ -584,7 +643,6 @@ export function OptimizerPage({
   const { status: processStatus } = useProcessStatus();
 
   const [error, setError] = useState<string | null>(null);
-  const [optimizerDataSource, setOptimizerDataSource] = useState<string | null>(null);
   const [optimizerStatusWarning, setOptimizerStatusWarning] = useState<string | null>(null);
   const [datasetCache, setDatasetCache] = useState<string | null>(() => localStorage.getItem(DATASET_CACHE_STORAGE_KEY));
 
@@ -595,25 +653,16 @@ export function OptimizerPage({
   const [historySortKey, setHistorySortKey] = useState<keyof DatasetHistoryRecord | "rangeMs" | "universeLabel">("receivedAtMs");
   const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
   const [historyPage, setHistoryPage] = useState(1);
-  const [historyPageSize, setHistoryPageSize] = useStoredPageSize("optimizer-dataset-histories", 10);
+  const [historyPageSize, setHistoryPageSize] = useStoredPageSize(storageKeys.datasetHistoryPageSize, 10);
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
   const [minTrades, setMinTrades] = useState("1");
-  const [simMarginPerTrade, setSimMarginPerTrade] = useState(() => localStorage.getItem(SIM_MARGIN_STORAGE_KEY) ?? "10");
-  const [simLeverage, setSimLeverage] = useState(() => localStorage.getItem(SIM_LEVERAGE_STORAGE_KEY) ?? "5");
-  const [executionModel, setExecutionModel] = useState<OptimizerExecutionModel>(() => {
-    const raw = localStorage.getItem(EXECUTION_MODEL_STORAGE_KEY);
-    return raw === "conservativeOhlc" ? "conservativeOhlc" : "closeOnly";
-  });
-  const [datasetMode, setDatasetMode] = useState<OptimizerDatasetMode>(() => {
-    const raw = localStorage.getItem(DATASET_MODE_STORAGE_KEY);
-    return raw === "followTail" ? "followTail" : "snapshot";
-  });
-  const [followTailStartInput, setFollowTailStartInput] = useState(() => {
-    const raw = localStorage.getItem(FOLLOW_TAIL_START_STORAGE_KEY);
-    return raw && raw.trim() ? raw : defaultFollowTailStartInput();
-  });
+  const [simMarginPerTrade, setSimMarginPerTrade] = useState("10");
+  const [simLeverage, setSimLeverage] = useState("5");
+  const [executionModel, setExecutionModel] = useState<OptimizerExecutionModel>("closeOnly");
+  const [datasetMode, setDatasetMode] = useState<OptimizerDatasetMode>("snapshot");
+  const [followTailStartInput, setFollowTailStartInput] = useState(defaultFollowTailStartInput);
   const [directionMode, setDirectionMode] = useState<"both" | "long" | "short">("both");
   const [optTfMin, setOptTfMin] = useState("15");
   const [hideNegativeNetPnl, setHideNegativeNetPnl] = useState(false);
@@ -710,7 +759,7 @@ export function OptimizerPage({
     return aggregateLoopRowsByCandidate(rows);
   }, [loopAggState.version]);
   const [page, setPage] = useState(1);
-  const [resultsPageSize, setResultsPageSize] = useStoredPageSize("optimizer-results", 25);
+  const [resultsPageSize, setResultsPageSize] = useStoredPageSize(storageKeys.resultsPageSize, 25);
   const [totalRows, setTotalRows] = useState(0);
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
@@ -723,7 +772,7 @@ export function OptimizerPage({
   const [loopBusy, setLoopBusy] = useState(false);
   const [jobHistory, setJobHistory] = useState<OptimizerJobHistoryRecord[]>([]);
   const [jobHistoryTotal, setJobHistoryTotal] = useState(0);
-  const [jobHistoryLimit, setJobHistoryLimit] = useStoredPageSize("optimizer-job-history", 25);
+  const [jobHistoryLimit, setJobHistoryLimit] = useStoredPageSize(storageKeys.historyPageSize, 25);
   const [jobHistoryOffset, setJobHistoryOffset] = useState(0);
   const [jobHistorySortKey, setJobHistorySortKey] = useState<OptimizerHistorySortKey>("endedAtMs");
   const [jobHistorySortDir, setJobHistorySortDir] = useState<OptimizerSortDir>("desc");
@@ -881,9 +930,8 @@ export function OptimizerPage({
 
   async function refreshStatus() {
     try {
-      const statusRes = await getStatus();
+      await getStatus();
       setOptimizerStatusWarning(null);
-      setOptimizerDataSource(statusRes.dataSource ?? null);
     } catch (e: any) {
       const message = String(e?.message ?? e ?? "");
       if (message.toLowerCase().includes("aborterror")) return;
@@ -894,39 +942,46 @@ export function OptimizerPage({
 
 
   useEffect(() => {
-    setRanges(loadSavedRanges());
-    setCandidates(loadStoredPositiveInt(CANDIDATES_STORAGE_KEY, "200", 1));
-    setSeed(loadStoredPositiveInt(SEED_STORAGE_KEY, "1", 0));
-    const savedDirection = localStorage.getItem(DIRECTION_STORAGE_KEY);
+    setRanges(loadSavedRanges(storageKeys.ranges, LEGACY_STORAGE_KEYS.ranges));
+    setCandidates(loadStoredPositiveIntWithLegacy(storageKeys.candidates, "200", 1, LEGACY_STORAGE_KEYS.candidates));
+    setSeed(loadStoredPositiveIntWithLegacy(storageKeys.seed, "1", 0, LEGACY_STORAGE_KEYS.seed));
+    const savedDirection = loadStoredTextWithLegacy(storageKeys.directionMode, "both", LEGACY_STORAGE_KEYS.directionMode);
     if (savedDirection === "long" || savedDirection === "short" || savedDirection === "both") setDirectionMode(savedDirection);
-    const savedOptTfRaw = localStorage.getItem(OPT_TF_STORAGE_KEY);
+    const savedOptTfRaw = loadStoredTextWithLegacy(storageKeys.optTfMin, "", LEGACY_STORAGE_KEYS.optTfMin);
     if (savedOptTfRaw != null) {
     const normalized = Math.max(5, Math.floor(Number(savedOptTfRaw) || 15));
     const finalTf = OPTIMIZER_TF_ENABLED_VALUES.includes(normalized as any) ? normalized : 15;
     setOptTfMin(String(finalTf));
-      localStorage.setItem(OPT_TF_STORAGE_KEY, String(finalTf));
+      safeLocalStorageSet(storageKeys.optTfMin, String(finalTf));
     }
-    const savedMinTrades = localStorage.getItem(MIN_TRADES_STORAGE_KEY);
+    const savedMinTrades = loadStoredTextWithLegacy(storageKeys.minTrades, "", LEGACY_STORAGE_KEYS.minTrades);
     if (savedMinTrades != null) {
       const n = Math.floor(Number(savedMinTrades));
       if (Number.isFinite(n) && n >= 0) setMinTrades(String(n));
     }
-    setHideNegativeNetPnl(localStorage.getItem(EXCLUDE_NEGATIVE_STORAGE_KEY) === "1");
-    setFilterValPnlPerTradePos(localStorage.getItem(FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY) === "1");
-    setFilterValNetPnlPos(localStorage.getItem(FILTER_VAL_NET_PNL_POS_STORAGE_KEY) === "1");
-    setRememberNegatives(localStorage.getItem(REMEMBER_NEGATIVES_STORAGE_KEY) === "1");
-    setLoopRunsCount(loadStoredPositiveInt(LOOP_RUNS_COUNT_STORAGE_KEY, "3", 1));
-    setLoopInfinite(localStorage.getItem(LOOP_INFINITE_STORAGE_KEY) === "1");
-    setDatasetMode(localStorage.getItem(DATASET_MODE_STORAGE_KEY) === "followTail" ? "followTail" : "snapshot");
+    setSimMarginPerTrade(loadStoredTextWithLegacy(storageKeys.simMarginPerTrade, "10", LEGACY_STORAGE_KEYS.simMarginPerTrade));
+    setSimLeverage(loadStoredTextWithLegacy(storageKeys.simLeverage, "5", LEGACY_STORAGE_KEYS.simLeverage));
+    setExecutionModel(loadStoredTextWithLegacy(storageKeys.executionModel, "closeOnly", LEGACY_STORAGE_KEYS.executionModel) === "conservativeOhlc" ? "conservativeOhlc" : "closeOnly");
+    setHideNegativeNetPnl(loadStoredFlagWithLegacy(storageKeys.excludeNegative, LEGACY_STORAGE_KEYS.excludeNegative));
+    setFilterValPnlPerTradePos(loadStoredFlagWithLegacy(storageKeys.filterValPnlPerTradePos, LEGACY_STORAGE_KEYS.filterValPnlPerTradePos));
+    setFilterValNetPnlPos(loadStoredFlagWithLegacy(storageKeys.filterValNetPnlPos, LEGACY_STORAGE_KEYS.filterValNetPnlPos));
+    setRememberNegatives(loadStoredFlagWithLegacy(storageKeys.rememberNegatives, LEGACY_STORAGE_KEYS.rememberNegatives));
+    setLoopRunsCount(loadStoredPositiveIntWithLegacy(storageKeys.loopRunsCount, "3", 1, LEGACY_STORAGE_KEYS.loopRunsCount));
+    setLoopInfinite(loadStoredFlagWithLegacy(storageKeys.loopInfinite, LEGACY_STORAGE_KEYS.loopInfinite));
+    setDatasetMode(loadStoredTextWithLegacy(storageKeys.datasetMode, "snapshot", LEGACY_STORAGE_KEYS.datasetMode) === "followTail" ? "followTail" : "snapshot");
     {
-      const raw = localStorage.getItem(FOLLOW_TAIL_START_STORAGE_KEY);
+      const raw = loadStoredTextWithLegacy(storageKeys.followTailStart, "", LEGACY_STORAGE_KEYS.followTailStart);
       setFollowTailStartInput(raw && raw.trim() ? raw : defaultFollowTailStartInput());
     }
+    setJobHistoryOffset(0);
     void refreshStatus();
     void refreshJobHistory();
+  }, [storageKeys]);
+
+  useEffect(() => {
     void (async () => {
       try {
-        const current = await getCurrentJob();
+        const current = await getCurrentJob(activeBotId || undefined);
         if (!current.jobId) return;
         const loopState = await getOptimizerLoopStatus();
         const loopStateActive = Boolean(loopState.loop?.isRunning);
@@ -971,7 +1026,7 @@ export function OptimizerPage({
         setError(String(e?.message ?? e));
       }
     })();
-  }, []);
+  }, [activeBotId]);
 
   useEffect(() => {
     void refreshJobHistory();
@@ -984,72 +1039,72 @@ export function OptimizerPage({
   useEffect(() => {
     const n = Math.floor(Number(candidates));
     if (!Number.isFinite(n) || n < 1) return;
-    localStorage.setItem(CANDIDATES_STORAGE_KEY, String(n));
-  }, [candidates]);
+    safeLocalStorageSet(storageKeys.candidates, String(n));
+  }, [candidates, storageKeys.candidates]);
 
   useEffect(() => {
     const n = Math.floor(Number(seed));
     if (!Number.isFinite(n) || n < 0) return;
-    localStorage.setItem(SEED_STORAGE_KEY, String(n));
-  }, [seed]);
+    safeLocalStorageSet(storageKeys.seed, String(n));
+  }, [seed, storageKeys.seed]);
 
   useEffect(() => {
-    localStorage.setItem(DIRECTION_STORAGE_KEY, directionMode);
-  }, [directionMode]);
+    safeLocalStorageSet(storageKeys.directionMode, directionMode);
+  }, [directionMode, storageKeys.directionMode]);
 
   useEffect(() => {
-    localStorage.setItem(OPT_TF_STORAGE_KEY, String(Math.max(5, Math.floor(Number(optTfMin) || 15))));
-  }, [optTfMin]);
+    safeLocalStorageSet(storageKeys.optTfMin, String(Math.max(5, Math.floor(Number(optTfMin) || 15))));
+  }, [optTfMin, storageKeys.optTfMin]);
 
   useEffect(() => {
     const n = Math.floor(Number(minTrades));
-    if (Number.isFinite(n) && n >= 0) localStorage.setItem(MIN_TRADES_STORAGE_KEY, String(n));
-  }, [minTrades]);
+    if (Number.isFinite(n) && n >= 0) safeLocalStorageSet(storageKeys.minTrades, String(n));
+  }, [minTrades, storageKeys.minTrades]);
 
   useEffect(() => {
-    localStorage.setItem(SIM_MARGIN_STORAGE_KEY, simMarginPerTrade);
-  }, [simMarginPerTrade]);
+    safeLocalStorageSet(storageKeys.simMarginPerTrade, simMarginPerTrade);
+  }, [simMarginPerTrade, storageKeys.simMarginPerTrade]);
 
   useEffect(() => {
-    localStorage.setItem(SIM_LEVERAGE_STORAGE_KEY, simLeverage);
-  }, [simLeverage]);
+    safeLocalStorageSet(storageKeys.simLeverage, simLeverage);
+  }, [simLeverage, storageKeys.simLeverage]);
 
   useEffect(() => {
-    localStorage.setItem(EXECUTION_MODEL_STORAGE_KEY, executionModel);
-  }, [executionModel]);
+    safeLocalStorageSet(storageKeys.executionModel, executionModel);
+  }, [executionModel, storageKeys.executionModel]);
 
   useEffect(() => {
-    localStorage.setItem(EXCLUDE_NEGATIVE_STORAGE_KEY, hideNegativeNetPnl ? "1" : "0");
-  }, [hideNegativeNetPnl]);
+    safeLocalStorageSet(storageKeys.excludeNegative, hideNegativeNetPnl ? "1" : "0");
+  }, [hideNegativeNetPnl, storageKeys.excludeNegative]);
 
   useEffect(() => {
-    localStorage.setItem(FILTER_VAL_PNL_PER_TRADE_POS_STORAGE_KEY, filterValPnlPerTradePos ? "1" : "0");
-  }, [filterValPnlPerTradePos]);
+    safeLocalStorageSet(storageKeys.filterValPnlPerTradePos, filterValPnlPerTradePos ? "1" : "0");
+  }, [filterValPnlPerTradePos, storageKeys.filterValPnlPerTradePos]);
 
   useEffect(() => {
-    localStorage.setItem(FILTER_VAL_NET_PNL_POS_STORAGE_KEY, filterValNetPnlPos ? "1" : "0");
-  }, [filterValNetPnlPos]);
+    safeLocalStorageSet(storageKeys.filterValNetPnlPos, filterValNetPnlPos ? "1" : "0");
+  }, [filterValNetPnlPos, storageKeys.filterValNetPnlPos]);
 
   useEffect(() => {
-    localStorage.setItem(REMEMBER_NEGATIVES_STORAGE_KEY, rememberNegatives ? "1" : "0");
-  }, [rememberNegatives]);
+    safeLocalStorageSet(storageKeys.rememberNegatives, rememberNegatives ? "1" : "0");
+  }, [rememberNegatives, storageKeys.rememberNegatives]);
 
   useEffect(() => {
     const n = Math.floor(Number(loopRunsCount));
-    if (Number.isFinite(n) && n >= 1) localStorage.setItem(LOOP_RUNS_COUNT_STORAGE_KEY, String(n));
-  }, [loopRunsCount]);
+    if (Number.isFinite(n) && n >= 1) safeLocalStorageSet(storageKeys.loopRunsCount, String(n));
+  }, [loopRunsCount, storageKeys.loopRunsCount]);
 
   useEffect(() => {
-    localStorage.setItem(LOOP_INFINITE_STORAGE_KEY, loopInfinite ? "1" : "0");
-  }, [loopInfinite]);
+    safeLocalStorageSet(storageKeys.loopInfinite, loopInfinite ? "1" : "0");
+  }, [loopInfinite, storageKeys.loopInfinite]);
   
   useEffect(() => {
-    localStorage.setItem(DATASET_MODE_STORAGE_KEY, datasetMode);
-  }, [datasetMode]);
+    safeLocalStorageSet(storageKeys.datasetMode, datasetMode);
+  }, [datasetMode, storageKeys.datasetMode]);
 
   useEffect(() => {
-    localStorage.setItem(FOLLOW_TAIL_START_STORAGE_KEY, followTailStartInput);
-  }, [followTailStartInput]);
+    safeLocalStorageSet(storageKeys.followTailStart, followTailStartInput);
+  }, [followTailStartInput, storageKeys.followTailStart]);
 
   useInterval(() => {
     setNowMs(Date.now());
@@ -1647,7 +1702,7 @@ export function OptimizerPage({
       window.clearTimeout(rangesSaveTimerRef.current);
     }
     rangesSaveTimerRef.current = window.setTimeout(() => {
-      localStorage.setItem(RANGES_STORAGE_KEY, JSON.stringify(ranges));
+      safeLocalStorageSet(storageKeys.ranges, JSON.stringify(ranges));
       rangesSaveTimerRef.current = null;
     }, RANGES_SAVE_DEBOUNCE_MS);
     return () => {
@@ -1656,7 +1711,7 @@ export function OptimizerPage({
         rangesSaveTimerRef.current = null;
       }
     };
-  }, [rangeError, ranges]);
+  }, [rangeError, ranges, storageKeys.ranges]);
 
   async function fetchResults(
     nextPage: number,
@@ -1961,7 +2016,7 @@ export function OptimizerPage({
         paper: paperPatch,
       },
     };
-    localStorage.setItem("bots_dev.pendingConfigPatch", JSON.stringify(patch));
+    safeLocalStorageSet("bots_dev.pendingConfigPatch", JSON.stringify(patch));
   }, [activeJobId, activePrecision]);
 
 
@@ -1993,6 +2048,7 @@ export function OptimizerPage({
   async function refreshJobHistory() {
     try {
       const res = await getOptimizerJobHistory({
+        botId: activeBotId || undefined,
         limit: jobHistoryLimit,
         offset: jobHistoryOffset,
         sortKey: jobHistorySortKey,
@@ -2233,7 +2289,6 @@ export function OptimizerPage({
           <Card.Body>
             {error ? <Alert variant="danger">{error}</Alert> : null}
 
-            <div style={{ fontSize: 12, marginBottom: 8 }}>Data source: <b>{String(optimizerDataSource ?? "-").toUpperCase()}</b></div>
             {optimizerStatusWarning ? <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>{optimizerStatusWarning}</div> : null}
 
             <h6>Receive Data</h6>
@@ -2308,7 +2363,7 @@ export function OptimizerPage({
                 </div>
 
                 <TablePaginationControls
-                  tableId="optimizer-dataset-histories"
+                  tableId={storageKeys.datasetHistoryTableId}
                   page={historyPageClamped}
                   totalRows={historyRowsSorted.length}
                   pageSize={historyPageSize}
@@ -2524,7 +2579,7 @@ export function OptimizerPage({
               <Button
                 size="sm"
                 variant="outline-secondary"
-                onClick={() => window.open(singleJobId ? getJobExportUrl(singleJobId, "json", sortKey, sortDir) : getCurrentJobExportUrl("json", sortKey, sortDir), "_blank", "noopener,noreferrer")}
+                onClick={() => window.open(singleJobId ? getJobExportUrl(singleJobId, "json", sortKey, sortDir) : getCurrentJobExportUrl("json", sortKey, sortDir, activeBotId || undefined), "_blank", "noopener,noreferrer")}
                 disabled={!singleJobId && !activeJobId}
               >
                 Export JSON
@@ -2532,7 +2587,7 @@ export function OptimizerPage({
               <Button
                 size="sm"
                 variant="outline-secondary"
-                onClick={() => window.open(singleJobId ? getJobExportUrl(singleJobId, "csv", sortKey, sortDir) : getCurrentJobExportUrl("csv", sortKey, sortDir), "_blank", "noopener,noreferrer")}
+                onClick={() => window.open(singleJobId ? getJobExportUrl(singleJobId, "csv", sortKey, sortDir) : getCurrentJobExportUrl("csv", sortKey, sortDir, activeBotId || undefined), "_blank", "noopener,noreferrer")}
                 disabled={!singleJobId && !activeJobId}
               >
                 Export CSV
@@ -2602,7 +2657,7 @@ export function OptimizerPage({
               </Table>
             </div>
             <TablePaginationControls
-              tableId="optimizer-results"
+              tableId={storageKeys.resultsTableId}
               page={Math.min(page, totalPages)}
               totalRows={isLoopDisplay ? sortedDisplayedRows.length : totalRows}
               pageSize={resultsPageSize}
@@ -2622,27 +2677,28 @@ export function OptimizerPage({
               <div>`best*` is the best metric across run candidates.</div>
               <div>`rowsPositive / rowsTotal` means positive results / total results.</div>
             </div>
-            <Table striped bordered hover size="sm" style={HISTORY_TABLE_STYLE}>
-              <thead>
-                <tr>
-                  <th style={{ ...historyEndedAtCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
-                  <th style={{ ...historyStatusCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
-                  <th style={HISTORY_CELL_STYLE}>loops</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("datasets")}>dataset</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
-                  <th style={HISTORY_CELL_STYLE}>sim</th>
-                  <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("direction")}>direction</th>
-                  <th style={HISTORY_CELL_STYLE}>hours</th>
-                  <th style={{ ...historyBestNetCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("bestNetPnl")}>bestNetPnl</th>
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestTrades")}>bestTrades</th> : null}
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestWinRate")}>bestWinRate</th> : null}
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestMaxDD")}>bestMaxDD</th> : null}
-                  {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rowsPositive")}>rowsPositive</th> : null}
-                  <th style={{ ...historyRowsTotalCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("rowsTotal")}>rowsTotal</th>
-                  <th style={historyViewCellStyle}>view</th>
-                </tr>
-              </thead>
-              <tbody>
+            <div style={{ overflowX: "auto", width: "100%" }}>
+              <Table striped bordered hover size="sm" style={{ ...HISTORY_TABLE_STYLE, minWidth: 1200 }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...historyEndedAtCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("endedAtMs")}>endedAt</th>
+                    <th style={{ ...historyStatusCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("status")}>status</th>
+                    <th style={HISTORY_CELL_STYLE}>loops</th>
+                    <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("datasets")}>dataset</th>
+                    <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("tfMin")}>tfMin</th>
+                    <th style={HISTORY_CELL_STYLE}>sim</th>
+                    <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("direction")}>direction</th>
+                    <th style={HISTORY_CELL_STYLE}>hours</th>
+                    <th style={{ ...historyBestNetCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("bestNetPnl")}>bestNetPnl</th>
+                    {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestTrades")}>bestTrades</th> : null}
+                    {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestWinRate")}>bestWinRate</th> : null}
+                    {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("bestMaxDD")}>bestMaxDD</th> : null}
+                    {!historyCompactMode ? <th style={{ ...HISTORY_CELL_STYLE, cursor: "pointer" }} onClick={() => onHistorySort("rowsPositive")}>rowsPositive</th> : null}
+                    <th style={{ ...historyRowsTotalCellStyle, cursor: "pointer" }} onClick={() => onHistorySort("rowsTotal")}>rowsTotal</th>
+                    <th style={historyViewCellStyle}>view</th>
+                  </tr>
+                </thead>
+                <tbody>
                 {jobHistory.map((row) => {
                   const isOpen = Boolean(expandedHistory[row.jobId]);
                   const detailsRows = historyResults[row.jobId] ?? [];
@@ -2773,10 +2829,11 @@ export function OptimizerPage({
                     <td colSpan={historyColumnCount} style={{ ...HISTORY_CELL_STYLE, fontSize: 12, opacity: 0.75 }}>No completed runs</td>
                   </tr>
                 ) : null}
-              </tbody>
-            </Table>
+                </tbody>
+              </Table>
+            </div>
             <TablePaginationControls
-              tableId="optimizer-job-history"
+              tableId={storageKeys.jobHistoryTableId}
               page={jobHistoryCurrentPage}
               totalRows={jobHistoryTotal}
               pageSize={jobHistoryLimit}

@@ -1,6 +1,6 @@
 # 17 Optimizer (cached REST dataset + search)
 
-Last update: 2026-03-07
+Last update: 2026-03-08
 
 This document describes the Optimizer feature used to tune paper-trading parameters via cached historical market data and deterministic replay.
 
@@ -9,6 +9,16 @@ Optimizer is bot-aware through `selectedBotId` + `selectedBotPresetId`.
 Current bot ids:
 - `oi-momentum-v1`
 - `signal-multi-factor-v1`
+
+## Bot-scoped isolation rules
+- All optimizer runs must carry bot identity (`selectedBotId`) in run payload and persisted history records.
+- History API is bot-scoped:
+  - `GET /api/optimizer/jobs/history?botId=<id>`
+  - result set is filtered by persisted run payload bot id
+- Frontend optimizer instances (including embedded Signal Bot optimizer) request history/current-job with explicit bot id and never render cross-bot runs.
+- Optimizer local persistence is bot-scoped:
+  - `bots_dev.optimizer.<botId>.*`
+  - includes ranges, candidates, seed, tf, filters, loop flags, follow-tail start, and pagination state.
 
 ## Goals
 - Record market dataset histories (JSONL) while runtime session is **RUNNING**.

@@ -3,11 +3,12 @@ import { Badge, Button, Card, Container, Form, Spinner, Table } from "react-boot
 import { HeaderBar } from "../dashboard/components/HeaderBar";
 import { useWsFeedLite } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
-import { createUniverse, deleteUniverse, listUniverses, readUniverse, readUniverseSymbolSummary } from "../../features/universe/api";
-import type { UniverseFile, UniverseMeta, UniverseMetricsRange, UniverseSymbolSummaryRow } from "../../features/universe/types";
+import { createUniverse, deleteUniverse, listAvailableUniverseSymbols, listUniverses, readUniverse, readUniverseSymbolSummary } from "../../features/universe/api";
+import type { UniverseAvailableSymbolRow, UniverseFile, UniverseMeta, UniverseMetricsRange, UniverseSymbolSummaryRow } from "../../features/universe/types";
 import { fmtNum, fmtTime } from "../../shared/utils/format";
 import { CenteredProgressBar } from "../../shared/ui/CenteredProgressBar";
 import { TablePaginationControls, useStoredPageSize } from "../../shared/ui/TablePaginationControls";
+import { usePersistentState } from "../../shared/hooks/usePersistentState";
 
 const CREATE_JOB_STORAGE_KEY = "universeCreateJob";
 const RANGE_OPTIONS: Array<{ value: UniverseMetricsRange; label: string }> = [
@@ -27,6 +28,8 @@ type UniverseCreateJobState = {
 
 type SymbolSummarySortKey = "index" | "symbol" | "high" | "low" | "openInterestValue" | "priceChangePct" | "openInterestChangePct";
 type SymbolSummarySortDir = "asc" | "desc";
+type AvailableSortKey = "symbol" | "turnover" | "volatility";
+type AvailableSortDir = "asc" | "desc";
 
 function compareNullableNumber(a: number | null | undefined, b: number | null | undefined): number {
   const an = typeof a === "number" && Number.isFinite(a);
@@ -41,9 +44,9 @@ export function UniversePage() {
   const { conn, lastServerTime, wsUrl, streams } = useWsFeedLite();
   const { status, busy, start, stop, pause, resume, canStart, canStop, canPause, canResume } = useSessionRuntime();
 
-  const [minTurnoverUsd, setMinTurnoverUsd] = useState<string>("10000000");
-  const [minVolPct, setMinVolPct] = useState<string>("10");
-  const [metricsRange, setMetricsRange] = useState<UniverseMetricsRange>("24h");
+  const [minTurnoverUsd, setMinTurnoverUsd] = usePersistentState<string>("universe.minTurnoverUsd", "10000000");
+  const [minVolPct, setMinVolPct] = usePersistentState<string>("universe.minVolPct", "10");
+  const [metricsRange, setMetricsRange] = usePersistentState<UniverseMetricsRange>("universe.metricsRange", "24h");
 
   const [items, setItems] = useState<UniverseMeta[]>([]);
   const [loading, setLoading] = useState(false);
@@ -60,17 +63,31 @@ export function UniversePage() {
   const [expandedById, setExpandedById] = useState<Record<string, UniverseFile>>({});
   const [summaryById, setSummaryById] = useState<Record<string, UniverseSymbolSummaryRow[]>>({});
   const [summarySortById, setSummarySortById] = useState<Record<string, { key: SymbolSummarySortKey; dir: SymbolSummarySortDir }>>({});
+  const [availableRows, setAvailableRows] = useState<UniverseAvailableSymbolRow[]>([]);
+  const [availableLoading, setAvailableLoading] = useState(false);
+  const [availableError, setAvailableError] = useState<string | null>(null);
+  const [availableUpdatedAtMs, setAvailableUpdatedAtMs] = useState<number | null>(null);
+  const [rangeSwitchInProgress, setRangeSwitchInProgress] = useState(false);
+  const [rangeLoadProgress, setRangeLoadProgress] = useState(0);
+  const [availableSort, setAvailableSort] = usePersistentState<{ key: AvailableSortKey; dir: AvailableSortDir }>("universe.availableSort", { key: "turnover", dir: "desc" });
+  const [availablePage, setAvailablePage] = usePersistentState<number>("universe.availablePage", 1);
+  const [availablePageSize, setAvailablePageSize] = useStoredPageSize("universe-available", 25);
 
-  const [savedPage, setSavedPage] = useState(1);
+  const [savedPage, setSavedPage] = usePersistentState<number>("universe.savedPage", 1);
   const [savedPageSize, setSavedPageSize] = useStoredPageSize("universe-saved", 25);
   const createAbortRef = useRef<AbortController | null>(null);
+  const rangeLoadIntervalRef = useRef<number | null>(null);
 
   const persistCreateJob = useCallback((job: UniverseCreateJobState | null) => {
     if (!job) {
       window.localStorage.removeItem(CREATE_JOB_STORAGE_KEY);
       return;
     }
-    window.localStorage.setItem(CREATE_JOB_STORAGE_KEY, JSON.stringify(job));
+    try {
+      window.localStorage.setItem(CREATE_JOB_STORAGE_KEY, JSON.stringify(job));
+    } catch {
+      // Ignore quota errors to avoid UI crash.
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -89,6 +106,55 @@ export function UniversePage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const refreshAvailable = useCallback(async (reason: "poll" | "range" = "poll") => {
+    if (reason === "range") {
+      setRangeSwitchInProgress(true);
+      setRangeLoadProgress(8);
+      if (rangeLoadIntervalRef.current != null) {
+        window.clearInterval(rangeLoadIntervalRef.current);
+        rangeLoadIntervalRef.current = null;
+      }
+      rangeLoadIntervalRef.current = window.setInterval(() => {
+        setRangeLoadProgress((prev) => Math.min(92, prev + 6));
+      }, 200);
+    }
+    setAvailableLoading(true);
+    setAvailableError(null);
+    try {
+      const res = await listAvailableUniverseSymbols(metricsRange);
+      setAvailableRows(Array.isArray(res.rows) ? res.rows : []);
+      setAvailableUpdatedAtMs(Date.now());
+    } catch (e: any) {
+      setAvailableError(String(e?.message ?? e));
+    } finally {
+      setAvailableLoading(false);
+      if (reason === "range") {
+        if (rangeLoadIntervalRef.current != null) {
+          window.clearInterval(rangeLoadIntervalRef.current);
+          rangeLoadIntervalRef.current = null;
+        }
+        setRangeLoadProgress(100);
+        window.setTimeout(() => {
+          setRangeSwitchInProgress(false);
+          setRangeLoadProgress(0);
+        }, 250);
+      }
+    }
+  }, [metricsRange]);
+
+  useEffect(() => {
+    void refreshAvailable("range");
+  }, [refreshAvailable]);
+
+  useEffect(() => {
+    return () => {
+      if (rangeLoadIntervalRef.current != null) {
+        window.clearInterval(rangeLoadIntervalRef.current);
+        rangeLoadIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(CREATE_JOB_STORAGE_KEY);
@@ -165,6 +231,16 @@ export function UniversePage() {
     if (savedPage !== savedPageClamped) setSavedPage(savedPageClamped);
   }, [savedPage, savedPageClamped]);
 
+  useEffect(() => {
+    setAvailablePage(1);
+  }, [availablePageSize, metricsRange]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(availableRows.length / availablePageSize));
+    const clamped = Math.max(1, Math.min(availablePage, totalPages));
+    if (availablePage !== clamped) setAvailablePage(clamped);
+  }, [availablePage, availablePageSize, availableRows.length]);
+
   async function onCreate() {
     setCreating(true);
     setError(null);
@@ -191,7 +267,10 @@ export function UniversePage() {
       persistCreateJob(nextJob);
       createAbortRef.current?.abort();
       createAbortRef.current = new AbortController();
-      const res = await createUniverse(parsedTurnover, parsedVol, metricsRange, createAbortRef.current.signal);
+      const filteredSymbols = availableRows
+        .filter((row) => row.avgTurnoverUsd24h >= parsedTurnover && row.avgVolatilityPct >= parsedVol)
+        .map((row) => row.symbol);
+      const res = await createUniverse(parsedTurnover, parsedVol, metricsRange, filteredSymbols, createAbortRef.current.signal);
       setLastCreated(res.universe.meta);
       setStats(res.stats);
       await refresh();
@@ -291,6 +370,32 @@ export function UniversePage() {
     return sort.dir === "asc" ? " ▲" : " ▼";
   }
 
+  const availableRowsSorted = useMemo(() => {
+    const sign = availableSort.dir === "asc" ? 1 : -1;
+    return [...availableRows].sort((a, b) => {
+      if (availableSort.key === "symbol") return sign * a.symbol.localeCompare(b.symbol);
+      if (availableSort.key === "volatility") return sign * ((a.avgVolatilityPct ?? 0) - (b.avgVolatilityPct ?? 0));
+      return sign * ((a.avgTurnoverUsd24h ?? 0) - (b.avgTurnoverUsd24h ?? 0));
+    });
+  }, [availableRows, availableSort]);
+
+  const availableTotalPages = Math.max(1, Math.ceil(availableRowsSorted.length / availablePageSize));
+  const availablePageClamped = Math.max(1, Math.min(availablePage, availableTotalPages));
+  const availableStart = (availablePageClamped - 1) * availablePageSize;
+  const availablePageRows = availableRowsSorted.slice(availableStart, availableStart + availablePageSize);
+
+  function toggleAvailableSort(key: AvailableSortKey) {
+    setAvailableSort((prev) => ({
+      key,
+      dir: prev.key === key && prev.dir === "asc" ? "desc" : "asc",
+    }));
+  }
+
+  function availableSortMarker(key: AvailableSortKey): string {
+    if (availableSort.key !== key) return "";
+    return availableSort.dir === "asc" ? " ▲" : " ▼";
+  }
+
   return (
     <>
       <HeaderBar
@@ -355,7 +460,11 @@ export function UniversePage() {
 
                 <Form.Group style={{ minWidth: 0 }}>
                   <Form.Label>Range</Form.Label>
-                  <Form.Select value={metricsRange} onChange={(e) => setMetricsRange(e.currentTarget.value as UniverseMetricsRange)}>
+                  <Form.Select
+                    value={metricsRange}
+                    onChange={(e) => setMetricsRange(e.currentTarget.value as UniverseMetricsRange)}
+                    disabled={rangeSwitchInProgress || availableLoading}
+                  >
                     {RANGE_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
@@ -501,6 +610,76 @@ export function UniversePage() {
                   onPageSizeChange={(size) => {
                     setSavedPageSize(size);
                     setSavedPage(1);
+                  }}
+                />
+              </>
+            )}
+
+            <h6 className="mt-4 mb-2">Available symbols</h6>
+            <div className="d-flex align-items-center gap-2 mb-2" style={{ fontSize: 12, opacity: 0.85 }}>
+              <span>Range: {RANGE_OPTIONS.find((x) => x.value === metricsRange)?.label ?? metricsRange}</span>
+              <span>updated: {availableUpdatedAtMs ? fmtTime(availableUpdatedAtMs) : "-"}</span>
+            </div>
+            {(rangeSwitchInProgress || availableLoading) ? (
+              <div style={{ marginBottom: 10 }}>
+                <CenteredProgressBar
+                  now={rangeSwitchInProgress ? rangeLoadProgress : 60}
+                  showPercent
+                />
+                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
+                  Loading symbols for selected range...
+                </div>
+              </div>
+            ) : null}
+            {availableError ? <div style={{ color: "#b00020", marginBottom: 8 }}>{availableError}</div> : null}
+            {availableLoading && availableRows.length === 0 ? (
+              <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
+                <Spinner animation="border" size="sm" /> loading symbols...
+              </div>
+            ) : (
+              <>
+                <div style={{ overflowX: "auto" }}>
+                  <Table striped bordered hover size="sm" className="mb-0" style={{ tableLayout: "fixed", minWidth: 900 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: "10%" }}>#</th>
+                        <th style={{ width: "36%", cursor: "pointer" }} onClick={() => toggleAvailableSort("symbol")}>
+                          Symbol{availableSortMarker("symbol")}
+                        </th>
+                        <th style={{ width: "27%", cursor: "pointer" }} onClick={() => toggleAvailableSort("turnover")}>
+                          Turnover ({RANGE_OPTIONS.find((x) => x.value === metricsRange)?.label ?? metricsRange}){availableSortMarker("turnover")}
+                        </th>
+                        <th style={{ width: "27%", cursor: "pointer" }} onClick={() => toggleAvailableSort("volatility")}>
+                          Volatility ({RANGE_OPTIONS.find((x) => x.value === metricsRange)?.label ?? metricsRange}){availableSortMarker("volatility")}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {availablePageRows.map((row, index) => (
+                        <tr key={row.symbol}>
+                          <td>{availableStart + index + 1}</td>
+                          <td>{row.symbol}</td>
+                          <td>{fmtNum(row.avgTurnoverUsd24h)}</td>
+                          <td>{(row.avgVolatilityPct ?? 0).toFixed(2)}%</td>
+                        </tr>
+                      ))}
+                      {!availablePageRows.length ? (
+                        <tr>
+                          <td colSpan={4} style={{ opacity: 0.8 }}>No symbols available.</td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </Table>
+                </div>
+                <TablePaginationControls
+                  tableId="universe-available"
+                  page={availablePageClamped}
+                  totalRows={availableRowsSorted.length}
+                  pageSize={availablePageSize}
+                  onPageChange={setAvailablePage}
+                  onPageSizeChange={(size) => {
+                    setAvailablePageSize(size);
+                    setAvailablePage(1);
                   }}
                 />
               </>

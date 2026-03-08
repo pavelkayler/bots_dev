@@ -4,6 +4,7 @@ import { useInterval } from "../../../shared/hooks/useInterval";
 import { fetchProcessStatus } from "../api/sessionApi";
 
 const EMPTY_STATUS: ProcessStatusResponse = {
+  serverBootId: null,
   runtime: { state: "STOPPED", runningSinceMs: null, message: null },
   optimizer: {
     state: "stopped",

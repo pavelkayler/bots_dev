@@ -104,44 +104,69 @@ function expectedChecksForBot(botId?: string): UiCapabilityCheck[] {
 type Props = {
   botId?: string;
   title?: string;
+  serverBootId?: string | null;
 };
 
-export function ProviderCapabilitiesCard({ botId, title = "Data endpoints availability" }: Props) {
+const capabilitiesCache = new Map<string, ProviderCapabilitiesResponse>();
+
+function cacheKey(botId?: string): string {
+  return String(botId || "oi-momentum-v1");
+}
+
+export function ProviderCapabilitiesCard({ botId, title = "Data endpoints availability", serverBootId }: Props) {
   const [rows, setRows] = useState<UiCapabilityCheck[]>(() => expectedChecksForBot(botId));
   const [data, setData] = useState<ProviderCapabilitiesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setRows(expectedChecksForBot(botId));
+  const hydrateFromResponse = useCallback((next: ProviderCapabilitiesResponse) => {
+    setData(next);
+    const map = new Map(next.checks.map((row) => [row.id, row]));
+    setRows((prev) => {
+      const known = prev.map((row) => {
+        const hit = map.get(row.id);
+        return hit ? { ...hit } : row;
+      });
+      const knownIds = new Set(known.map((row) => row.id));
+      for (const row of next.checks) {
+        if (!knownIds.has(row.id)) known.push({ ...row });
+      }
+      return known;
+    });
+  }, []);
+
+  const refresh = useCallback(async (force = false) => {
+    const key = cacheKey(botId);
+    const cached = capabilitiesCache.get(key);
+    if (!force && cached && (!serverBootId || cached.serverBootId === serverBootId)) {
+      hydrateFromResponse(cached);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const next = await getProviderCapabilities(botId);
-      setData(next);
-      const map = new Map(next.checks.map((row) => [row.id, row]));
-      setRows((prev) => {
-        const known = prev.map((row) => {
-          const hit = map.get(row.id);
-          return hit ? { ...hit } : row;
-        });
-        const knownIds = new Set(known.map((row) => row.id));
-        for (const row of next.checks) {
-          if (!knownIds.has(row.id)) known.push({ ...row });
-        }
-        return known;
-      });
+      capabilitiesCache.set(key, next);
+      hydrateFromResponse(next);
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
       setLoading(false);
     }
-  }, [botId]);
+  }, [botId, hydrateFromResponse, serverBootId]);
 
   useEffect(() => {
+    const key = cacheKey(botId);
+    const cached = capabilitiesCache.get(key);
+    if (cached && (!serverBootId || cached.serverBootId === serverBootId)) {
+      hydrateFromResponse(cached);
+      setError(null);
+      return;
+    }
     setRows(expectedChecksForBot(botId));
-    void refresh();
-  }, [refresh]);
+    void refresh(true);
+  }, [botId, hydrateFromResponse, refresh, serverBootId]);
 
   const requiredTotal = rows.filter((row) => row.required).length;
   const requiredAvailable = rows.filter((row) => row.required && row.available).length;
@@ -156,7 +181,7 @@ export function ProviderCapabilitiesCard({ botId, title = "Data endpoints availa
     <Card className="mb-3">
       <Card.Header className="d-flex align-items-center justify-content-between">
         <b>{title}</b>
-        <Button size="sm" variant="outline-secondary" onClick={() => void refresh()} disabled={loading}>
+        <Button size="sm" variant="outline-secondary" onClick={() => void refresh(true)} disabled={loading}>
           {loading ? "Checking..." : "Refresh"}
         </Button>
       </Card.Header>

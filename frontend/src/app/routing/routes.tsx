@@ -12,7 +12,8 @@ export const router = createBrowserRouter(
   [
     { path: "/", element: <DashboardPage /> },
     { path: "/universe", element: <UniversePage /> },
-    { path: "/bots", element: <BotsPage /> },
+    { path: "/oimomentum", element: <BotsPage /> },
+    { path: "/bots", element: <Navigate to="/oimomentum" replace /> },
     { path: "/signal-bot", element: <SignalBotPage /> },
     { path: "/optimizer", element: <OptimizerPage forcedBotId={OI_MOMENTUM_BOT_ID} hideBotSelectors title="OI Momentum Optimizer" /> },
     { path: "*", element: <Navigate to="/" replace /> }

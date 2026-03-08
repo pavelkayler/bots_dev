@@ -7,7 +7,7 @@ import { CONFIG } from "../config.js";
 import { configStore } from "../runtime/configStore.js";
 import { DEFAULT_BOT_ID, getBotDefinition, listBots } from "../bots/registry.js";
 import { deleteUniverse, listUniverses, readUniverse, writeUniverse, formatUniverseName } from "../universe/universeStore.js";
-import { buildUniverseByAverageMetrics, normalizeUniverseMetricsRange } from "../universe/universeAverageBuilder.js";
+import { buildUniverseByAverageMetrics, collectUniverseAvailableSymbolMetrics, normalizeUniverseMetricsRange } from "../universe/universeAverageBuilder.js";
 import { buildUniverseSymbolRangeSummary } from "../universe/universeSymbolSummary.js";
 import { seedLinearUsdtPerpSymbols } from "../universe/universeSeed.js";
 import * as paperSummary from "../paper/summary.js";
@@ -145,6 +145,8 @@ const optimizerJobsDir = path.resolve(process.cwd(), "data/optimizer_jobs");
 const optimizerBlacklistsDir = path.resolve(process.cwd(), "data/optimizer_blacklists");
 const MAX_CHECKPOINT_FILES = 5;
 const MIN_CHECKPOINT_INTERVAL_MS = 2_000;
+const SERVER_BOOT_ID = randomUUID();
+const UNIVERSE_AVAILABLE_CACHE_TTL_MS = 5_000;
 const SOAK_SNAPSHOT_PATH = path.resolve(process.cwd(), "data", "soak_snapshots.jsonl");
 const OPTIMIZER_JOB_HISTORY_PATH = path.resolve(process.cwd(), "data", "optimizer_job_history.json");
 const dataDir = getDataDirPath();
@@ -154,6 +156,7 @@ const lastSnapshotWriteMs = new Map<string, number>();
 let optimizerLoopState: OptimizerLoopState | null = recoverLoopStateOnBoot() ?? readLoopState();
 let shutdownHandler: (() => Promise<void> | void) | null = null;
 let sessionStartAbortController: AbortController | null = null;
+const universeAvailableCache = new Map<string, { atMs: number; rows: Array<{ symbol: string; avgTurnoverUsd24h: number; avgVolatilityPct: number }> }>();
 function readOptimizerJobHistory(): OptimizerJobHistoryRecord[] {
   if (!fs.existsSync(OPTIMIZER_JOB_HISTORY_PATH)) return [];
   try {
@@ -359,6 +362,18 @@ export function aggregateOptimizerHistorySessions(records: OptimizerJobHistoryRe
     });
   }
   return [...sessions, ...singles].sort((a, b) => Number(b.endedAtMs) - Number(a.endedAtMs));
+}
+
+export function filterOptimizerHistoryByBot(records: OptimizerJobHistoryRecord[], requestedBotId: string): OptimizerJobHistoryRecord[] {
+  const normalizedRequested = String(requestedBotId || DEFAULT_BOT_ID).trim() || DEFAULT_BOT_ID;
+  return records.filter((row) => {
+    const rowBotId = typeof row?.runPayload?.selectedBotId === "string" ? row.runPayload.selectedBotId : "";
+    if (!rowBotId) {
+      // Legacy rows existed before bot identity was persisted; treat them as default OI bot only.
+      return normalizedRequested === DEFAULT_BOT_ID;
+    }
+    return rowBotId === normalizedRequested;
+  });
 }
 
 
@@ -641,17 +656,34 @@ function rememberOptimizerJob(jobId: string) {
   latestOptimizerJobId = jobId;
 }
 
-function resolveCurrentOptimizerJobId(): string | null {
+function resolveOptimizerJobBotId(job: OptimizerJob | undefined): string {
+  const runBotId = typeof job?.runPayload?.selectedBotId === "string" ? job.runPayload.selectedBotId : "";
+  if (runBotId.trim()) return runBotId.trim();
+  return DEFAULT_BOT_ID;
+}
+
+function resolveCurrentOptimizerJobId(requestedBotId?: string): string | null {
+  const normalizedRequestedBotId = requestedBotId ? getBotDefinition(requestedBotId).id : "";
   const entries = Array.from(optimizerJobStartedAt.entries()).filter(([jobId]) => optimizerJobs.has(jobId));
-  if (!entries.length) return null;
-  entries.sort((a, b) => b[1] - a[1]);
-  const running = entries.find(([jobId]) => {
+  const scopedEntries = normalizedRequestedBotId
+    ? entries.filter(([jobId]) => resolveOptimizerJobBotId(optimizerJobs.get(jobId)) === normalizedRequestedBotId)
+    : entries;
+  if (!scopedEntries.length) return null;
+  const preferredEntries = scopedEntries.length ? scopedEntries : entries;
+  if (!preferredEntries.length) return null;
+  preferredEntries.sort((a, b) => b[1] - a[1]);
+  const running = preferredEntries.find(([jobId]) => {
     const st = optimizerJobs.get(jobId)?.status;
     return st === "running" || st === "paused";
   });
   if (running) return running[0];
-  if (latestOptimizerJobId && optimizerJobs.has(latestOptimizerJobId)) return latestOptimizerJobId;
-  return entries.at(0)?.[0] ?? null;
+  if (latestOptimizerJobId && optimizerJobs.has(latestOptimizerJobId)) {
+    const latestJob = optimizerJobs.get(latestOptimizerJobId);
+    if (!normalizedRequestedBotId || resolveOptimizerJobBotId(latestJob) === normalizedRequestedBotId) {
+      return latestOptimizerJobId;
+    }
+  }
+  return preferredEntries.at(0)?.[0] ?? null;
 }
 
 function isLocalRequestIp(ipRaw: unknown): boolean {
@@ -1444,6 +1476,7 @@ export function registerHttpRoutes(app: FastifyInstance) {
     return {
       ok: requiredOk,
       nowMs: Date.now(),
+      serverBootId: SERVER_BOOT_ID,
       bybitRestUrl: process.env.BYBIT_REST_URL ?? "https://api.bybit.com",
       coinglassBaseUrl: process.env.COINGLASS_BASE_URL ?? "https://open-api-v3.coinglass.com",
       checks,
@@ -1466,6 +1499,7 @@ export function registerHttpRoutes(app: FastifyInstance) {
     const currentJob = currentJobId ? optimizerJobs.get(currentJobId) : null;
     const loopProgress = loop?.progress && typeof loop.progress === "object" ? loop.progress : null;
     return {
+      serverBootId: SERVER_BOOT_ID,
       runtime: {
         state: runtimeStatus.sessionState,
         runningSinceMs: runtimeStatus.runningSinceMs ?? null,
@@ -1713,6 +1747,28 @@ app.get("/api/config", async () => {
     return { universes: listUniverses() };
   });
 
+  app.get("/api/universes/available-symbols", async (req, reply) => {
+    const selectedRange = normalizeUniverseMetricsRange((req.query as any)?.range ?? "24h");
+    const cacheKey = selectedRange;
+    const cached = universeAvailableCache.get(cacheKey);
+    if (cached && Date.now() - cached.atMs < UNIVERSE_AVAILABLE_CACHE_TTL_MS) {
+      return { range: selectedRange, rows: cached.rows, cached: true, cachedAtMs: cached.atMs, nowMs: Date.now() };
+    }
+    try {
+      const symbols = await seedLinearUsdtPerpSymbols({ restBaseUrl: "https://api.bybit.com" });
+      const res = await collectUniverseAvailableSymbolMetrics({
+        restBaseUrl: "https://api.bybit.com",
+        symbols,
+        range: selectedRange,
+      });
+      universeAvailableCache.set(cacheKey, { atMs: Date.now(), rows: res.rows });
+      return { range: res.range, rows: res.rows, cached: false, cachedAtMs: Date.now(), nowMs: Date.now() };
+    } catch (e: any) {
+      reply.code(400);
+      return { error: "universe_available_symbols_failed", message: String(e?.message ?? e) };
+    }
+  });
+
   app.get("/api/universes/:id", async (req, reply) => {
     const id = String((req.params as any).id ?? "");
     try {
@@ -1741,7 +1797,12 @@ app.get("/api/config", async () => {
     const { id, name } = formatUniverseName(minTurnoverUsd, minVolatilityPct, metricsRange);
 
     try {
-      const symbols = await seedLinearUsdtPerpSymbols({ restBaseUrl: "https://api.bybit.com" });
+      const bodySymbols = Array.isArray(body?.symbols)
+        ? body.symbols.map((s: unknown) => String(s ?? "").trim().toUpperCase()).filter(Boolean)
+        : null;
+      const symbols = bodySymbols && bodySymbols.length > 0
+        ? bodySymbols
+        : await seedLinearUsdtPerpSymbols({ restBaseUrl: "https://api.bybit.com" });
 
       const res = await buildUniverseByAverageMetrics({
         restBaseUrl: "https://api.bybit.com",
@@ -2566,8 +2627,10 @@ app.get("/api/config", async () => {
     return { ok: true };
   });
 
-  app.get("/api/optimizer/jobs/current", async () => {
-    const jobId = resolveCurrentOptimizerJobId();
+  app.get("/api/optimizer/jobs/current", async (req) => {
+    const query = (req.query ?? {}) as any;
+    const requestedBotId = typeof query.botId === "string" ? query.botId : undefined;
+    const jobId = resolveCurrentOptimizerJobId(requestedBotId);
     return { jobId };
   });
 
@@ -2630,7 +2693,11 @@ app.get("/api/config", async () => {
     const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
     const sortKey = String(query.sortKey ?? "endedAtMs");
     const sortDir: "asc" | "desc" = String(query.sortDir ?? "desc") === "asc" ? "asc" : "desc";
-    const history = aggregateOptimizerHistorySessions(readOptimizerJobHistory());
+    const requestedBotIdRaw = typeof query.botId === "string" ? query.botId : "";
+    const requestedBotId = getBotDefinition(requestedBotIdRaw || configStore.get().selectedBotId || DEFAULT_BOT_ID).id;
+    const history = aggregateOptimizerHistorySessions(
+      filterOptimizerHistoryByBot(readOptimizerJobHistory(), requestedBotId),
+    );
     const sorted = history.sort((a, b) => {
       const getValue = (row: OptimizerJobHistoryRecord): number | string => {
         switch (sortKey) {
@@ -2828,12 +2895,13 @@ app.get("/api/config", async () => {
   });
 
   app.get("/api/optimizer/jobs/current/export", async (req, reply) => {
-    const jobId = resolveCurrentOptimizerJobId();
+    const query = (req.query ?? {}) as any;
+    const requestedBotId = typeof query.botId === "string" ? query.botId : undefined;
+    const jobId = resolveCurrentOptimizerJobId(requestedBotId);
     if (!jobId) {
       reply.code(404);
       return { error: "optimizer_job_not_found" };
     }
-    const query = (req.query ?? {}) as any;
     const format = String(query.format ?? "json").toLowerCase() === "csv" ? "csv" : "json";
     const job = resolveOptimizerJob(jobId);
     if (!job) {
