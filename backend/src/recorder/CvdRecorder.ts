@@ -48,6 +48,10 @@ type SymbolState = {
   lastSeenTradeTs: number;
   lastCvd: number;
 };
+type SymbolDerivedCache = {
+  n10: DerivedFeatures;
+  n20: DerivedFeatures;
+};
 
 export type CvdRecorderStatus = {
   state: CvdRecorderState;
@@ -200,6 +204,7 @@ export class CvdRecorder {
   private minuteBarsWork = new Map<string, Map<number, Omit<Cvd1mBar, "cvd">>>();
   private dedupe = new Set<string>();
   private dedupeQueue: string[] = [];
+  private derivedBySymbol = new Map<string, SymbolDerivedCache>();
 
   constructor(rootDir = path.resolve(process.cwd(), "data", "recorder", "bybit", "cvd")) {
     this.rootDir = rootDir;
@@ -374,6 +379,40 @@ export class CvdRecorder {
     return { status: this.getStatus(), symbols: rows };
   }
 
+  getSignalFeatures(symbol: string): {
+    cvdDelta: number | null;
+    cvdImbalanceRatio: number | null;
+    divergencePriceUpCvdDown: boolean;
+    divergencePriceDownCvdUp: boolean;
+  } {
+    const key = String(symbol ?? "").trim();
+    if (!key) {
+      return {
+        cvdDelta: null,
+        cvdImbalanceRatio: null,
+        divergencePriceUpCvdDown: false,
+        divergencePriceDownCvdUp: false,
+      };
+    }
+    const fromCache = this.derivedBySymbol.get(key);
+    if (fromCache) {
+      return {
+        cvdDelta: fromCache.n10.rollingDeltaN,
+        cvdImbalanceRatio: fromCache.n10.imbalanceRatio,
+        divergencePriceUpCvdDown: fromCache.n10.divergencePriceUpCvdDown,
+        divergencePriceDownCvdUp: fromCache.n10.divergencePriceDownCvdUp,
+      };
+    }
+    this.refreshDerivedForSymbol(key);
+    const loaded = this.derivedBySymbol.get(key);
+    return {
+      cvdDelta: loaded?.n10.rollingDeltaN ?? null,
+      cvdImbalanceRatio: loaded?.n10.imbalanceRatio ?? null,
+      divergencePriceUpCvdDown: loaded?.n10.divergencePriceUpCvdDown ?? false,
+      divergencePriceDownCvdUp: loaded?.n10.divergencePriceDownCvdUp ?? false,
+    };
+  }
+
   private ensureSymbolState(symbol: string): SymbolState {
     const known = this.symbolState.get(symbol);
     if (known) return known;
@@ -484,6 +523,7 @@ export class CvdRecorder {
     writeJsonl(this.bar1mPath(symbol, full.ts), full);
     this.writes1m += 1;
     this.lastWriteAtMs = Date.now();
+    this.refreshDerivedForSymbol(symbol);
   }
 
   private flushAll() {
@@ -537,5 +577,12 @@ export class CvdRecorder {
     rows.sort((a, b) => a.ts - b.ts);
     return rows;
   }
-}
 
+  private refreshDerivedForSymbol(symbol: string) {
+    const rows = this.readBars1m(symbol);
+    this.derivedBySymbol.set(symbol, {
+      n10: computeDerived(rows, 10),
+      n20: computeDerived(rows, 20),
+    });
+  }
+}

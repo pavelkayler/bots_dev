@@ -146,6 +146,15 @@ High-level:
 - Signal Bot page no longer force-switches global bot selection on open.
   - This removes cross-page selection side effects while keeping Signal optimizer/settings explicitly scoped.
 
+### Signal Bot model (current MVP)
+- Signal Bot is treated as a market overheating/exhaustion strategy, not an OI Momentum clone.
+- Core inputs used by Signal engine:
+  - Bybit 1m price candles (price move)
+  - Bybit OI path (usable 5m historical path expanded in replay)
+  - Bybit funding history
+  - Bybit public trades with internal CVD derivation
+- CoinGlass low-timeframe OI/liquidation is optional diagnostics only on current plan and is not a hard dependency for Signal runtime/optimizer.
+
 ### Recorder foundation (minute OI path)
 - A dedicated recorder foundation exists in `backend/src/recorder/MinuteOiRecorder.ts`.
 - Recorder input source is Bybit WS ticker updates.

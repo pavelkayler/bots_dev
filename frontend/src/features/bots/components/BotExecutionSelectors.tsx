@@ -49,9 +49,9 @@ export function BotExecutionSelectors({ compact, allowedBotIds, hideBotSelect, o
       {canRenderBotSelect ? (
         <Col md={6} xs={12}>
           <Form.Group>
-            <Form.Label style={{ color: "#0d6efd", fontWeight: 700 }}>Bot (active)</Form.Label>
+            <Form.Label style={{ color: "#6ea0ff", fontWeight: 700 }}>Bot (active)</Form.Label>
             <Form.Select
-              style={{ borderColor: "#0d6efd", backgroundColor: "#f4f8ff" }}
+              style={{ borderColor: "#4f83ff" }}
               value={activeBotId}
               disabled={loading}
               onChange={(e) => {

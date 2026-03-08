@@ -22,9 +22,10 @@ after(() => {
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
-test("configStore forces signals.requireFundingSign=true on update", () => {
-  const next = configStore.update({ signals: { requireFundingSign: false } });
-  assert.equal(next.signals.requireFundingSign, true);
+test("configStore keeps signal-bot specific funding flag writable", () => {
+  configStore.setSelections({ selectedBotId: "signal-multi-factor-v1" });
+  const next = configStore.update({ signals: { requireFundingExtreme: false } });
+  assert.equal(next.signals.requireFundingExtreme, false);
 });
 
 test("SignalEngine funding sign gating returns funding_mismatch", () => {

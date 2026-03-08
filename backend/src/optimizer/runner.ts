@@ -7,6 +7,8 @@ import { CandleTracker } from "../engine/CandleTracker.js";
 import { SignalEngine } from "../engine/SignalEngine.js";
 import { PaperBroker, type PaperExecutionModel, type PaperStats, type PaperTickOhlc } from "../paper/PaperBroker.js";
 import { configStore } from "../runtime/configStore.js";
+import { SIGNAL_BOT_ID } from "../bots/registry.js";
+import { cvdRecorder } from "../recorder/recorderStore.js";
 
 type DatasetMeta = {
   datasetId?: string;
@@ -514,9 +516,34 @@ function buildCandidateParams(
     entryOffsetPct: number;
     entryTimeoutSec: number;
     rearmDelayMs: number;
+    cvdMoveThreshold: number;
+    fundingMinAbsPct: number;
+    lookbackCandles: number;
+    cooldownCandles: number;
+    minBarsBetweenSignals: number;
   },
-  precision: OptimizerPrecision
+  precision: OptimizerPrecision,
+  isSignalBot: boolean,
 ): RandomizedParams {
+  if (isSignalBot) {
+    const rPrice = readRange(ranges.priceTh, Math.max(0.1, base.priceThresholdPct), Math.max(0.1, base.priceThresholdPct));
+    const rOiv = readRange(ranges.oivTh, Math.max(0.1, base.oivThresholdPct), Math.max(0.1, base.oivThresholdPct));
+    const rCvd = readRange(ranges.tp, Math.max(0, base.cvdMoveThreshold), Math.max(0, base.cvdMoveThreshold));
+    const rFunding = readRange(ranges.sl, Math.max(0, base.fundingMinAbsPct), Math.max(0, base.fundingMinAbsPct));
+    const rMinBars = readRange(ranges.offset, Math.max(0, base.minBarsBetweenSignals), Math.max(0, base.minBarsBetweenSignals));
+    const rLookback = readRange(ranges.timeoutSec, Math.max(1, base.lookbackCandles), Math.max(1, base.lookbackCandles));
+    const rCooldown = readRange(ranges.rearmMs, Math.max(0, base.cooldownCandles), Math.max(0, base.cooldownCandles));
+    return {
+      priceThresholdPct: quantizeAndClamp(pickRange(rnd, rPrice.min, rPrice.max), rPrice.min, rPrice.max, precision.priceTh),
+      oivThresholdPct: quantizeAndClamp(pickRange(rnd, rOiv.min, rOiv.max), rOiv.min, rOiv.max, precision.oivTh),
+      tpRoiPct: quantizeAndClamp(pickRange(rnd, rCvd.min, rCvd.max), rCvd.min, rCvd.max, precision.tp),
+      slRoiPct: quantizeAndClamp(pickRange(rnd, rFunding.min, rFunding.max), rFunding.min, rFunding.max, precision.sl),
+      entryOffsetPct: quantizeAndClamp(pickRange(rnd, rMinBars.min, rMinBars.max), rMinBars.min, rMinBars.max, precision.offset),
+      timeoutSec: quantizeAndClamp(pickRange(rnd, rLookback.min, rLookback.max), rLookback.min, rLookback.max, precision.timeoutSec),
+      rearmMs: quantizeAndClamp(pickRange(rnd, rCooldown.min, rCooldown.max), rCooldown.min, rCooldown.max, precision.rearmMs),
+    };
+  }
+
   const rPrice = readRange(ranges.priceTh, 0.1, 5);
   const rOiv = readRange(ranges.oivTh, 0.1, 5);
   const rTp = readRange(ranges.tp, 0.5, 10);
@@ -770,6 +797,7 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
     }
   };
   const effectiveDirection = args.directionMode ?? "both";
+  const isSignalBot = (args.selectedBotId ?? baseConfig.selectedBotId) === SIGNAL_BOT_ID;
   const effectiveTf = Math.max(Math.floor(Number(args.optTfMin ?? MIN_OPT_TF_MIN)) || MIN_OPT_TF_MIN, MIN_OPT_TF_MIN);
   const runKey = `datasets=${[...datasetIds].sort().join(",")}|dir=${effectiveDirection}|tf=${effectiveTf}`;
   const seenCandidateKeys = new Set<string>();
@@ -808,24 +836,38 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         break;
       }
 
+    const signalsAny = baseConfig.signals as Record<string, unknown>;
     const randomizedParams = args.fixedParams ?? buildCandidateParams(
       rng,
       ranges,
       {
-        priceThresholdPct: baseConfig.signals.priceThresholdPct,
-        oivThresholdPct: baseConfig.signals.oivThresholdPct,
+        priceThresholdPct: Number(signalsAny.priceThresholdPct ?? signalsAny.priceMovePct ?? 0),
+        oivThresholdPct: Number(signalsAny.oivThresholdPct ?? signalsAny.oiMovePct ?? 0),
         tpRoiPct: baseConfig.paper.tpRoiPct,
         slRoiPct: baseConfig.paper.slRoiPct,
         entryOffsetPct: baseConfig.paper.entryOffsetPct,
         entryTimeoutSec: baseConfig.paper.entryTimeoutSec,
         rearmDelayMs: baseConfig.paper.rearmDelayMs,
+        cvdMoveThreshold: Number(signalsAny.cvdMoveThreshold ?? 0),
+        fundingMinAbsPct: Number(signalsAny.fundingMinAbsPct ?? 0),
+        lookbackCandles: Number((baseConfig.botConfig?.strategy as any)?.lookbackCandles ?? 3),
+        cooldownCandles: Number((baseConfig.botConfig?.strategy as any)?.cooldownCandles ?? 1),
+        minBarsBetweenSignals: Number(signalsAny.minBarsBetweenSignals ?? 1),
       },
-      precision
+      precision,
+      isSignalBot,
     );
     const params = {
       ...randomizedParams,
-      timeoutSec: Math.max(Number(randomizedParams.timeoutSec) || 0, MIN_TIMEOUT_SEC),
-      rearmMs: Math.max(Number(randomizedParams.rearmMs) || 0, effectiveTf * 60_000),
+      timeoutSec: isSignalBot
+        ? Math.max(1, Math.round(Number(randomizedParams.timeoutSec) || 1))
+        : Math.max(Number(randomizedParams.timeoutSec) || 0, MIN_TIMEOUT_SEC),
+      rearmMs: isSignalBot
+        ? Math.max(0, Math.round(Number(randomizedParams.rearmMs) || 0))
+        : Math.max(Number(randomizedParams.rearmMs) || 0, effectiveTf * 60_000),
+      entryOffsetPct: isSignalBot
+        ? Math.max(0, Math.round(Number(randomizedParams.entryOffsetPct) || 0))
+        : Number(randomizedParams.entryOffsetPct) || 0,
     };
     const candidateKey = buildCandidateKey(params, effectiveDirection, effectiveTf, args.sim);
     if (seenCandidateKeys.has(candidateKey)) {
@@ -894,11 +936,11 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           makerFeeRate: Number.isFinite(Number(args.sim?.feeBps))
             ? Math.max(0, Number(args.sim?.feeBps)) / 10_000
             : baseConfig.paper.makerFeeRate,
-          tpRoiPct: params.tpRoiPct,
-          slRoiPct: params.slRoiPct,
-          entryOffsetPct: params.entryOffsetPct,
-          entryTimeoutSec: Math.max(params.timeoutSec, MIN_TIMEOUT_SEC),
-          rearmDelayMs: Math.max(params.rearmMs, effectiveTfMin * 60_000),
+          tpRoiPct: isSignalBot ? baseConfig.paper.tpRoiPct : params.tpRoiPct,
+          slRoiPct: isSignalBot ? baseConfig.paper.slRoiPct : params.slRoiPct,
+          entryOffsetPct: isSignalBot ? baseConfig.paper.entryOffsetPct : params.entryOffsetPct,
+          entryTimeoutSec: isSignalBot ? baseConfig.paper.entryTimeoutSec : Math.max(params.timeoutSec, MIN_TIMEOUT_SEC),
+          rearmDelayMs: isSignalBot ? baseConfig.paper.rearmDelayMs : Math.max(params.rearmMs, effectiveTfMin * 60_000),
           applyFunding: false,
           executionModel: effectiveExecutionModel,
         },
@@ -954,11 +996,15 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
         const cache = new BybitMarketCache();
         const candles = new CandleTracker(cache);
         const signalEngine = new SignalEngine({
-          priceThresholdPct: params.priceThresholdPct,
-          oivThresholdPct: params.oivThresholdPct,
-          requireFundingSign: true,
+          priceMovePct: params.priceThresholdPct,
+          oiMovePct: params.oivThresholdPct,
+          cvdMoveThreshold: isSignalBot ? params.tpRoiPct : Number(signalsAny.cvdMoveThreshold ?? 0),
+          requireCvdDivergence: isSignalBot ? Boolean(signalsAny.requireCvdDivergence ?? false) : false,
+          requireFundingExtreme: isSignalBot ? Boolean(signalsAny.requireFundingExtreme ?? signalsAny.requireFundingSign ?? true) : false,
+          fundingMinAbsPct: isSignalBot ? Number(params.slRoiPct) : Number(signalsAny.fundingMinAbsPct ?? 0),
+          requireFundingSign: isSignalBot ? Boolean(signalsAny.requireFundingExtreme ?? signalsAny.requireFundingSign ?? true) : true,
           directionMode: args.directionMode ?? "both",
-          model: (args.selectedBotId ?? baseConfig.selectedBotId) === "signal-multi-factor-v1" ? "signal-multi-factor-v1" : "oi-momentum-v1",
+          model: isSignalBot ? "signal-multi-factor-v1" : "oi-momentum-v1",
         });
         const paper = new PaperBroker(candidateConfig.paper, logger as any);
         let lastEventTs = 0;
@@ -966,6 +1012,10 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
           prevWindowClose: number | null;
           prevWindowOivClose: number | null;
           minuteOiValues: number[];
+          priceHistory: number[];
+          oiHistory: number[];
+          cooldownLeft: number;
+          lastSignalCandle: number | null;
         }>();
 
         let eventCounter = 0;
@@ -1023,6 +1073,10 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
               prevWindowClose: null,
               prevWindowOivClose: null,
               minuteOiValues: [] as number[],
+              priceHistory: [] as number[],
+              oiHistory: [] as number[],
+              cooldownLeft: 0,
+              lastSignalCandle: null,
             };
             if (Number.isFinite(openInterestValue) && openInterestValue >= 0) {
               cadenceState.minuteOiValues.push(openInterestValue);
@@ -1035,19 +1089,60 @@ export async function runOptimizationCore(args: RunOptimizationArgs, hooks?: Run
               const windowOiValue = deriveWindowOiValue(cadenceState.minuteOiValues, openInterestValue);
               if (Number.isFinite(markPrice) && markPrice > 0) cadenceState.prevWindowClose = markPrice;
               if (Number.isFinite(windowOiValue) && windowOiValue >= 0) cadenceState.prevWindowOivClose = windowOiValue;
+              if (Number.isFinite(markPrice) && markPrice > 0) cadenceState.priceHistory.push(markPrice);
+              if (Number.isFinite(windowOiValue) && windowOiValue >= 0) cadenceState.oiHistory.push(windowOiValue);
               cadenceState.minuteOiValues = [];
             } else {
               const windowOiValue = deriveWindowOiValue(cadenceState.minuteOiValues, openInterestValue);
-              const priceMovePct = pctChange(markPrice, cadenceState.prevWindowClose);
-              const oivMovePct = windowOiValue > 0 ? pctChange(windowOiValue, cadenceState.prevWindowOivClose) : null;
+              const lookbackCandles = isSignalBot ? Math.max(1, Math.round(Number(params.timeoutSec) || 1)) : 1;
+              cadenceState.priceHistory.push(markPrice);
+              cadenceState.oiHistory.push(windowOiValue);
+              if (cadenceState.priceHistory.length > lookbackCandles + 2) cadenceState.priceHistory.shift();
+              if (cadenceState.oiHistory.length > lookbackCandles + 2) cadenceState.oiHistory.shift();
+              const refPrice = cadenceState.priceHistory.length > lookbackCandles
+                ? cadenceState.priceHistory[cadenceState.priceHistory.length - 1 - lookbackCandles] ?? null
+                : cadenceState.prevWindowClose;
+              const refOi = cadenceState.oiHistory.length > lookbackCandles
+                ? cadenceState.oiHistory[cadenceState.oiHistory.length - 1 - lookbackCandles] ?? null
+                : cadenceState.prevWindowOivClose;
+              const priceMovePct = pctChange(markPrice, Number(refPrice));
+              const oivMovePct = windowOiValue > 0 ? pctChange(windowOiValue, Number(refOi)) : null;
+              const candleId = Math.floor(ts / tfMs);
+              const minBarsBetweenSignals = isSignalBot ? Math.max(0, Math.round(Number(params.entryOffsetPct) || 0)) : 0;
+              const cvdFeatures = isSignalBot ? cvdRecorder.getSignalFeatures(event.symbol) : null;
+              const cvdSignals = isSignalBot ? {
+                cvdDelta: cvdFeatures?.cvdDelta ?? null,
+                cvdImbalanceRatio: cvdFeatures?.cvdImbalanceRatio ?? null,
+                divergencePriceUpCvdDown: cvdFeatures?.divergencePriceUpCvdDown ?? false,
+                divergencePriceDownCvdUp: cvdFeatures?.divergencePriceDownCvdUp ?? false,
+              } : {
+                cvdDelta: null,
+                cvdImbalanceRatio: null,
+                divergencePriceUpCvdDown: false,
+                divergencePriceDownCvdUp: false,
+              };
               const decision = signalEngine.decide({
                 priceMovePct,
-                oivMovePct,
+                oiMovePct: oivMovePct,
                 fundingRate,
-                cooldownActive: false,
+                cooldownActive: cadenceState.cooldownLeft > 0,
+                ...cvdSignals,
               });
               signal = decision.signal;
               signalReason = decision.reason;
+              if (signal && minBarsBetweenSignals > 0 && cadenceState.lastSignalCandle != null) {
+                const barsSinceLast = candleId - cadenceState.lastSignalCandle;
+                if (barsSinceLast < minBarsBetweenSignals) {
+                  signal = null;
+                  signalReason = "threshold_not_met";
+                }
+              }
+              if (signal) {
+                cadenceState.lastSignalCandle = candleId;
+                cadenceState.cooldownLeft = isSignalBot ? Math.max(0, Math.round(Number(params.rearmMs) || 0)) : 0;
+              } else if (cadenceState.cooldownLeft > 0) {
+                cadenceState.cooldownLeft -= 1;
+              }
               if (decision.reason === "no_refs") decisionsNoRefs += 1;
               if (decision.reason === "ok_long" || decision.reason === "ok_short") signalsOk += 1;
               cadenceState.prevWindowClose = markPrice;

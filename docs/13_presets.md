@@ -12,10 +12,17 @@ TP/SL is strategy semantics and is part of bot presets.
 ## Bot Presets
 - Scope: one `botId`
 - Storage: `backend/data/bot_presets/<botId>__<presetId>.json`
-- Contains only bot config:
-  - funding cooldown
-  - signal thresholds / daily gates
-  - strategy fields (`klineTfMin`, `entryOffsetPct`, `entryTimeoutSec`, `tpRoiPct`, `slRoiPct`, `rearmDelayMs`, `applyFunding`)
+- Contains only bot config (bot-specific schema):
+  - `oi-momentum-v1`:
+    - funding cooldown
+    - `signals.priceThresholdPct`, `signals.oivThresholdPct`, trigger bounds
+    - `strategy.klineTfMin`, TP/SL, offset, timeout, rearm, applyFunding
+  - `signal-multi-factor-v1`:
+    - signal window (`signalTfMin`, `lookbackCandles`, `cooldownCandles`)
+    - overheating thresholds (`priceMovePct`, `oiMovePct`, `cvdMoveThreshold`, divergence flag)
+    - funding/context (`requireFundingExtreme`, `fundingMinAbsPct`)
+    - trigger controls (`minTriggersPerDay`, `maxTriggersPerDay`, `minBarsBetweenSignals`)
+    - execution-close semantics in bot config (TP/SL, offset, timeout, rearm, applyFunding)
 
 API:
 - `GET /api/bot-presets?botId=<id>`
@@ -46,6 +53,11 @@ Current active selections are stored in runtime config:
 API:
 - `GET /api/config/selections`
 - `POST /api/config/selections`
+
+Preset selection is strictly bot-bound:
+- dashboard shows only presets for currently selected bot
+- OI pages show only OI presets
+- Signal pages and Signal optimizer show only Signal presets
 
 ## Backward Compatibility
 - Legacy presets in `backend/data/presets/*.json` remain readable.

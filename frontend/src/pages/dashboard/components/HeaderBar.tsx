@@ -29,7 +29,7 @@ export function HeaderBar(props: Props) {
   const streamsText = !streams.streamsEnabled ? "Streams: OFF" : streams.bybitConnected ? "Streams: ON" : "Streams: ON (connecting)";
 
   return (
-    <Navbar bg="light">
+    <Navbar className="genesis-topbar">
       <Container fluid>
         <Navbar.Brand>{APP_NAME}</Navbar.Brand>
         <Nav className="me-2" style={{ whiteSpace: "nowrap" }}>
@@ -42,7 +42,7 @@ export function HeaderBar(props: Props) {
           <Badge bg={connVariant}>{conn}</Badge>
           <Badge bg={streamsVariant}>{streamsText}</Badge>
           <Badge bg={sessionVariant}>Session: {sessionState}</Badge>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>
+          <div className="genesis-topbar-meta" style={{ fontSize: 12, opacity: 0.8 }}>
             WS: {wsUrl} | Last tick: {lastServerTime ? new Date(lastServerTime).toLocaleTimeString() : "-"} | ver. {APP_VERSION}, updated {APP_UPDATED_DATE}
           </div>
           <div className="ms-auto d-flex align-items-center gap-2">

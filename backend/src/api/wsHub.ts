@@ -13,6 +13,7 @@ import { configStore, type RuntimeConfig } from "../runtime/configStore.js";
 import { LiveUpdateAggregator } from "./liveUpdateAggregator.js";
 import { cvdRecorder, minuteOiRecorder } from "../recorder/recorderStore.js";
 import { resolveRecorderSymbols } from "../recorder/recorderUniverseStore.js";
+import { SIGNAL_BOT_ID } from "../bots/registry.js";
 
 type AwaitAllStreamsConnectedArgs = {
   timeoutMs: number;
@@ -241,6 +242,52 @@ function finiteOr<T extends number | null>(value: T | undefined, fallback: numbe
   return fallback;
 }
 
+function toSignalEngineConfig(cfg: RuntimeConfig) {
+  const signalsAny = cfg.signals as Record<string, unknown>;
+  const isSignalBot = cfg.selectedBotId === SIGNAL_BOT_ID;
+  return {
+    priceMovePct: Number(
+      isSignalBot
+        ? (signalsAny.priceMovePct ?? CONFIG.signals.priceThresholdPct)
+        : (signalsAny.priceThresholdPct ?? CONFIG.signals.priceThresholdPct),
+    ),
+    oiMovePct: Number(
+      isSignalBot
+        ? (signalsAny.oiMovePct ?? CONFIG.signals.oivThresholdPct)
+        : (signalsAny.oivThresholdPct ?? CONFIG.signals.oivThresholdPct),
+    ),
+    requireFundingSign: Boolean(
+      isSignalBot
+        ? (signalsAny.requireFundingExtreme ?? true)
+        : (signalsAny.requireFundingSign ?? true),
+    ),
+    cvdMoveThreshold: Number(isSignalBot ? (signalsAny.cvdMoveThreshold ?? 0) : 0),
+    requireCvdDivergence: Boolean(isSignalBot ? (signalsAny.requireCvdDivergence ?? false) : false),
+    requireFundingExtreme: Boolean(isSignalBot ? (signalsAny.requireFundingExtreme ?? false) : false),
+    fundingMinAbsPct: Number(isSignalBot ? (signalsAny.fundingMinAbsPct ?? 0) : 0),
+    directionMode: cfg.paper.directionMode,
+    model: isSignalBot ? "signal-multi-factor-v1" : "oi-momentum-v1",
+  } as const;
+}
+
+function readTriggerBounds(cfg: RuntimeConfig): { min: number; max: number } {
+  const s = cfg.signals as Record<string, unknown>;
+  if (cfg.selectedBotId === SIGNAL_BOT_ID) {
+    const min = Math.max(1, Math.floor(Number(s.minTriggersPerDay ?? 1)));
+    const max = Math.max(min, Math.floor(Number(s.maxTriggersPerDay ?? min)));
+    return { min, max };
+  }
+  const min = Math.max(1, Math.floor(Number(s.dailyTriggerMin ?? 1)));
+  const max = Math.max(min, Math.floor(Number(s.dailyTriggerMax ?? min)));
+  return { min, max };
+}
+
+function readMinBarsBetweenSignals(cfg: RuntimeConfig): number {
+  if (cfg.selectedBotId !== SIGNAL_BOT_ID) return 0;
+  const s = cfg.signals as Record<string, unknown>;
+  return Math.max(0, Math.floor(Number(s.minBarsBetweenSignals ?? 0)));
+}
+
 function readJsonlTail(filePath: string, limit: number): LogEvent[] {
   const max = Math.max(1, Math.min(100, Math.floor(limit)));
   const text = fs.readFileSync(filePath, "utf8");
@@ -269,13 +316,7 @@ export function createWsHub(app: FastifyInstance) {
   // dynamic engines from configStore
   let lastKey = "";
   let fundingGate = new FundingCooldownGate(CONFIG.fundingCooldown.beforeMin, CONFIG.fundingCooldown.afterMin);
-  let signals = new SignalEngine({
-    priceThresholdPct: CONFIG.signals.priceThresholdPct,
-    oivThresholdPct: CONFIG.signals.oivThresholdPct,
-    requireFundingSign: CONFIG.signals.requireFundingSign,
-    directionMode: CONFIG.paper.directionMode,
-    model: "oi-momentum-v1",
-  });
+  let signals = new SignalEngine(toSignalEngineConfig(configStore.get()));
 
   function ensureEngines() {
     const cfg = configStore.get();
@@ -284,13 +325,7 @@ export function createWsHub(app: FastifyInstance) {
     if (key !== lastKey) {
       lastKey = key;
       fundingGate = new FundingCooldownGate(cfg.fundingCooldown.beforeMin, cfg.fundingCooldown.afterMin);
-      signals = new SignalEngine({
-        priceThresholdPct: cfg.signals.priceThresholdPct,
-        oivThresholdPct: cfg.signals.oivThresholdPct,
-        requireFundingSign: cfg.signals.requireFundingSign,
-        directionMode: cfg.paper.directionMode,
-        model: cfg.selectedBotId === "signal-multi-factor-v1" ? "signal-multi-factor-v1" : "oi-momentum-v1",
-      });
+      signals = new SignalEngine(toSignalEngineConfig(cfg));
       app.log.info(
         { cfg: { fundingCooldown: cfg.fundingCooldown, signals: cfg.signals, paper: { directionMode: cfg.paper.directionMode } } },
         "runtime config applied (wsHub)"
@@ -387,6 +422,7 @@ export function createWsHub(app: FastifyInstance) {
     ensureEngines();
 
     const cfg = configStore.get();
+    const triggerBounds = readTriggerBounds(cfg);
     const symbols = Array.isArray(cfg.universe?.symbols) ? cfg.universe.symbols : [];
     const sessionId = runtime.getStatus().sessionId;
     if (sessionId !== lastGateSessionId) {
@@ -418,19 +454,25 @@ export function createWsHub(app: FastifyInstance) {
         refs.prevCandleOivClose == null || openInterestValue <= 0
           ? null
           : pctChange(openInterestValue, refs.prevCandleOivClose);
+      const cvdFeatures = cvdRecorder.getSignalFeatures(symbol);
 
       const cooldown = fundingGate.state(nextFundingTime || null, now);
       const cooldownActive = cooldown?.active ?? false;
 
       const decision = signals.decide({
         priceMovePct,
-        oivMovePct,
+        oiMovePct: oivMovePct,
         fundingRate,
         cooldownActive,
+        cvdDelta: cvdFeatures.cvdDelta,
+        cvdImbalanceRatio: cvdFeatures.cvdImbalanceRatio,
+        divergencePriceUpCvdDown: cvdFeatures.divergencePriceUpCvdDown,
+        divergencePriceDownCvdUp: cvdFeatures.divergencePriceDownCvdUp,
       });
 
       const tfMs = Math.max(1, Number(cfg.universe.klineTfMin || 1)) * 60_000;
       const candleId = Math.floor(now / tfMs);
+      const minBarsBetweenSignals = readMinBarsBetweenSignals(cfg);
       const dayKey = toMskDayKey(now);
       const gateState = dailyGateBySymbol.get(symbol) ?? { currentDayKey: dayKey, dailyTriggerCount: 0, lastTriggeredCandleId: null };
       if (gateState.currentDayKey !== dayKey) {
@@ -441,18 +483,27 @@ export function createWsHub(app: FastifyInstance) {
 
       let signal = decision.signal;
       let signalReason = signal ? decision.reason : "";
-      if (signal && gateState.lastTriggeredCandleId !== candleId) {
-        gateState.dailyTriggerCount += 1;
-        gateState.lastTriggeredCandleId = candleId;
+      if (signal) {
+        if (minBarsBetweenSignals > 0 && gateState.lastTriggeredCandleId != null) {
+          const barsSinceLast = candleId - gateState.lastTriggeredCandleId;
+          if (barsSinceLast < minBarsBetweenSignals) {
+            signal = null;
+            signalReason = "threshold_not_met";
+          }
+        }
       }
       if (signal) {
-        if (gateState.dailyTriggerCount < cfg.signals.dailyTriggerMin) {
+        if (gateState.dailyTriggerCount < triggerBounds.min) {
           signal = null;
           signalReason = "daily_gate_before_min";
-        } else if (gateState.dailyTriggerCount > cfg.signals.dailyTriggerMax) {
+        } else if (gateState.dailyTriggerCount > triggerBounds.max) {
           signal = null;
           signalReason = "daily_gate_over_max";
         }
+      }
+      if (signal && gateState.lastTriggeredCandleId !== candleId) {
+        gateState.dailyTriggerCount += 1;
+        gateState.lastTriggeredCandleId = candleId;
       }
       dailyGateBySymbol.set(symbol, gateState);
 

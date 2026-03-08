@@ -12,8 +12,10 @@ describe("bot registry", () => {
   it("resolves signal bot definition with defaults", () => {
     const bot = getBotDefinition(SIGNAL_BOT_ID);
     expect(bot.id).toBe(SIGNAL_BOT_ID);
-    expect(bot.defaults.signals.priceThresholdPct).toBeGreaterThan(0);
-    expect(bot.defaults.signals.oivThresholdPct).toBeGreaterThan(0);
+    const cfg = bot.defaults as any;
+    expect(cfg.signals.priceMovePct).toBeGreaterThan(0);
+    expect(cfg.signals.oiMovePct).toBeGreaterThan(0);
+    expect(cfg.signals.cvdMoveThreshold).toBeGreaterThanOrEqual(0);
   });
 
   it("keeps bot-specific normalizers isolated", () => {

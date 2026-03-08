@@ -2,9 +2,10 @@ import { describe, expect, test } from "vitest";
 import { configStore } from "../runtime/configStore.js";
 
 describe("config normalization", () => {
-  test("forces signals.requireFundingSign=true", () => {
-    const next = configStore.update({ signals: { requireFundingSign: false } });
-    expect(next.signals.requireFundingSign).toBe(true);
+  test("preserves bot-specific funding-extreme toggle for signal bot", () => {
+    configStore.setSelections({ selectedBotId: "signal-multi-factor-v1" });
+    const next = configStore.update({ signals: { requireFundingExtreme: false } as any });
+    expect((next.signals as any).requireFundingExtreme).toBe(false);
   });
 
   test("ignores removed legacy optimizer keys without crashing", () => {
@@ -18,7 +19,7 @@ describe("config normalization", () => {
 
     const next = configStore.update(legacy);
     expect(next.paper.enabled).toBe(true);
-    expect(next.signals.requireFundingSign).toBe(true);
+    expect(next.selectedBotId).toBeTruthy();
   });
 
   test("keeps stable defaults for directionMode", () => {

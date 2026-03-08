@@ -61,22 +61,46 @@ export type RuntimeConfig = {
       beforeMin: number;
       afterMin: number;
     };
-    signals: {
-      priceThresholdPct: number;
-      oivThresholdPct: number;
-      requireFundingSign: boolean;
-      dailyTriggerMin: number;
-      dailyTriggerMax: number;
-    };
-    strategy: {
-      klineTfMin: number;
-      entryOffsetPct: number;
-      entryTimeoutSec: number;
-      tpRoiPct: number;
-      slRoiPct: number;
-      rearmDelayMs: number;
-      applyFunding: boolean;
-    };
+    signals:
+      | {
+        priceThresholdPct: number;
+        oivThresholdPct: number;
+        requireFundingSign: boolean;
+        dailyTriggerMin: number;
+        dailyTriggerMax: number;
+      }
+      | {
+        priceMovePct: number;
+        oiMovePct: number;
+        cvdMoveThreshold: number;
+        requireCvdDivergence: boolean;
+        requireFundingExtreme: boolean;
+        fundingMinAbsPct: number;
+        minTriggersPerDay: number;
+        maxTriggersPerDay: number;
+        minBarsBetweenSignals: number;
+      };
+    strategy:
+      | {
+        klineTfMin: number;
+        entryOffsetPct: number;
+        entryTimeoutSec: number;
+        tpRoiPct: number;
+        slRoiPct: number;
+        rearmDelayMs: number;
+        applyFunding: boolean;
+      }
+      | {
+        signalTfMin: number;
+        lookbackCandles: number;
+        cooldownCandles: number;
+        entryOffsetPct: number;
+        entryTimeoutSec: number;
+        tpRoiPct: number;
+        slRoiPct: number;
+        rearmDelayMs: number;
+        applyFunding: boolean;
+      };
   };
   executionProfile?: {
     execution: {

@@ -513,13 +513,13 @@ export function UniversePage() {
                 <Table striped bordered hover size="sm" style={{ tableLayout: "fixed", width: "100%" }}>
                   <thead>
                     <tr>
-                      <th style={{ width: "26%", fontSize: 12 }}>Name</th>
-                      <th style={{ width: "10%", fontSize: 12 }}>Count</th>
-                      <th style={{ width: "16%", fontSize: 12 }}>Min turnover</th>
-                      <th style={{ width: "14%", fontSize: 12 }}>Min vol</th>
-                      <th style={{ width: "10%", fontSize: 12 }}>Range</th>
-                      <th style={{ width: "18%", fontSize: 12 }}>Updated</th>
-                      <th style={{ width: "16%", fontSize: 12 }}>Actions</th>
+                      <th style={{ width: "32%", fontSize: 12 }}>Name</th>
+                      <th style={{ width: "8%", fontSize: 12 }}>Count</th>
+                      <th style={{ width: "14%", fontSize: 12 }}>Min turnover</th>
+                      <th style={{ width: "10%", fontSize: 12 }}>Min vol</th>
+                      <th style={{ width: "8%", fontSize: 12 }}>Range</th>
+                      <th style={{ width: "14%", fontSize: 12 }}>Updated</th>
+                      <th style={{ width: "14%", fontSize: 12 }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -548,7 +548,7 @@ export function UniversePage() {
                           </tr>
                           {expandedUniverseId === u.id ? (
                             <tr key={`${u.id}-expanded`}>
-                              <td colSpan={7} style={{ background: "#fafafa" }}>
+                              <td colSpan={7} style={{ background: "#262b33" }}>
                                 {expandedLoading && !summaryById[u.id] ? (
                                   <div className="d-flex align-items-center gap-2" style={{ opacity: 0.8 }}>
                                     <Spinner animation="border" size="sm" /> Loading symbols...
@@ -642,14 +642,14 @@ export function UniversePage() {
                   <Table striped bordered hover size="sm" className="mb-0" style={{ tableLayout: "fixed", minWidth: 900 }}>
                     <thead>
                       <tr>
-                        <th style={{ width: "10%" }}>#</th>
-                        <th style={{ width: "36%", cursor: "pointer" }} onClick={() => toggleAvailableSort("symbol")}>
+                        <th style={{ width: "64px" }}>#</th>
+                        <th style={{ width: "42%", cursor: "pointer" }} onClick={() => toggleAvailableSort("symbol")}>
                           Symbol{availableSortMarker("symbol")}
                         </th>
-                        <th style={{ width: "27%", cursor: "pointer" }} onClick={() => toggleAvailableSort("turnover")}>
+                        <th style={{ width: "29%", cursor: "pointer" }} onClick={() => toggleAvailableSort("turnover")}>
                           Turnover ({RANGE_OPTIONS.find((x) => x.value === metricsRange)?.label ?? metricsRange}){availableSortMarker("turnover")}
                         </th>
-                        <th style={{ width: "27%", cursor: "pointer" }} onClick={() => toggleAvailableSort("volatility")}>
+                        <th style={{ width: "29%", cursor: "pointer" }} onClick={() => toggleAvailableSort("volatility")}>
                           Volatility ({RANGE_OPTIONS.find((x) => x.value === metricsRange)?.label ?? metricsRange}){availableSortMarker("volatility")}
                         </th>
                       </tr>

@@ -61,7 +61,7 @@ type RangeKey = "priceTh" | "oivTh" | "tp" | "sl" | "offset" | "timeoutSec" | "r
 type RangeState = Record<RangeKey, { min: string; max: string }>;
 type RangeDescriptor = { key: RangeKey; label: string };
 
-const RANGE_DEFAULTS: RangeState = {
+const OI_RANGE_DEFAULTS: RangeState = {
   priceTh: { min: "0.5", max: "6" },
   oivTh: { min: "0.5", max: "15" },
   tp: { min: "2", max: "12" },
@@ -69,6 +69,15 @@ const RANGE_DEFAULTS: RangeState = {
   offset: { min: "0", max: "1" },
   timeoutSec: { min: "61", max: "120" },
   rearmSec: { min: "900", max: "3600" },
+};
+const SIGNAL_RANGE_DEFAULTS: RangeState = {
+  priceTh: { min: "0.1", max: "3" },
+  oivTh: { min: "0.1", max: "6" },
+  tp: { min: "0", max: "3" },
+  sl: { min: "0", max: "0.005" },
+  offset: { min: "0", max: "20" },
+  timeoutSec: { min: "1", max: "24" },
+  rearmSec: { min: "0", max: "24" },
 };
 
 const LEGACY_STORAGE_KEYS = {
@@ -124,11 +133,36 @@ const OI_RANGE_DESCRIPTORS: RangeDescriptor[] = [
   { key: "rearmSec", label: "rearmSec" },
 ];
 const SIGNAL_RANGE_DESCRIPTORS: RangeDescriptor[] = [
-  { key: "priceTh", label: "Price threshold, %" },
-  { key: "oivTh", label: "OI threshold, %" },
-  { key: "timeoutSec", label: "Entry timeout, sec" },
-  { key: "rearmSec", label: "Rearm delay, sec" },
+  { key: "priceTh", label: "Price move, %" },
+  { key: "oivTh", label: "OI move, %" },
+  { key: "tp", label: "CVD move threshold" },
+  { key: "sl", label: "Funding min abs, %" },
+  { key: "offset", label: "Min bars between signals" },
+  { key: "timeoutSec", label: "Lookback candles" },
+  { key: "rearmSec", label: "Cooldown candles" },
 ];
+const RANGE_LABELS_OI: Record<RangeKey, string> = {
+  priceTh: "priceTh",
+  oivTh: "oivTh",
+  tp: "tp",
+  sl: "sl",
+  offset: "offset",
+  timeoutSec: "timeoutSec",
+  rearmSec: "rearmSec",
+};
+const RANGE_LABELS_SIGNAL: Record<RangeKey, string> = {
+  priceTh: "Price move, %",
+  oivTh: "OI move, %",
+  tp: "CVD move threshold",
+  sl: "Funding min abs, %",
+  offset: "Min bars between signals",
+  timeoutSec: "Lookback candles",
+  rearmSec: "Cooldown candles",
+};
+
+function getRangeLabel(key: RangeKey, isSignalBot: boolean): string {
+  return (isSignalBot ? RANGE_LABELS_SIGNAL : RANGE_LABELS_OI)[key];
+}
 
 function chooseMaxDatasetInterval(intervals: string[]): string {
   if (!intervals.length) return "1";
@@ -172,30 +206,30 @@ function isValidRangeState(value: unknown): value is RangeState {
   return true;
 }
 
-function loadSavedRanges(key: string, legacyKey?: string): RangeState {
+function loadSavedRanges(key: string, defaults: RangeState, legacyKey?: string): RangeState {
   try {
     const raw = localStorage.getItem(key) ?? (legacyKey ? localStorage.getItem(legacyKey) : null);
-    if (!raw) return RANGE_DEFAULTS;
+    if (!raw) return defaults;
     const parsed = JSON.parse(raw) as unknown;
-    if (!isValidRangeState(parsed)) return RANGE_DEFAULTS;
+    if (!isValidRangeState(parsed)) return defaults;
     const parsedAny = parsed as any;
-    const timeoutMax = Number(parsedAny?.timeoutSec?.max ?? RANGE_DEFAULTS.timeoutSec.max);
+    const timeoutMax = Number(parsedAny?.timeoutSec?.max ?? defaults.timeoutSec.max);
     const rearmLegacy = parsedAny?.rearmSec ?? parsedAny?.rearmMs;
-    const rearmMax = Number(rearmLegacy?.max ?? RANGE_DEFAULTS.rearmSec.max);
+    const rearmMax = Number(rearmLegacy?.max ?? defaults.rearmSec.max);
     return {
-      ...RANGE_DEFAULTS,
+      ...defaults,
       ...parsedAny,
       timeoutSec: {
-        min: RANGE_DEFAULTS.timeoutSec.min,
-        max: String(Math.max(Number.isFinite(timeoutMax) ? timeoutMax : Number(RANGE_DEFAULTS.timeoutSec.max), Number(RANGE_DEFAULTS.timeoutSec.min))),
+        min: defaults.timeoutSec.min,
+        max: String(Math.max(Number.isFinite(timeoutMax) ? timeoutMax : Number(defaults.timeoutSec.max), Number(defaults.timeoutSec.min))),
       },
       rearmSec: {
-        min: RANGE_DEFAULTS.rearmSec.min,
-        max: String(Math.max(Number.isFinite(rearmMax) ? rearmMax : Number(RANGE_DEFAULTS.rearmSec.max), Number(RANGE_DEFAULTS.rearmSec.min))),
+        min: defaults.rearmSec.min,
+        max: String(Math.max(Number.isFinite(rearmMax) ? rearmMax : Number(defaults.rearmSec.max), Number(defaults.rearmSec.min))),
       },
     };
   } catch {
-    return RANGE_DEFAULTS;
+    return defaults;
   }
 }
 
@@ -594,7 +628,7 @@ const OptimizerResultsBody = memo(function OptimizerResultsBody({ rows, activePr
       })}
       {!rows.length ? (
         <tr>
-          <td colSpan={18} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
+          <td colSpan={22} style={{ fontSize: 12, opacity: 0.75 }}>No results</td>
         </tr>
       ) : null}
     </tbody>
@@ -629,9 +663,6 @@ export function OptimizerPage({
     loopInfinite: makeOptimizerScopedStorageKey(storageScopeBotId, "loopInfinite"),
     datasetMode: makeOptimizerScopedStorageKey(storageScopeBotId, "datasetMode"),
     followTailStart: makeOptimizerScopedStorageKey(storageScopeBotId, "followTailStart"),
-    resultsPageSize: makeOptimizerScopedStorageKey(storageScopeBotId, "results.pageSize"),
-    historyPageSize: makeOptimizerScopedStorageKey(storageScopeBotId, "history.pageSize"),
-    datasetHistoryPageSize: makeOptimizerScopedStorageKey(storageScopeBotId, "datasetHistory.pageSize"),
     datasetHistoryTableId: makeOptimizerScopedStorageKey(storageScopeBotId, "table.datasetHistory"),
     resultsTableId: makeOptimizerScopedStorageKey(storageScopeBotId, "table.results"),
     jobHistoryTableId: makeOptimizerScopedStorageKey(storageScopeBotId, "table.jobHistory"),
@@ -653,7 +684,7 @@ export function OptimizerPage({
   const [historySortKey, setHistorySortKey] = useState<keyof DatasetHistoryRecord | "rangeMs" | "universeLabel">("receivedAtMs");
   const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
   const [historyPage, setHistoryPage] = useState(1);
-  const [historyPageSize, setHistoryPageSize] = useStoredPageSize(storageKeys.datasetHistoryPageSize, 10);
+  const [historyPageSize, setHistoryPageSize] = useStoredPageSize(storageKeys.datasetHistoryTableId, 10);
 
   const [candidates, setCandidates] = useState("200");
   const [seed, setSeed] = useState("1");
@@ -759,20 +790,20 @@ export function OptimizerPage({
     return aggregateLoopRowsByCandidate(rows);
   }, [loopAggState.version]);
   const [page, setPage] = useState(1);
-  const [resultsPageSize, setResultsPageSize] = useStoredPageSize(storageKeys.resultsPageSize, 25);
+  const [resultsPageSize, setResultsPageSize] = useStoredPageSize(storageKeys.resultsTableId, 25);
   const [totalRows, setTotalRows] = useState(0);
   const [sortKey, setSortKey] = useState<OptimizerSortKeyExtended>("netPnl");
   const [sortDir, setSortDir] = useState<OptimizerSortDir>("desc");
   const [jobPrecisionById] = useState<Record<string, OptimizerPrecision>>({});
 
-  const [ranges, setRanges] = useState<RangeState>(RANGE_DEFAULTS);
+  const [ranges, setRanges] = useState<RangeState>(OI_RANGE_DEFAULTS);
   const [loopRunsCount, setLoopRunsCount] = useState("3");
   const [loopInfinite, setLoopInfinite] = useState(false);
   const [loopStatus, setLoopStatus] = useState<OptimizerLoopStatus | null>(null);
   const [loopBusy, setLoopBusy] = useState(false);
   const [jobHistory, setJobHistory] = useState<OptimizerJobHistoryRecord[]>([]);
   const [jobHistoryTotal, setJobHistoryTotal] = useState(0);
-  const [jobHistoryLimit, setJobHistoryLimit] = useStoredPageSize(storageKeys.historyPageSize, 25);
+  const [jobHistoryLimit, setJobHistoryLimit] = useStoredPageSize(storageKeys.jobHistoryTableId, 25);
   const [jobHistoryOffset, setJobHistoryOffset] = useState(0);
   const [jobHistorySortKey, setJobHistorySortKey] = useState<OptimizerHistorySortKey>("endedAtMs");
   const [jobHistorySortDir, setJobHistorySortDir] = useState<OptimizerSortDir>("desc");
@@ -942,7 +973,8 @@ export function OptimizerPage({
 
 
   useEffect(() => {
-    setRanges(loadSavedRanges(storageKeys.ranges, LEGACY_STORAGE_KEYS.ranges));
+    const defaults = isSignalBotOptimizer ? SIGNAL_RANGE_DEFAULTS : OI_RANGE_DEFAULTS;
+    setRanges(loadSavedRanges(storageKeys.ranges, defaults, LEGACY_STORAGE_KEYS.ranges));
     setCandidates(loadStoredPositiveIntWithLegacy(storageKeys.candidates, "200", 1, LEGACY_STORAGE_KEYS.candidates));
     setSeed(loadStoredPositiveIntWithLegacy(storageKeys.seed, "1", 0, LEGACY_STORAGE_KEYS.seed));
     const savedDirection = loadStoredTextWithLegacy(storageKeys.directionMode, "both", LEGACY_STORAGE_KEYS.directionMode);
@@ -976,7 +1008,7 @@ export function OptimizerPage({
     setJobHistoryOffset(0);
     void refreshStatus();
     void refreshJobHistory();
-  }, [storageKeys]);
+  }, [storageKeys, isSignalBotOptimizer]);
 
   useEffect(() => {
     void (async () => {
@@ -1377,11 +1409,16 @@ export function OptimizerPage({
         if (min !== undefined && min < 0) return `${key} min must be >= 0`;
         if (max !== undefined && max < 0) return `${key} max must be >= 0`;
       }
-      if (key === "timeoutSec" && min !== undefined && min < 61) return "timeoutSec min must be >= 61";
-      if (key === "rearmSec" && min !== undefined && min < 900) return "rearmSec min must be >= 900";
+      if (!isSignalBotOptimizer) {
+        if (key === "timeoutSec" && min !== undefined && min < 61) return "timeoutSec min must be >= 61";
+        if (key === "rearmSec" && min !== undefined && min < 900) return "rearmSec min must be >= 900";
+      } else {
+        if (key === "timeoutSec" && min !== undefined && min < 1) return "lookback min must be >= 1";
+        if (key === "rearmSec" && min !== undefined && min < 0) return "cooldown min must be >= 0";
+      }
     }
     return null;
-  }, [rangeDescriptors, ranges]);
+  }, [isSignalBotOptimizer, rangeDescriptors, ranges]);
 
   const historyRowsSorted = useMemo(() => {
     const rows = Array.isArray(datasetHistories) ? datasetHistories : [];
@@ -1484,11 +1521,6 @@ export function OptimizerPage({
       } else {
         payload[key] = { min, max };
       }
-    }
-    if (isSignalBotOptimizer) {
-      payload.tp = { min: Number(RANGE_DEFAULTS.tp.max), max: Number(RANGE_DEFAULTS.tp.max) };
-      payload.sl = { min: Number(RANGE_DEFAULTS.sl.max), max: Number(RANGE_DEFAULTS.sl.max) };
-      payload.offset = { min: Number(RANGE_DEFAULTS.offset.max), max: Number(RANGE_DEFAULTS.offset.max) };
     }
     return payload;
   }
@@ -1683,18 +1715,21 @@ export function OptimizerPage({
     };
 
   const entryTimeoutMin = useMemo(() => {
+    if (isSignalBotOptimizer) {
+      return Math.max(1, Math.floor(Number(ranges.timeoutSec.max) || 1));
+    }
     const timeoutSec = Math.max(60, Math.floor(Number(ranges.timeoutSec.max) || 300));
     return Math.max(1, Math.round(timeoutSec / 60));
-  }, [ranges.timeoutSec.max]);
+  }, [isSignalBotOptimizer, ranges.timeoutSec.max]);
 
   const onEntryTimeoutMinChange = useCallback((value: string) => {
     const minutes = Math.max(1, Math.floor(Number(value) || 1));
-    const timeoutSec = minutes * 60;
+    const timeoutSec = isSignalBotOptimizer ? minutes : (minutes * 60);
     setRanges((prev) => ({
       ...prev,
       timeoutSec: { min: String(timeoutSec), max: String(timeoutSec) },
     }));
-  }, []);
+  }, [isSignalBotOptimizer]);
 
   useEffect(() => {
     if (rangeError) return;
@@ -1990,8 +2025,40 @@ export function OptimizerPage({
       ? rowRearmSec
       : (Number.isFinite(rowRearmMs) ? Math.round(rowRearmMs / 1000) : 0);
     const paperRearmSec = Math.max(0, Math.round(mappedRearmSec));
-
     const rowTimeoutSec = Number((row as { params?: { timeoutSec?: unknown }; timeoutSec?: unknown }).params?.timeoutSec ?? (row as { timeoutSec?: unknown }).timeoutSec);
+
+    const basePatch = {
+      source: "optimizer",
+      ts: Date.now(),
+      datasetId: null,
+      jobId: sourceJobId ?? activeJobId,
+      rank: row.rank,
+      botId: activeBotId,
+    };
+
+    if (isSignalBotOptimizer) {
+      const patch = {
+        ...basePatch,
+        patch: {
+          botConfig: {
+            signals: {
+              priceMovePct: quantizeByPrecision(row.params.priceThresholdPct, activePrecision.priceTh),
+              oiMovePct: quantizeByPrecision(row.params.oivThresholdPct, activePrecision.oivTh),
+              cvdMoveThreshold: quantizeByPrecision(row.params.tpRoiPct, activePrecision.tp),
+              fundingMinAbsPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
+              minBarsBetweenSignals: Math.max(0, Math.round(Number(row.params.entryOffsetPct) || 0)),
+            },
+            strategy: {
+              lookbackCandles: Math.max(1, Math.round(Number(rowTimeoutSec) || 1)),
+              cooldownCandles: Math.max(0, Math.round(Number(row.params.rearmMs) / 1000 || 0)),
+            },
+          },
+        },
+      };
+      safeLocalStorageSet(`bots_dev.pendingConfigPatch.${activeBotId}`, JSON.stringify(patch));
+      return;
+    }
+
     const paperPatch: Record<string, number> = {
       tpRoiPct: quantizeByPrecision(row.params.tpRoiPct, activePrecision.tp),
       slRoiPct: quantizeByPrecision(row.params.slRoiPct, activePrecision.sl),
@@ -2001,13 +2068,8 @@ export function OptimizerPage({
     if (Number.isFinite(rowTimeoutSec)) {
       paperPatch.entryTimeoutSec = rowTimeoutSec;
     }
-
     const patch = {
-      source: "optimizer",
-      ts: Date.now(),
-      datasetId: null,
-      jobId: sourceJobId ?? activeJobId,
-      rank: row.rank,
+      ...basePatch,
       patch: {
         signals: {
           priceThresholdPct: quantizeByPrecision(row.params.priceThresholdPct, activePrecision.priceTh),
@@ -2016,8 +2078,8 @@ export function OptimizerPage({
         paper: paperPatch,
       },
     };
-    safeLocalStorageSet("bots_dev.pendingConfigPatch", JSON.stringify(patch));
-  }, [activeJobId, activePrecision]);
+    safeLocalStorageSet(`bots_dev.pendingConfigPatch.${activeBotId}`, JSON.stringify(patch));
+  }, [activeBotId, activeJobId, activePrecision, isSignalBotOptimizer]);
 
 
   const onExportTrades = useCallback((row: OptimizationResult) => {
@@ -2301,7 +2363,7 @@ export function OptimizerPage({
                 <div className="d-flex align-items-center gap-2 mb-2" style={{ fontSize: 12 }}>
                   <div>Selected: <b>{selectedHistoryIds.length}</b></div>
                 </div>
-                <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#f8f9fa", border: "1px solid #dee2e6", borderRadius: 6 }}>
+                <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#1d2330", border: "1px solid #2a3342", borderRadius: 6 }}>
                   <div><b>Dataset history columns legend</b></div>
                   <div>`from / to` are historical period boundaries.</div>
                   <div>`range` is the period duration.</div>
@@ -2449,7 +2511,7 @@ export function OptimizerPage({
               </Col>
               <Col xl={2} lg={2} md={4} sm={6} xs={12}>
                 <Form.Group>
-                  <Form.Label style={{ fontSize: 12 }}>Entry timeout (min)</Form.Label>
+                  <Form.Label style={{ fontSize: 12 }}>{isSignalBotOptimizer ? "Lookback candles" : "Entry timeout (min)"}</Form.Label>
                   <Form.Control
                     value={String(entryTimeoutMin)}
                     onChange={(e) => onEntryTimeoutMinChange(e.currentTarget.value)}
@@ -2457,7 +2519,11 @@ export function OptimizerPage({
                     min={1}
                     step={1}
                   />
-                  <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>Minutes after which an unfilled entry order is canceled.</Form.Text>
+                  <Form.Text muted style={{ fontSize: 11, display: "block", minHeight: 34 }}>
+                    {isSignalBotOptimizer
+                      ? "Number of candles used as the reference window for overheating checks."
+                      : "Minutes after which an unfilled entry order is canceled."}
+                  </Form.Text>
                 </Form.Group>
               </Col>
             </Row>
@@ -2539,8 +2605,8 @@ export function OptimizerPage({
                         size="sm"
                         value={ranges[key].min}
                         onChange={onRangeChange(key, "min")}
-                        disabled={key === "timeoutSec" || key === "rearmSec"}
-                        min={key === "timeoutSec" ? 61 : key === "rearmSec" ? 900 : undefined}
+                        disabled={!isSignalBotOptimizer && (key === "timeoutSec" || key === "rearmSec")}
+                        min={key === "timeoutSec" ? (isSignalBotOptimizer ? 1 : 61) : key === "rearmSec" ? (isSignalBotOptimizer ? 0 : 900) : undefined}
                       />
                     </td>
                     <td>
@@ -2548,7 +2614,7 @@ export function OptimizerPage({
                         size="sm"
                         value={ranges[key].max}
                         onChange={onRangeChange(key, "max")}
-                        min={key === "timeoutSec" ? 61 : key === "rearmSec" ? 900 : undefined}
+                        min={key === "timeoutSec" ? (isSignalBotOptimizer ? 1 : 61) : key === "rearmSec" ? (isSignalBotOptimizer ? 0 : 900) : undefined}
                       />
                     </td>
                   </tr>
@@ -2604,13 +2670,17 @@ export function OptimizerPage({
 
             {showLoopNoRowsWarning ? <div style={{ fontSize: 12, marginBottom: 8, color: "#a86d00" }}>No results yet. If state does not change, enable debugOptimizerRows.</div> : null}
             {!showLoopNoRowsWarning && rawRowsCount > 0 && displayedRowsCount === 0 ? <div style={{ fontSize: 12, marginBottom: 8, color: "#6c757d" }}>Rows exist but are hidden by active filters.</div> : null}
-            <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#f8f9fa", border: "1px solid #dee2e6", borderRadius: 6 }}>
+            <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#1d2330", border: "1px solid #2a3342", borderRadius: 6 }}>
               <div><b>Results columns legend</b></div>
               <div>`train` means metrics on the training data slice.</div>
               <div>`val` means metrics on the validation data slice.</div>
               <div>`pnl/trades` means net profit per trade.</div>
               <div>`placed / filled / expired` means placed / filled / timed-out orders.</div>
-              <div>`priceTh / oivTh / tp / sl / offset / timeoutSec / rearmSec` are strategy and order parameters.</div>
+              {isSignalBotOptimizer ? (
+                <div>`price move / OI move / CVD threshold / funding abs / min bars / lookback / cooldown` are Signal Bot strategy parameters.</div>
+              ) : (
+                <div>`priceTh / oivTh / tp / sl / offset / rearmSec` are OI Momentum strategy parameters.</div>
+              )}
             </div>
             <div className="d-flex align-items-center gap-2 mb-2 flex-wrap" style={{ fontSize: 12 }}>
               <span>Min trades</span>
@@ -2636,13 +2706,13 @@ export function OptimizerPage({
                     <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersPlaced")}>placed</th>
                     <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersFilled")}>filled</th>
                     <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("ordersExpired")}>expired</th>
-                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("priceTh")}>priceTh</th>
-                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("oivTh")}>oivTh</th>
-                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("tp")}>tp</th>
-                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("sl")}>sl</th>
-                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("offset")}>offset</th>
-                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("timeoutSec")}>timeoutSec</th>
-                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("rearmMs")}>rearmSec</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("priceTh")}>{getRangeLabel("priceTh", isSignalBotOptimizer)}</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("oivTh")}>{getRangeLabel("oivTh", isSignalBotOptimizer)}</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("tp")}>{getRangeLabel("tp", isSignalBotOptimizer)}</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("sl")}>{getRangeLabel("sl", isSignalBotOptimizer)}</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("offset")}>{getRangeLabel("offset", isSignalBotOptimizer)}</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("timeoutSec")}>{getRangeLabel("timeoutSec", isSignalBotOptimizer)}</th>
+                    <th style={{ cursor: "pointer", whiteSpace: "nowrap" }} onClick={() => void onSort("rearmMs")}>{getRangeLabel("rearmSec", isSignalBotOptimizer)}</th>
                     <th style={{ whiteSpace: "nowrap" }}>action</th>
                   </tr>
                 </thead>
@@ -2670,7 +2740,7 @@ export function OptimizerPage({
         <Card>
           <Card.Header><b>Completed / Stopped runs</b></Card.Header>
           <Card.Body>
-            <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#f8f9fa", border: "1px solid #dee2e6", borderRadius: 6 }}>
+            <div style={{ fontSize: 12, marginBottom: 8, padding: 8, background: "#1d2330", border: "1px solid #2a3342", borderRadius: 6 }}>
               <div><b>Run history columns legend</b></div>
               <div>`dataset` is the number of selected dataset-history rows.</div>
               <div>`sim` shows simulation parameters (margin, leverage, fee).</div>
@@ -2729,7 +2799,7 @@ export function OptimizerPage({
                       <tr>
                         <td colSpan={historyColumnCount} style={HISTORY_DETAILS_CELL_STYLE}>
                           <Collapse in={isOpen}>
-                            <div style={{ padding: isOpen ? 10 : 0, background: "#f5f5f5", borderLeft: "3px solid #d0d0d0", marginTop: 2 }}>
+                            <div style={{ padding: isOpen ? 10 : 0, background: "var(--bs-body-bg)", borderLeft: "3px solid var(--bs-border-color)", marginTop: 2 }}>
                               <div style={{ fontSize: 12 }}>
                                 sim: <b>{JSON.stringify((row.runPayload as any).sim ?? {})}</b>
                               </div>
@@ -2786,13 +2856,13 @@ export function OptimizerPage({
                                       <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "ordersPlaced")}>placed</th>
                                       <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "ordersFilled")}>filled</th>
                                       <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "ordersExpired")}>expired</th>
-                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "priceTh")}>priceTh</th>
-                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "oivTh")}>oivTh</th>
-                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "tp")}>tp</th>
-                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "sl")}>sl</th>
-                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "offset")}>offset</th>
-                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "timeoutSec")}>timeoutSec</th>
-                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "rearmMs")}>rearmSec</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "priceTh")}>{getRangeLabel("priceTh", isSignalBotOptimizer)}</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "oivTh")}>{getRangeLabel("oivTh", isSignalBotOptimizer)}</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "tp")}>{getRangeLabel("tp", isSignalBotOptimizer)}</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "sl")}>{getRangeLabel("sl", isSignalBotOptimizer)}</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "offset")}>{getRangeLabel("offset", isSignalBotOptimizer)}</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "timeoutSec")}>{getRangeLabel("timeoutSec", isSignalBotOptimizer)}</th>
+                                      <th style={{ cursor: "pointer" }} onClick={() => onHistoryDetailsSort(row.jobId, "rearmMs")}>{getRangeLabel("rearmSec", isSignalBotOptimizer)}</th>
                                       <th>action</th>
                                     </tr>
                                   </thead>

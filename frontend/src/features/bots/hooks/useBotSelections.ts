@@ -15,7 +15,9 @@ export function resolveSelectedBotPresetId(
   selectedBotPresetId: string | null | undefined,
 ): string {
   const defaultPresetId = presets.find((p) => p.id === "default")?.id ?? presets[0]?.id ?? "default";
-  return selectedBotPresetId || defaultPresetId;
+  const selected = String(selectedBotPresetId ?? "").trim();
+  if (!selected) return defaultPresetId;
+  return presets.some((p) => p.id === selected) ? selected : defaultPresetId;
 }
 
 export function useBotSelections() {

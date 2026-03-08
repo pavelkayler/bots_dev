@@ -20,46 +20,6 @@ const universeSchema = z
   })
   .strict();
 
-const botConfigSchema = z
-  .object({
-    fundingCooldown: z
-      .object({
-        beforeMin: z.number().finite().min(0).max(240),
-        afterMin: z.number().finite().min(0).max(240),
-      })
-      .strict(),
-    signals: z
-      .object({
-        priceThresholdPct: z.number().finite().min(0),
-        oivThresholdPct: z.number().finite().min(0),
-        requireFundingSign: z.boolean(),
-        dailyTriggerMin: z.number().int().min(1),
-        dailyTriggerMax: z.number().int().min(1),
-      })
-      .strict(),
-    strategy: z
-      .object({
-        klineTfMin: z.number().int().min(1).max(60),
-        entryOffsetPct: z.number().finite().min(0).max(50),
-        entryTimeoutSec: z.number().int().min(1),
-        tpRoiPct: z.number().finite().min(0).max(1000),
-        slRoiPct: z.number().finite().min(0).max(1000),
-        rearmDelayMs: z.number().int().min(0),
-        applyFunding: z.boolean(),
-      })
-      .strict(),
-  })
-  .strict()
-  .superRefine((v, ctx) => {
-    if (v.signals.dailyTriggerMax < v.signals.dailyTriggerMin) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["signals", "dailyTriggerMax"],
-        message: "dailyTriggerMax must be greater than or equal to dailyTriggerMin",
-      });
-    }
-  });
-
 const executionProfileSchema = z
   .object({
     execution: z
@@ -94,12 +54,19 @@ const storedStateSchema = z
     selectedBotPresetId: z.string().min(1).max(120),
     selectedExecutionProfileId: z.string().min(1).max(120),
     universe: universeSchema,
-    botConfig: botConfigSchema,
+    botConfig: z.unknown(),
     executionProfile: executionProfileSchema,
   })
   .strict();
 
-type StoredConfigState = z.infer<typeof storedStateSchema>;
+type StoredConfigState = {
+  selectedBotId: string;
+  selectedBotPresetId: string;
+  selectedExecutionProfileId: string;
+  universe: z.infer<typeof universeSchema>;
+  botConfig: BotConfig;
+  executionProfile: z.infer<typeof executionProfileSchema>;
+};
 export type ExecutionProfile = z.infer<typeof executionProfileSchema>;
 type ExecutionProfilePatch = {
   execution?: Partial<ExecutionProfile["execution"]>;
@@ -279,7 +246,7 @@ function toStoredState(raw: any): StoredConfigState {
   botDefinition.validateBotConfig(normalizedBot);
 
   const executionProfile = executionProfileSchema.parse(executionProfileInput);
-  const state = storedStateSchema.parse({
+  const parsed = storedStateSchema.parse({
     selectedBotId: botDefinition.id,
     selectedBotPresetId: typeof source.selectedBotPresetId === "string" && source.selectedBotPresetId.trim()
       ? source.selectedBotPresetId.trim()
@@ -294,17 +261,28 @@ function toStoredState(raw: any): StoredConfigState {
     botConfig: normalizedBot,
     executionProfile,
   });
-  return state;
+  return {
+    selectedBotId: parsed.selectedBotId,
+    selectedBotPresetId: parsed.selectedBotPresetId,
+    selectedExecutionProfileId: parsed.selectedExecutionProfileId,
+    universe: parsed.universe,
+    botConfig: normalizedBot,
+    executionProfile: parsed.executionProfile,
+  };
 }
 
 function resolveRuntimeConfig(state: StoredConfigState): RuntimeConfig {
+  const strategy = state.botConfig.strategy as Record<string, unknown>;
+  const klineTfMin = Number(
+    typeof strategy.klineTfMin === "number" ? strategy.klineTfMin : strategy.signalTfMin,
+  );
   return {
     selectedBotId: state.selectedBotId,
     selectedBotPresetId: state.selectedBotPresetId,
     selectedExecutionProfileId: state.selectedExecutionProfileId,
     universe: {
       ...state.universe,
-      klineTfMin: state.botConfig.strategy.klineTfMin,
+      klineTfMin: Number.isFinite(klineTfMin) && klineTfMin > 0 ? Math.floor(klineTfMin) : CONFIG.klineTfMin,
     },
     botConfig: deepClone(state.botConfig),
     executionProfile: deepClone(state.executionProfile),
@@ -451,7 +429,6 @@ class ConfigStore extends EventEmitter {
         ...this.state.botConfig.signals,
         ...legacySignalsPatch,
         ...(patch.botConfig?.signals ?? {}),
-        requireFundingSign: true,
       },
       strategy: {
         ...this.state.botConfig.strategy,
@@ -463,7 +440,13 @@ class ConfigStore extends EventEmitter {
         ...(legacyPaperPatch.rearmSec != null ? { rearmDelayMs: Math.max(0, Math.floor(Number(legacyPaperPatch.rearmSec) * 1000)) } : {}),
         ...(legacyPaperPatch.rearmDelayMs != null ? { rearmDelayMs: Math.max(0, Math.floor(Number(legacyPaperPatch.rearmDelayMs))) } : {}),
         ...(legacyPaperPatch.applyFunding != null ? { applyFunding: Boolean(legacyPaperPatch.applyFunding) } : {}),
-        ...(universePatch.klineTfMin != null ? { klineTfMin: Math.max(1, Math.floor(Number(universePatch.klineTfMin))) } : {}),
+        ...(universePatch.klineTfMin != null
+          ? {
+              ...(typeof (this.state.botConfig.strategy as any).signalTfMin === "number"
+                ? { signalTfMin: Math.max(1, Math.floor(Number(universePatch.klineTfMin))) }
+                : { klineTfMin: Math.max(1, Math.floor(Number(universePatch.klineTfMin))) }),
+            }
+          : {}),
       },
     });
     botDef.validateBotConfig(nextBotConfig);
@@ -493,7 +476,7 @@ class ConfigStore extends EventEmitter {
     }
     const executionProfile = mergeExecutionProfile(this.state.executionProfile, executionPatch);
 
-    const nextState: StoredConfigState = storedStateSchema.parse({
+    const parsed = storedStateSchema.parse({
       selectedBotId: nextBotId,
       selectedBotPresetId: patch.selectedBotPresetId?.trim() || this.state.selectedBotPresetId,
       selectedExecutionProfileId: patch.selectedExecutionProfileId?.trim() || this.state.selectedExecutionProfileId,
@@ -504,6 +487,14 @@ class ConfigStore extends EventEmitter {
       botConfig: nextBotConfig,
       executionProfile,
     });
+    const nextState: StoredConfigState = {
+      selectedBotId: parsed.selectedBotId,
+      selectedBotPresetId: parsed.selectedBotPresetId,
+      selectedExecutionProfileId: parsed.selectedExecutionProfileId,
+      universe: parsed.universe,
+      botConfig: nextBotConfig,
+      executionProfile: parsed.executionProfile,
+    };
 
     const prevResolved = this.get();
     this.state = nextState;

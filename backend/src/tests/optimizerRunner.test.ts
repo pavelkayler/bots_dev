@@ -70,8 +70,8 @@ describe("optimizer runner helpers", () => {
       requireFundingSign: true,
       directionMode: "both",
     });
-    expect(engine.decide({ priceMovePct: 2, oivMovePct: 2, fundingRate: 0.01, cooldownActive: false }).reason).toBe("ok_long");
-    expect(engine.decide({ priceMovePct: -2, oivMovePct: -2, fundingRate: 0.01, cooldownActive: false }).reason).toBe("funding_mismatch");
+    expect(engine.decide({ priceMovePct: 2, oiMovePct: 2, fundingRate: 0.01, cooldownActive: false }).reason).toBe("ok_long");
+    expect(engine.decide({ priceMovePct: -2, oiMovePct: -2, fundingRate: 0.01, cooldownActive: false }).reason).toBe("funding_mismatch");
   });
 
   it("candidate key is deterministic and blacklist persists round-trip", () => {

@@ -759,13 +759,16 @@ function parseRanges(raw: any): OptimizerRanges | undefined {
   return parsed;
 }
 
-function assertOptimizerMinimumRanges(ranges: OptimizerRanges | undefined) {
+function assertOptimizerMinimumRanges(ranges: OptimizerRanges | undefined, botId?: string) {
+  const resolvedBotId = getBotDefinition(botId ?? DEFAULT_BOT_ID).id;
   const timeoutRange = ranges?.timeoutSec;
-  if (timeoutRange && (!Number.isFinite(timeoutRange.min) || !Number.isFinite(timeoutRange.max) || timeoutRange.min < 61 || timeoutRange.max < 61)) {
+  const minTimeout = resolvedBotId === "signal-multi-factor-v1" ? 1 : 61;
+  if (timeoutRange && (!Number.isFinite(timeoutRange.min) || !Number.isFinite(timeoutRange.max) || timeoutRange.min < minTimeout || timeoutRange.max < minTimeout)) {
     throw new Error("invalid_range_timeoutSec");
   }
   const rearmRange = ranges?.rearmMs;
-  if (rearmRange && (!Number.isFinite(rearmRange.min) || !Number.isFinite(rearmRange.max) || rearmRange.min < 900000 || rearmRange.max < 900000)) {
+  const minRearm = resolvedBotId === "signal-multi-factor-v1" ? 0 : 900000;
+  if (rearmRange && (!Number.isFinite(rearmRange.min) || !Number.isFinite(rearmRange.max) || rearmRange.min < minRearm || rearmRange.max < minRearm)) {
     throw new Error("invalid_range_rearmMs");
   }
 }
@@ -2149,7 +2152,7 @@ app.get("/api/config", async () => {
     let precision: Partial<OptimizerPrecision> | undefined;
     try {
       ranges = parseRanges(body?.ranges);
-      assertOptimizerMinimumRanges(ranges);
+      assertOptimizerMinimumRanges(ranges, selectedBotId);
       precision = parsePrecision(body?.precision);
     } catch (e: any) {
       reply.code(400);
@@ -2464,7 +2467,7 @@ app.get("/api/config", async () => {
     }
     try {
       const parsedRanges = parseRanges(payload.ranges);
-      assertOptimizerMinimumRanges(parsedRanges);
+      assertOptimizerMinimumRanges(parsedRanges, selectedBotId);
       if (parsedRanges) payload.ranges = parsedRanges;
     } catch (e: any) {
       reply.code(400);

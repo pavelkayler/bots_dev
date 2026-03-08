@@ -1,9 +1,10 @@
 {
   "universeId": "8m_3pct_24h",
   "range": {
-    "kind": "preset",
-    "preset": "24h"
+    "kind": "manual",
+    "startMs": 1772830800000,
+    "endMs": 1772932466620
   },
-  "interval": "15",
-  "updatedAtMs": 1772930069760
+  "interval": "1",
+  "updatedAtMs": 1772932466626
 }

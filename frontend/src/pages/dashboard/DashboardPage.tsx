@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Card, Container, Form } from "react-bootstrap";
 import { useWsFeed } from "../../features/ws/hooks/useWsFeed";
 import { useSessionRuntime } from "../../features/session/hooks/useSessionRuntime";
@@ -38,18 +38,23 @@ export function DashboardPage() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [draftKlineTfMin] = useState(1);
   const [rowsSnapshot, setRowsSnapshot] = useState<typeof rows>([]);
+  const latestRowsRef = useRef<typeof rows>(rows);
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
 
   useEffect(() => {
-    setRowsSnapshot(rows);
+    latestRowsRef.current = rows;
+  }, [rows]);
+
+  useEffect(() => {
+    setRowsSnapshot(latestRowsRef.current);
     const id = window.setInterval(() => {
-      setRowsSnapshot(rows);
+      setRowsSnapshot(latestRowsRef.current);
     }, 5_000);
     return () => window.clearInterval(id);
-  }, [rows]);
+  }, []);
 
   const canStartFinal = canStart;
 
@@ -175,4 +180,8 @@ export function DashboardPage() {
     </>
   );
 }
+
+
+
+
 

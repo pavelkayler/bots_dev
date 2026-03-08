@@ -64,6 +64,20 @@ Main sections:
 - `signal-multi-factor-v1`: weighted multi-factor score from available replay factors (`priceMovePct`, `oivMovePct`, funding contribution/sign gate).
 - Both models use the same execution simulator (fees, TP/SL, timeout, rearm, direction mode) so historical comparisons stay consistent.
 
+### Signal Bot parameter space
+Signal Bot optimizer tunes signal-generation parameters, not OI Momentum entry lifecycle knobs.
+
+Current Signal dimensions in optimizer UI:
+- `Price move, %`
+- `OI move, %`
+- `CVD move threshold`
+- `Funding min abs, %`
+- `Min bars between signals`
+- `Lookback candles`
+- `Cooldown candles`
+
+Internally, these are mapped to replay candidate params and copied back to Signal settings as bot-scoped patches.
+
 ### Filters
 - `minTrades`: require at least N closed trades per candidate (server-side)
 - `excludeNegative`: hide negative netPnl candidates from preview/final lists
@@ -120,7 +134,9 @@ Each result row includes:
 - netPnl, trades, winRate
 - expectancy, profitFactor, max drawdown
 - execution counters (placed/filled/expired)
-- params (priceTh/oivTh/tp/sl/offset/timeoutSec/rearmMs)
+- params:
+  - OI bot: `priceTh/oivTh/tp/sl/offset/rearmSec`
+  - Signal bot: `price move / OI move / CVD threshold / funding abs / min bars / lookback / cooldown`
 
 ## Completed / stopped run history
 - Loop runs are aggregated by loop launch (`loopId`) into one primary session row in history.

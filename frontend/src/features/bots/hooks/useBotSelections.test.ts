@@ -31,5 +31,15 @@ describe("resolveSelectedBotPresetId", () => {
     );
     expect(id).toBe("p1");
   });
-});
 
+  it("falls back to bot default when selected preset belongs to another bot", () => {
+    const id = resolveSelectedBotPresetId(
+      [
+        { id: "default", botId: "oi-momentum-v1", name: "Default", updatedAt: 1 },
+        { id: "oi-fast", botId: "oi-momentum-v1", name: "Fast", updatedAt: 2 },
+      ],
+      "signal-turbo",
+    );
+    expect(id).toBe("default");
+  });
+});

@@ -50,7 +50,7 @@ export function BotsPage() {
           </Card.Header>
           <Card.Body>
             {tab === "settings" ? (
-              <ConfigPanel sessionState={status.sessionState} />
+              <ConfigPanel sessionState={status.sessionState} forcedBotId={OI_MOMENTUM_BOT_ID} />
             ) : tab === "optimizer" ? (
               <OptimizerPage embedded forcedBotId={OI_MOMENTUM_BOT_ID} hideBotSelectors title="OI Optimizer" />
             ) : tab === "api" ? (

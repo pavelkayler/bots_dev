@@ -18,6 +18,7 @@ type Props = {
   sessionState?: SessionState;
   rebooting?: boolean;
   onDraftKlineTfMinChange?: (klineTfMin: number) => void;
+  forcedBotId?: string;
 };
 
 const MAKER_FEE_RATE_FIXED = 0.0002;
@@ -119,8 +120,10 @@ function validateDraft(draft: RuntimeConfig | null, numericDraft: NumericDraft |
   }
 }
 
-export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }: Props) {
-  const { config, draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save, reload } = useRuntimeConfig();
+export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange, forcedBotId }: Props) {
+  const { config, draft, setDraft, dirty, error, saving, lastApplied, lastSavedAt, save, reload } = useRuntimeConfig(
+    forcedBotId ? { selectedBotId: forcedBotId } : undefined,
+  );
   const [inputError, setInputError] = useState<string | null>(null);
   const [numericDraft, setNumericDraft] = useState<NumericDraft | null>(null);
 
@@ -142,7 +145,7 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
   const hasUniverse = !!selectedUniverseId;
   const validation = useMemo(() => validateDraft(draft, numericDraft), [draft, numericDraft]);
   const isDraftValid = validation.ok;
-  const activeBotId = String(draft?.selectedBotId ?? config?.selectedBotId ?? "oi-momentum-v1");
+  const activeBotId = String(forcedBotId ?? draft?.selectedBotId ?? config?.selectedBotId ?? "oi-momentum-v1");
 
   const isDirty = useMemo(() => {
     if (!draft) return false;
@@ -226,7 +229,10 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
 
   useEffect(() => {
     if (!draft || !numericDraft || pendingPatchApplied) return;
-    const raw = localStorage.getItem("bots_dev.pendingConfigPatch");
+    const scopedKey = `bots_dev.pendingConfigPatch.${activeBotId}`;
+    const legacyKey = "bots_dev.pendingConfigPatch";
+    const scopedRaw = localStorage.getItem(scopedKey);
+    const raw = scopedRaw ?? localStorage.getItem(legacyKey);
     if (!raw) {
       setPendingPatchApplied(true);
       return;
@@ -234,6 +240,10 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
 
     try {
       const parsed = JSON.parse(raw) as any;
+      const patchBotId = String(parsed?.botId ?? "").trim();
+      if (patchBotId && patchBotId !== activeBotId) {
+        return;
+      }
       const patch = parsed?.patch ?? {};
       const nextDraft: RuntimeConfig = {
         ...draft,
@@ -267,10 +277,14 @@ export function ConfigPanel({ sessionState, rebooting, onDraftKlineTfMinChange }
       setNumericDraft(toNumericDraft(nextDraft));
     } catch {
     } finally {
-      localStorage.removeItem("bots_dev.pendingConfigPatch");
+      if (scopedRaw != null) {
+        localStorage.removeItem(scopedKey);
+      } else {
+        localStorage.removeItem(legacyKey);
+      }
       setPendingPatchApplied(true);
     }
-  }, [draft, numericDraft, pendingPatchApplied, setDraft]);
+  }, [activeBotId, draft, numericDraft, pendingPatchApplied, setDraft]);
 
   useEffect(() => {
     if (defaultPresetEnsured || presetBusy) return;
